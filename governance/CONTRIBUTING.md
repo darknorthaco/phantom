@@ -148,3 +148,20 @@ For questions about contributing:
 - Open an issue with `[CONTRIBUTING]` prefix
 - Join the development discussions
 - Review existing PRs for examples
+
+---
+
+## S-Series Audit Protocol
+
+These rules govern all **future** S-series structural integrity audits. They are
+prospective only and do not invalidate any prior commit or work product.
+
+| Rule | Requirement |
+|------|-------------|
+| **S-RULE-1** | Auditor MUST NOT modify source code. Permitted: analyze, classify, compare, report. |
+| **S-RULE-2** | Directory structure MUST be preserved exactly as found. No collapsing or merging. |
+| **S-RULE-3** | Every finding MUST cross-reference: file size, file path, directory hierarchy, naming conventions, and applicable audit rule. Filename alone is never sufficient for equivalence. |
+| **S-RULE-4** | Conflicting files (same name, different size/path) MUST be reported and halted — never auto-resolved. |
+| **S-RULE-5** | New rules apply prospectively only. Reverting a prior commit requires explicit **"AUTHORIZED: REVERT"** authorization. |
+
+Full rule text: [`docs/AUDIT_LOG.md — S-Series Audit Rules`](../docs/AUDIT_LOG.md)
