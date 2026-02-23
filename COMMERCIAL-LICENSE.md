@@ -174,7 +174,7 @@ Note: Copyright protects the specific source code in this repository, not genera
 ## Contact Information
 
 **Dark North Co.**  
-Email: licensing@darknorthco.com  
+Email: darknorthacompany@gmail.com  
 Website: darknorthco.com
 
 ---
