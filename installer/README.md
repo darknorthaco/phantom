@@ -80,6 +80,66 @@ The wizard will guide you through:
 ./phantom_installer.sh --install-dir /opt/phantom
 ```
 
+## Command-Line Reference
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--silent` | No prompts; uses defaults for all steps |
+| `--type=<all\|controller\|worker>` | Pre-select component set (default: `all`) |
+| `--force` | Skip all confirmation prompts |
+| `--dry-run` | Preview installation without making changes |
+| `--install-dir <path>` | Override installation directory |
+| `--log-file <path>` | Write timestamped log output to file |
+| `--skip-venv` | Skip virtual environment creation |
+
+### Installation Types
+
+| Type | Components installed |
+|------|---------------------|
+| `all` (default) | All optional components |
+| `controller` | `phantom_core` + LLM Task Master + Security Framework + Socket Infrastructure |
+| `worker` | `phantom_core` + Linux/Windows Workers (OS-appropriate) + Security Framework |
+
+### Examples
+
+**Linux/Mac:**
+```bash
+# Interactive (default)
+./phantom_installer.sh
+
+# Silent full install to /opt/phantom, log to file
+./phantom_installer.sh --silent --install-dir /opt/phantom --log-file /var/log/phantom_install.log
+
+# Silent controller-only install
+./phantom_installer.sh --silent --type=controller
+
+# Silent worker install, force through system check failures
+./phantom_installer.sh --silent --type=worker --force
+
+# Dry-run preview
+./phantom_installer.sh --dry-run
+```
+
+**Windows (PowerShell):**
+```powershell
+# Interactive (default)
+.\phantom_installer.ps1
+
+# Silent install with defaults
+.\phantom_installer.ps1 -Silent
+
+# Silent worker install with log file
+.\phantom_installer.ps1 -Silent -Type worker -LogFile C:\Logs\phantom_install.log
+
+# Dry-run preview
+.\phantom_installer.ps1 -DryRun
+
+# Show help
+.\phantom_installer.ps1 -Help
+```
+
 ## Worker Discovery
 
 ### Manual Mode

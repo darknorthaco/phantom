@@ -294,5 +294,4 @@ class ProcessCleanup:
             self._log("✅ No phantom processes found")
             return True
 
-        return self.terminate_processes(pids)</content>
-<parameter name="filePath">d:\LTNNN\REPO\phantom\installer\modules\process_cleanup.py
+        return self.terminate_processes(pids)
