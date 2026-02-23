@@ -42,7 +42,16 @@ except ImportError:
 class CLIWizard:
     """Interactive CLI installation wizard"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        silent: bool = False,
+        install_type: str = "all",
+        force: bool = False,
+    ):
+        self.silent = silent
+        self.install_type = install_type
+        self.force = force
+
         self.prompts = Prompts()
         self.progress = ProgressDisplay()
         self.system_checker = SystemChecker()
@@ -121,11 +130,19 @@ class CLIWizard:
         """Run system requirement checks"""
         self.prompts.section("System Requirements Check")
 
-        self.progress.spinner("Checking system requirements...", 2)
+        if not self.silent:
+            self.progress.spinner("Checking system requirements...", 2)
 
         if not self.system_checker.run_all_checks():
             self.system_checker.print_report()
-            if not self.prompts.confirm("Continue despite failed checks?", False):
+            if self.silent and not self.force:
+                self.prompts.error(
+                    "System check failures detected. Use --force to override."
+                )
+                return False
+            if not self.silent and not self.prompts.confirm(
+                "Continue despite failed checks?", False
+            ):
                 return False
         else:
             self.system_checker.print_report()
@@ -142,16 +159,44 @@ class CLIWizard:
         elif platform.system() == "Windows":
             default_dir = "C:\\Program Files\\Phantom"
 
-        install_dir = self.prompts.input_text(
-            "Enter installation directory", default=default_dir
-        )
+        if self.silent:
+            # Use the directory already set by --install-dir, or the OS default
+            if self.install_dir is None:
+                self.install_dir = Path(default_dir)
+            print(f"  Installation directory: {self.install_dir}")
+        else:
+            install_dir = self.prompts.input_text(
+                "Enter installation directory", default=default_dir
+            )
+            self.install_dir = Path(install_dir)
 
-        self.install_dir = Path(install_dir)
         self.component_manager = ComponentManager(str(self.install_dir), use_git=True)
         self.config_generator = ConfigGenerator(self.install_dir)
         self.manifest_manager = ManifestManager(str(self.install_dir))
 
         return True
+
+    # Installation type → optional component IDs to auto-select
+    _TYPE_COMPONENTS = {
+        "all": [
+            "llm_taskmaster",
+            "linux_workers",
+            "windows_workers",
+            "security_framework",
+            "socket_infrastructure",
+            "redblue_ui",
+        ],
+        "controller": [
+            "llm_taskmaster",
+            "security_framework",
+            "socket_infrastructure",
+        ],
+        "worker": [
+            "linux_workers",
+            "windows_workers",
+            "security_framework",
+        ],
+    }
 
     def _select_components(self) -> bool:
         """Select components to install"""
@@ -174,23 +219,41 @@ class CLIWizard:
 
         print()
 
-        # Select optional components
-        optional_components = [c for c in components if not c["required"]]
-        component_names = [c["name"] for c in optional_components]
-
-        if self.prompts.confirm("Install all optional components?", True):
-            for comp in optional_components:
-                self.component_manager.select_component(comp["id"])
-        else:
-            selected_indices = self.prompts.select_multiple(
-                "Select optional components to install:", component_names
-            )
-
-            for idx in selected_indices:
-                comp_id = optional_components[idx]["id"]
+        if self.silent:
+            # Auto-select based on install_type, skipping components whose OS
+            # requirement does not match the current platform (e.g. skip
+            # windows_workers on Linux and vice-versa).
+            current_os = platform.system()
+            comp_defs = {c["id"]: c for c in components}
+            auto_select = [
+                comp_id
+                for comp_id in self._TYPE_COMPONENTS.get(self.install_type, [])
+                if comp_defs.get(comp_id, {}).get("os_required") in (None, current_os)
+            ]
+            for comp_id in auto_select:
                 self.component_manager.select_component(comp_id)
+            print(
+                f"  Installation type '{self.install_type}': "
+                f"auto-selected {len(auto_select)} optional component(s)"
+            )
+        else:
+            # Select optional components
+            optional_components = [c for c in components if not c["required"]]
+            component_names = [c["name"] for c in optional_components]
 
-        # Validate selection
+            if self.prompts.confirm("Install all optional components?", True):
+                for comp in optional_components:
+                    self.component_manager.select_component(comp["id"])
+            else:
+                selected_indices = self.prompts.select_multiple(
+                    "Select optional components to install:", component_names
+                )
+
+                for idx in selected_indices:
+                    comp_id = optional_components[idx]["id"]
+                    self.component_manager.select_component(comp_id)
+
+        # Validate selection (also ensures required components are included)
         valid, errors = self.component_manager.validate_selection(platform.system())
         if not valid:
             for error in errors:
@@ -203,19 +266,27 @@ class CLIWizard:
         """Configure network settings"""
         self.prompts.section("Network Configuration")
 
-        self.controller_host = self.prompts.input_text(
-            "Controller host address", default="localhost"
-        )
+        if self.silent:
+            print(f"  Controller: {self.controller_host}:{self.controller_port}")
+        else:
+            self.controller_host = self.prompts.input_text(
+                "Controller host address", default="localhost"
+            )
 
-        self.controller_port = self.prompts.input_number(
-            "Controller port", default=8080, min_val=1024, max_val=65535
-        )
+            self.controller_port = self.prompts.input_number(
+                "Controller port", default=8080, min_val=1024, max_val=65535
+            )
 
         return True
 
     def _discover_workers(self) -> bool:
         """Discover worker nodes"""
         self.prompts.section("Worker Discovery")
+
+        if self.silent:
+            self.worker_discovery.set_discovery_mode("skip")
+            print("  Worker discovery skipped (configure workers later)")
+            return True
 
         modes = [
             "Manual selection (basic ping scan)",
@@ -267,6 +338,12 @@ class CLIWizard:
         """Configure socket infrastructure"""
         self.prompts.section("Socket Infrastructure")
 
+        if self.silent:
+            self.socket_manager.enable()
+            self.socket_manager.configure(port=8081)
+            print("  Socket infrastructure enabled on port 8081")
+            return True
+
         if self.prompts.confirm(
             "Enable socket infrastructure for real-time communication?", True
         ):
@@ -283,6 +360,11 @@ class CLIWizard:
     def _configure_ui(self) -> bool:
         """Configure UI integration"""
         self.prompts.section("RedBlue UI Integration")
+
+        if self.silent:
+            # UI configuration skipped in silent mode; RedBlue UI can be set up manually
+            print("  RedBlue UI configuration skipped (configure manually if needed)")
+            return True
 
         if "redblue_ui" in self.component_manager.selected_components:
             if self.prompts.confirm("Configure RedBlue UI?", True):
@@ -303,6 +385,10 @@ class CLIWizard:
     def _configure_security(self) -> bool:
         """Configure security settings"""
         self.prompts.section("Security Configuration")
+
+        if self.silent:
+            print(f"  Security level: {self.security_level}")
+            return True
 
         levels = ["Disabled", "Development", "Production"]
         level_idx = self.prompts.select_option(
@@ -337,6 +423,11 @@ class CLIWizard:
                 print(f"  • {worker['ip']} - {worker.get('hostname', 'Unknown')}")
 
         print()
+
+        if self.silent or self.force:
+            print("Proceeding with installation (silent/force mode)...")
+            return True
+
         return self.prompts.confirm("Proceed with installation?", True)
 
     def _execute_installation(self) -> bool:
