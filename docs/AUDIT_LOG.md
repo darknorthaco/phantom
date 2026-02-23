@@ -162,3 +162,43 @@ This document tracks the complete assimilation of phantom_ptr, redblue-private, 
 
 ## Next Phase: Professional Package Distribution
 Ready to proceed with Phase 3: Unified build system, professional installers, and enterprise packaging.
+
+---
+
+## S-Series Audit Rules
+
+The following rules govern all **future** S-series structural integrity audits.  
+These rules apply prospectively from the date of adoption; they do not retroactively
+invalidate any prior commit or work product.
+
+### S-RULE-1 — Read-Only Audit Scope
+During any S-series audit (S-1, S-2, … S-N), the auditor **MUST NOT** modify any source
+code. Permitted operations: analyze, classify, compare, and report findings only.
+Prohibited operations: move, copy, rename, edit, or delete any `.py`, `.sh`, `.ps1`,
+`.bat`, `.yaml`, `.json`, `.proto`, or any other source file or directory.
+
+### S-RULE-2 — Preserve Directory Structure
+The auditor **MUST** preserve the directory structure exactly as found. Collapsing nested
+directories, merging subtrees, or inferring new layouts is prohibited unless a separate,
+explicit remediation prompt is issued after the audit report is delivered.
+
+### S-RULE-3 — Cross-Reference All Structural Findings
+For every structural finding, the auditor **MUST** cross-reference all five of:
+1. **File size** — exact byte count, not an approximation
+2. **File path** — full relative path from repository root
+3. **Directory hierarchy** — depth and parent chain
+4. **Naming conventions** — case-sensitive exact match required
+5. **Applicable audit rules** — cite the rule ID that governs the finding
+
+Equivalence **MUST NOT** be assumed based on filename alone. Two files sharing a name but
+differing in path, size, or hierarchy are distinct artifacts and must be reported separately.
+
+### S-RULE-4 — No Overwrites Without Explicit Instruction
+If two files share a name but have different sizes or paths, the auditor **MUST** report
+the discrepancy and halt. It **MUST NOT** decide which version is authoritative. Only a
+subsequent explicit remediation instruction may authorize a copy or overwrite.
+
+### S-RULE-5 — No Retroactive Application
+New governance rules apply only to future actions. They **MUST NOT** be interpreted as
+retroactive invalidation of prior work. A revert, undo, or rollback of any prior commit
+requires explicit authorization using the phrase **"AUTHORIZED: REVERT"**.
