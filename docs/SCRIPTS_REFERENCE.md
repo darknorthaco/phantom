@@ -32,13 +32,13 @@
 
 | Task | Windows (CMD) | Windows (PS1) | Windows (GUI) | Linux / macOS | Python (Cross-platform) |
 |------|--------------|---------------|---------------|---------------|-------------------------|
-| **Install Phantom** | `package/install.bat` | `installer/phantom_installer.ps1` | `installer/windows_gui_installer.py` | `package/install.sh` | `installer/phantom_installer.py` |
-| **Uninstall Phantom** | `package/uninstall.bat` | `installer/phantom_uninstaller.ps1` | — | `package/uninstall.sh` | `installer/phantom_uninstaller.py` |
+| **Install Phantom** | `package/install.bat` | `phantom_core/installer/phantom_installer.ps1` | `installer/windows_gui_installer.py` | `package/install.sh` | `phantom_core/installer/phantom_installer.py` |
+| **Uninstall Phantom** | `package/uninstall.bat` | `phantom_core/installer/phantom_uninstaller.ps1` | — | `package/uninstall.sh` | `installer/phantom_uninstaller.py` |
 | **Build package** | `package/build_complete.bat` | — | — | `package/build_complete.sh` | — |
 | **Start system** | — | — | — | `phantom_core/start_complete_phantom.sh` | `phantom_core/run_integrated_phantom.py` |
 | **Start controller only** | — | — | — | — | `phantom_core/run.py` |
-| **Post-install setup** | — | `installer/scripts/post_install.ps1` | — | `installer/scripts/post_install.sh` | — |
-| **Health check** | — | — | — | — | `installer/scripts/health_check.py` |
+| **Post-install setup** | — | `phantom_core/installer/scripts/post_install.ps1` | — | `phantom_core/installer/scripts/post_install.sh` | — |
+| **Health check** | — | — | — | — | `phantom_core/installer/scripts/health_check.py` |
 | **Run tests** | — | — | — | `phantom_core/scripts/run_tests.sh` | `pytest tests/` |
 
 ---
@@ -83,10 +83,10 @@ cd ui/redblue_matrix/phantom-matrix-android
 |--------|----------|-----------|-------------|
 | `package/install.sh` | Linux | Yes (root) | Professional CLI installer — system requirements check, component selection, systemd service creation, desktop shortcuts, virtual environment setup. Target: `/opt/phantom`. |
 | `package/install.bat` | Windows | Yes (Admin) | CLI installer — admin check, component selection, service creation, shortcut setup, Python venv. Target: `%ProgramFiles%\Phantom`. |
-| `installer/phantom_installer.sh` | Linux / macOS | Yes (root) | Shell wrapper — checks Python, then launches `phantom_installer.py` with banner. |
-| `installer/phantom_installer.ps1` | Windows | Yes (Admin) | PowerShell wrapper — checks Python, then launches `phantom_installer.py` with banner. |
-| `installer/phantom_installer.py` | Cross-platform | Yes | Python-based unified installer — platform-detected installation with CLI wizard, virtual environment setup, component manager. |
-| `installer/phantom_installer_windows.py` | Windows | Yes (Admin) | Windows-specific installation logic — execution policy checks, service creation, shortcut generation. Called by `phantom_installer.py`. |
+| `phantom_core/installer/phantom_installer.sh` | Linux / macOS | Yes (root) | Shell wrapper — checks Python, then launches `phantom_installer.py` with banner. |
+| `phantom_core/installer/phantom_installer.ps1` | Windows | Yes (Admin) | PowerShell wrapper — checks Python, then launches `phantom_installer.py` with banner. |
+| `phantom_core/installer/phantom_installer.py` | Cross-platform | Yes | Python-based unified installer — platform-detected installation with CLI wizard, virtual environment setup, component manager. |
+| `phantom_core/installer/phantom_installer_windows.py` | Windows | Yes (Admin) | Windows-specific installation logic — execution policy checks, service creation, shortcut generation. Called by `phantom_installer.py`. |
 | `installer/windows_gui_installer.py` | Windows | Yes (Admin) | PyQt6 GUI installer — multi-page wizard with component selection, progress bars, visual feedback. Requires `PyQt6` (auto-installs if missing). |
 
 ### Key Arguments
@@ -100,7 +100,7 @@ sudo ./package/install.sh
 package\install.bat
 
 # Cross-platform Python installer
-python3 installer/phantom_installer.py
+python3 phantom_core/installer/phantom_installer.py
 
 # Windows GUI installer
 python installer/windows_gui_installer.py
@@ -116,8 +116,8 @@ python installer/windows_gui_installer.py
 | Standard Linux install | `package/install.sh` |
 | Standard Windows install | `package/install.bat` |
 | Windows with GUI wizard | `installer/windows_gui_installer.py` |
-| Cross-platform / scripted | `installer/phantom_installer.py` |
-| PowerShell-native launcher | `installer/phantom_installer.ps1` |
+| Cross-platform / scripted | `phantom_core/installer/phantom_installer.py` |
+| PowerShell-native launcher | `phantom_core/installer/phantom_installer.ps1` |
 
 ---
 
@@ -129,8 +129,8 @@ python installer/windows_gui_installer.py
 |--------|----------|-----------|-------------|
 | `package/uninstall.sh` | Linux | Yes (root) | Professional uninstaller — stops services, terminates processes, frees ports (8765, 8082, 8080), removes files, desktop shortcuts, systemd unit. Interactive confirmation. |
 | `package/uninstall.bat` | Windows | Yes (Admin) | CLI uninstaller — stops service, terminates processes, verifies ports free, removes service/shortcuts/files. Interactive confirmation. |
-| `installer/phantom_uninstaller.sh` | Linux / macOS | Yes (root) | Shell wrapper — checks Python, launches `phantom_uninstaller.py`. |
-| `installer/phantom_uninstaller.ps1` | Windows | Yes (Admin) | PowerShell uninstaller with rich parameter support (see flags below). |
+| `phantom_core/installer/phantom_uninstaller.sh` | Linux / macOS | Yes (root) | Shell wrapper — checks Python, launches `phantom_uninstaller.py`. |
+| `phantom_core/installer/phantom_uninstaller.ps1` | Windows | Yes (Admin) | PowerShell uninstaller with rich parameter support (see flags below). |
 | `installer/phantom_uninstaller.py` | Cross-platform | Yes | Python orchestrator — manifest-based removal, backup, verification. |
 
 ### Key Arguments
@@ -246,7 +246,7 @@ python3 phantom_core/run_integrated_phantom.py \
 |--------|----------|-----------|-------------|
 | `phantom_core/scripts/dev_tools.sh` | Linux / macOS | No | Multi-command dev toolkit — system status, benchmarks, log monitoring, worker debugging, network checks, config validation, artifact cleanup. |
 | `phantom_core/validate_execution_modes.py` | Cross-platform | No | Validates execution mode logic (AUTO/HYBRID/MANUAL) without requiring a running system. Quick functional check. |
-| `installer/demo_installer.py` | Cross-platform | No | Non-interactive demo of installer features — showcases system check, component manager, worker discovery, socket manager, UI integration. |
+| `phantom_core/installer/demo_installer.py` | Cross-platform | No | Non-interactive demo of installer features — showcases system check, component manager, worker discovery, socket manager, UI integration. |
 | `ui/examples/terminal_ui/terminal_ui.py` | Cross-platform | No | Interactive terminal UI example — demonstrates the PhantomUI framework with a `cmd`-based CLI. Dev/reference only. |
 
 ### `dev_tools.sh` Subcommands
@@ -408,18 +408,18 @@ cd ui/redblue_matrix/matrix-web-ui
 
 | Script | Platform | Elevated? | Description |
 |--------|----------|-----------|-------------|
-| `installer/scripts/health_check.py` | Cross-platform | No | Post-installation health checker — validates directory structure, configuration files, service status, port availability, component connectivity. |
-| `installer/scripts/post_install.sh` | Linux / macOS | Yes (root) | Post-installation setup — sets file permissions, creates systemd service, configures firewall rules, runs validation. |
-| `installer/scripts/post_install.ps1` | Windows | Yes (Admin) | Post-installation setup — creates Windows service configuration, sets environment variables, creates shortcuts, runs validation. |
+| `phantom_core/installer/scripts/health_check.py` | Cross-platform | No | Post-installation health checker — validates directory structure, configuration files, service status, port availability, component connectivity. |
+| `phantom_core/installer/scripts/post_install.sh` | Linux / macOS | Yes (root) | Post-installation setup — sets file permissions, creates systemd service, configures firewall rules, runs validation. |
+| `phantom_core/installer/scripts/post_install.ps1` | Windows | Yes (Admin) | Post-installation setup — creates Windows service configuration, sets environment variables, creates shortcuts, runs validation. |
 
 ### Health Check
 
 ```bash
 # Run health check against installation directory
-python3 installer/scripts/health_check.py
+python3 phantom_core/installer/scripts/health_check.py
 
 # Post-install setup and verification (Linux)
-sudo ./installer/scripts/post_install.sh
+sudo ./phantom_core/installer/scripts/post_install.sh
 
 # Post-install setup and verification (Windows PowerShell)
 .\phantom_core\installer\scripts\post_install.ps1
@@ -496,16 +496,16 @@ sudo ./installer/scripts/post_install.sh
 | `package/install.bat` | Windows | Writes to `%ProgramFiles%`, creates Windows service |
 | `package/uninstall.sh` | Linux | Stops services, removes system files, frees ports |
 | `package/uninstall.bat` | Windows | Stops services, removes system files |
-| `installer/phantom_installer.sh` | Linux / macOS | Wraps `phantom_installer.py` (system-level install) |
-| `installer/phantom_installer.ps1` | Windows | Wraps `phantom_installer.py` (system-level install) |
-| `installer/phantom_installer.py` | Cross-platform | System-level file operations, service creation |
-| `installer/phantom_installer_windows.py` | Windows | Service creation, registry operations |
+| `phantom_core/installer/phantom_installer.sh` | Linux / macOS | Wraps `phantom_installer.py` (system-level install) |
+| `phantom_core/installer/phantom_installer.ps1` | Windows | Wraps `phantom_installer.py` (system-level install) |
+| `phantom_core/installer/phantom_installer.py` | Cross-platform | System-level file operations, service creation |
+| `phantom_core/installer/phantom_installer_windows.py` | Windows | Service creation, registry operations |
 | `installer/windows_gui_installer.py` | Windows | System-level installation via GUI |
 | `installer/phantom_uninstaller.py` | Cross-platform | Removes system files, stops services |
-| `installer/phantom_uninstaller.sh` | Linux / macOS | Wraps uninstaller Python script |
-| `installer/phantom_uninstaller.ps1` | Windows | Stops services, removes system files |
-| `installer/scripts/post_install.sh` | Linux / macOS | Sets permissions, creates systemd service, firewall rules |
-| `installer/scripts/post_install.ps1` | Windows | Creates Windows service, environment variables |
+| `phantom_core/installer/phantom_uninstaller.sh` | Linux / macOS | Wraps uninstaller Python script |
+| `phantom_core/installer/phantom_uninstaller.ps1` | Windows | Stops services, removes system files |
+| `phantom_core/installer/scripts/post_install.sh` | Linux / macOS | Sets permissions, creates systemd service, firewall rules |
+| `phantom_core/installer/scripts/post_install.ps1` | Windows | Creates Windows service, environment variables |
 | `phantom_core/fix_phantom_sockets.sh` | Linux | Kills processes, modifies system files via `sudo` |
 
 ---
