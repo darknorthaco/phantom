@@ -19,26 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-COMMERCIAL LICENSE NOTICE:
-This MIT License applies to personal, educational, and non-commercial use only.
-For commercial use, including business deployment, white-label redistribution,
-or integration into commercial products, a separate commercial license is required.
-
-See COMMERCIAL-LICENSE.md for commercial licensing details.
-Contact Dark North Co. at licensing@darknorthco.com for commercial licensing.
-
-BRANDING NOTICE:
-The "Dark North Co." name, logo, and associated branding elements are proprietary
-and protected intellectual property. Commercial licensees may customize branding
-as specified in their commercial license agreement.
-
-FRAMEWORK NOTICE:
-The names "Phantom Distributed Compute Fabric", "LLM Task Master",
-"Phantom Core", and associated framework component names are proprietary
-trademarks of Dark North Co. These marks are protected under trademark
-law independently of the software license above. Commercial use of these
-names in products or services requires prior written consent from Dark
-North Co.
-
-Contact Dark North Co. at darknorthacompany@gmail.com for details.

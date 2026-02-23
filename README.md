@@ -112,7 +112,8 @@ Phantom is governed by foundational documents that are **non-negotiable**:
 Phantom uses a **dual-license model**:
 
 ### Open Source (MIT)
-Free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
+The core platform is released under the MIT License. See [LICENSE](LICENSE).
+For commercial use, Dark North Co. requests a commercial license — see [LICENSE-NONCOMMERCIAL](LICENSE-NONCOMMERCIAL) for guidance.
 
 ### Commercial
 Required for business deployment, white-label redistribution, and revenue-generating use.  
