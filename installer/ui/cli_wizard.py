@@ -42,7 +42,16 @@ except ImportError:
 class CLIWizard:
     """Interactive CLI installation wizard"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        silent: bool = False,
+        install_type: str = "all",
+        force: bool = False,
+    ):
+        self.silent = silent
+        self.install_type = install_type
+        self.force = force
+
         self.prompts = Prompts()
         self.progress = ProgressDisplay()
         self.system_checker = SystemChecker()
@@ -121,11 +130,19 @@ class CLIWizard:
         """Run system requirement checks"""
         self.prompts.section("System Requirements Check")
 
-        self.progress.spinner("Checking system requirements...", 2)
+        if not self.silent:
+            self.progress.spinner("Checking system requirements...", 2)
 
         if not self.system_checker.run_all_checks():
             self.system_checker.print_report()
-            if not self.prompts.confirm("Continue despite failed checks?", False):
+            if self.silent and not self.force:
+                self.prompts.error(
+                    "System check failures detected. Use --force to override."
+                )
+                return False
+            if not self.silent and not self.prompts.confirm(
+                "Continue despite failed checks?", False
+            ):
                 return False
         else:
             self.system_checker.print_report()
