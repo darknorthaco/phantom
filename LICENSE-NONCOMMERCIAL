@@ -1,0 +1,38 @@
+NON-COMMERCIAL USE NOTICE
+Phantom Distributed Compute Fabric
+Copyright (c) 2026 Dark North Co.
+
+This software is available under the MIT License (see LICENSE). The MIT License
+permits all uses, including commercial use, without restriction.
+
+However, Phantom operates under a dual-license model. If you are using Phantom
+for commercial purposes, Dark North Co. requests that you obtain a commercial
+license in support of continued development. See COMMERCIAL-LICENSE.md for
+commercial licensing details and pricing tiers.
+
+COMMERCIAL USE GUIDANCE:
+The following activities are considered commercial use and benefit from a
+commercial license agreement with Dark North Co.:
+
+- Using the platform in a business environment
+- Offering compute or AI services to clients or customers
+- White-label redistribution of the platform
+- Integration into commercial AI or data products
+- Consulting services using this platform
+- Any use that generates revenue or business value
+
+Contact Dark North Co. at licensing@darknorthco.com for commercial licensing.
+
+BRANDING NOTICE:
+The "Dark North Co." name, logo, and associated branding elements are proprietary
+and protected intellectual property. Commercial licensees may customize branding
+as specified in their commercial license agreement.
+
+FRAMEWORK NOTICE:
+The names "Phantom Distributed Compute Fabric", "LLM Task Master",
+"Phantom Core", and associated framework component names are proprietary
+trademarks of Dark North Co. These marks are protected under trademark
+law independently of the software license. Commercial use of these names
+in products or services requires prior written consent from Dark North Co.
+
+Contact Dark North Co. at licensing@darknorthco.com for details.
