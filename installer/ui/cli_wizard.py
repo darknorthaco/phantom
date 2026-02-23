@@ -220,8 +220,16 @@ class CLIWizard:
         print()
 
         if self.silent:
-            # Auto-select based on install_type; OS filtering handled by validate_selection
-            auto_select = self._TYPE_COMPONENTS.get(self.install_type, [])
+            # Auto-select based on install_type, skipping components whose OS
+            # requirement does not match the current platform (e.g. skip
+            # windows_workers on Linux and vice-versa).
+            current_os = platform.system()
+            comp_defs = {c["id"]: c for c in components}
+            auto_select = [
+                comp_id
+                for comp_id in self._TYPE_COMPONENTS.get(self.install_type, [])
+                if comp_defs.get(comp_id, {}).get("os_required") in (None, current_os)
+            ]
             for comp_id in auto_select:
                 self.component_manager.select_component(comp_id)
             print(
