@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Black background -->
+    <item android:drawable="@android:color/black" />
+    
+    <!-- Matrix-style gradient overlay -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="50%p"
+                android:centerX="0.5"
+                android:centerY="0.3"
+                android:startColor="#001100"
+                android:centerColor="#000800"
+                android:endColor="#000000" />
+        </shape>
+    </item>
+    
+    <!-- Dark North Co. Logo placeholder -->
+    <item android:gravity="center">
+        <shape android:shape="oval">
+            <size android:width="120dp" android:height="120dp" />
+            <stroke android:width="2dp" android:color="#FF4444" />
+            <solid android:color="@android:color/transparent" />
+        </shape>
+    </item>
+    
+    <!-- Inner logo circle -->
+    <item android:gravity="center">
+        <shape android:shape="oval">
+            <size android:width="100dp" android:height="100dp" />
+            <solid android:color="#000000" />
+        </shape>
+    </item>
+    
+    <!-- Logo accent dot -->
+    <item android:gravity="center">
+        <shape android:shape="oval">
+            <size android:width="8dp" android:height="8dp" />
+            <solid android:color="#00FFFF" />
+        </shape>
+    </item>
+</layer-list>

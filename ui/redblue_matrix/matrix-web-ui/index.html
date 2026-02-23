@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>PHANTOM AI MATRIX - Neural Network Interface</title>
+<link href="styles.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+</head>
+<body>
+<!-- Matrix Digital Rain Background -->
+<canvas class="matrix-background" id="matrix-rain"></canvas>
+<!-- CRT Screen Effect Overlay -->
+<div class="crt-overlay"></div>
+<!-- Main Interface Container -->
+<div class="matrix-container">
+<!-- Header Terminal -->
+<header class="terminal-header">
+<div class="terminal-line">
+<span class="prompt">root@phantom-matrix:~$</span>
+<span class="typing-text" data-text="PHANTOM AI DISTRIBUTED NEURAL NETWORK - STATUS: ONLINE"></span>
+</div>
+<div class="system-time" id="system-time"></div>
+</header>
+<!-- Main Dashboard Grid -->
+<main class="dashboard-grid">
+<!-- Left Panel - Cluster Status -->
+<section class="panel cluster-panel">
+<div class="panel-header">
+<h2 class="glitch" data-text="NEURAL CLUSTER STATUS">NEURAL CLUSTER STATUS</h2>
+<div class="status-indicator online"></div>
+</div>
+<div class="cluster-topology">
+<!-- Fedora Server Node -->
+<div class="node-container">
+<div class="node-header">FEDORA SERVER [192.168.1.103]</div>
+<div class="gpu-grid">
+<div class="gpu-card gtx1080" id="gpu-gtx1080">
+<div class="gpu-name">GTX 1080</div>
+<div class="gpu-role">LLM TASK MASTER</div>
+<div class="gpu-stats">
+<div class="stat">
+<span class="label">UTIL:</span>
+<span class="value" id="gtx1080-util">---%</span>
+</div>
+<div class="stat">
+<span class="label">TEMP:</span>
+<span class="value" id="gtx1080-temp">---°C</span>
+</div>
+<div class="stat">
+<span class="label">MEM:</span>
+<span class="value" id="gtx1080-mem">--- MB</span>
+</div>
+</div>
+<div class="gpu-activity">
+<div class="activity-bar" id="gtx1080-activity"></div>
+</div>
+</div>
+<div class="gpu-card firepro" id="gpu-firepro">
+<div class="gpu-name">FIREPRO W9100</div>
+<div class="gpu-role">MEMORY SPECIALIST</div>
+<div class="gpu-stats">
+<div class="stat">
+<span class="label">UTIL:</span>
+<span class="value" id="firepro-util">---%</span>
+</div>
+<div class="stat">
+<span class="label">TEMP:</span>
+<span class="value" id="firepro-temp">---°C</span>
+</div>
+<div class="stat">
+<span class="label">MEM:</span>
+<span class="value" id="firepro-mem">--- MB</span>
+</div>
+</div>
+<div class="gpu-activity">
+<div class="activity-bar" id="firepro-activity"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Windows PC Node -->
+<div class="node-container">
+<div class="node-header">WINDOWS WORKSTATION</div>
+<div class="gpu-grid">
+<div class="gpu-card rtx5080" id="gpu-rtx5080">
+<div class="gpu-name">RTX 5080</div>
+<div class="gpu-role">ML POWERHOUSE</div>
+<div class="gpu-stats">
+<div class="stat">
+<span class="label">UTIL:</span>
+<span class="value" id="rtx5080-util">---%</span>
+</div>
+<div class="stat">
+<span class="label">TEMP:</span>
+<span class="value" id="rtx5080-temp">---°C</span>
+</div>
+<div class="stat">
+<span class="label">MEM:</span>
+<span class="value" id="rtx5080-mem">--- MB</span>
+</div>
+</div>
+<div class="gpu-activity">
+<div class="activity-bar" id="rtx5080-activity"></div>
+</div>
+</div>
+<div class="gpu-card rtx5060" id="gpu-rtx5060">
+<div class="gpu-name">RTX 5060</div>
+<div class="gpu-role">MODERN COMPUTE</div>
+<div class="gpu-stats">
+<div class="stat">
+<span class="label">UTIL:</span>
+<span class="value" id="rtx5060-util">---%</span>
+</div>
+<div class="stat">
+<span class="label">TEMP:</span>
+<span class="value" id="rtx5060-temp">---°C</span>
+</div>
+<div class="stat">
+<span class="label">MEM:</span>
+<span class="value" id="rtx5060-mem">--- MB</span>
+</div>
+</div>
+<div class="gpu-activity">
+<div class="activity-bar" id="rtx5060-activity"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Center Panel - AI Chat Interface -->
+<section class="panel chat-panel">
+<div class="panel-header">
+<h2 class="glitch" data-text="NEURAL INTERFACE">NEURAL INTERFACE</h2>
+<div class="model-selector">
+<select class="matrix-select" id="ai-model">
+<option value="llama2-7b">LLAMA-2-7B [GTX1080]</option>
+<option value="mistral-7b">MISTRAL-7B [GTX1080]</option>
+<option value="codellama-13b">CODELLAMA-13B [FIREPRO]</option>
+<option value="llama2-13b">LLAMA-2-13B [FIREPRO]</option>
+<option value="custom-model">CUSTOM-MODEL [RTX5080]</option>
+</select>
+</div>
+</div>
+<div class="chat-container">
+<div class="chat-messages" id="chat-messages">
+<div class="system-message">
+<span class="timestamp">[00:00:00]</span>
+<span class="message">PHANTOM AI NEURAL NETWORK INITIALIZED</span>
+</div>
+<div class="system-message">
+<span class="timestamp">[00:00:01]</span>
+<span class="message">DISTRIBUTED CLUSTER ONLINE - 4 GPUS DETECTED</span>
+</div>
+<div class="system-message">
+<span class="timestamp">[00:00:02]</span>
+<span class="message">READY FOR NEURAL INTERFACE...</span>
+</div>
+</div>
+<!-- HYBRID Approval Panel (visible in HYBRID mode only) -->
+<div class="mode-panel hybrid-panel" id="hybrid-approval-panel" style="display:none">
+<div class="mode-panel-title">⚡ HYBRID APPROVAL REQUIRED</div>
+<div class="approval-task" id="approval-task-text">Awaiting task for approval...</div>
+<div class="approval-buttons">
+<button class="matrix-btn approve-btn" id="approve-btn">✓ APPROVE</button>
+<button class="matrix-btn reject-btn" id="reject-btn">✗ REJECT</button>
+</div>
+</div>
+<!-- MANUAL Routing Panel (visible in MANUAL mode only) -->
+<div class="mode-panel manual-panel" id="manual-routing-panel" style="display:none">
+<div class="mode-panel-title">🔧 MANUAL GPU ROUTING</div>
+<div class="routing-controls">
+<label class="routing-label">TARGET GPU:</label>
+<select class="matrix-select" id="manual-gpu-select">
+<option value="GTX1080">GTX 1080 — LLM TASK MASTER</option>
+<option value="FIREPRO">FIREPRO W9100 — MEMORY SPECIALIST</option>
+<option value="RTX5080">RTX 5080 — ML POWERHOUSE</option>
+<option value="RTX5060">RTX 5060 — MODERN COMPUTE</option>
+</select>
+</div>
+</div>
+<div class="chat-input-container">
+<div class="input-line">
+<span class="input-prompt">neo@matrix:~$</span>
+<input autocomplete="off" class="matrix-input" id="chat-input" placeholder="Enter your query..." type="text"/>
+<select class="matrix-select mode-select" id="execution-mode" title="Execution Mode">
+<option value="AUTO" selected>AUTO</option>
+<option value="HYBRID">HYBRID</option>
+<option value="MANUAL">MANUAL</option>
+</select>
+<button class="matrix-btn" id="send-btn">EXECUTE</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Right Panel - System Monitor -->
+<section class="panel monitor-panel">
+<div class="panel-header">
+<h2 class="glitch" data-text="SYSTEM MONITOR">SYSTEM MONITOR</h2>
+<div class="refresh-indicator" id="refresh-indicator"></div>
+</div>
+<div class="monitor-content">
+<!-- Performance Graphs -->
+<div class="graph-container">
+<div class="graph-title">CLUSTER UTILIZATION</div>
+<canvas class="performance-graph" id="utilization-graph"></canvas>
+</div>
+<!-- Task Queue -->
+<div class="task-queue">
+<div class="queue-title">ACTIVE TASKS</div>
+<div class="task-list" id="task-list">
+<div class="task-item">
+<span class="task-id">[TASK-001]</span>
+<span class="task-type">LLM-INFERENCE</span>
+<span class="task-gpu">GTX1080</span>
+<span class="task-status running">RUNNING</span>
+</div>
+</div>
+</div>
+<!-- Network Status -->
+<div class="network-status">
+<div class="network-title">NETWORK STATUS</div>
+<div class="network-nodes">
+<div class="network-node">
+<span class="node-name">FEDORA-SERVER</span>
+<span class="node-status online">ONLINE</span>
+<span class="node-latency">1ms</span>
+</div>
+<div class="network-node">
+<span class="node-name">WINDOWS-PC</span>
+<span class="node-status online">ONLINE</span>
+<span class="node-latency">2ms</span>
+</div>
+</div>
+</div>
+<!-- Security Status -->
+<div class="security-status">
+<div class="security-title">SECURITY LEVEL</div>
+<div class="security-level" id="security-level">
+<span class="level-indicator enhanced"></span>
+<span class="level-text">ENHANCED</span>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Control Panel -->
+<footer class="control-panel">
+<div class="control-section">
+<button class="control-btn" id="emergency-stop">
+<span class="btn-icon">⏹</span>
+<span class="btn-text">EMERGENCY STOP</span>
+</button>
+<button class="control-btn" id="restart-cluster">
+<span class="btn-icon">🔄</span>
+<span class="btn-text">RESTART CLUSTER</span>
+</button>
+<button class="control-btn" id="load-balance">
+<span class="btn-icon">⚖</span>
+<span class="btn-text">LOAD BALANCE</span>
+</button>
+</div>
+<div class="status-section">
+<div class="status-item">
+<span class="status-label">UPTIME:</span>
+<span class="status-value" id="uptime">00:00:00</span>
+</div>
+<div class="status-item">
+<span class="status-label">TASKS COMPLETED:</span>
+<span class="status-value" id="tasks-completed">0</span>
+</div>
+<div class="status-item">
+<span class="status-label">POWER CONSUMPTION:</span>
+<span class="status-value" id="power-consumption">---W</span>
+</div>
+</div>
+</footer>
+</div>
+<!-- Audio Elements -->
+<audio id="typing-sound" preload="auto">
+<source src="sounds/typing.mp3" type="audio/mpeg"/>
+</audio>
+<audio id="notification-sound" preload="auto">
+<source src="sounds/notification.mp3" type="audio/mpeg"/>
+</audio>
+<!-- Scripts -->
+<script src="matrix-rain.js"></script>
+<script src="phantom-interface.js"></script>
+</body>
+</html>

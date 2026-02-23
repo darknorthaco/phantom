@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Build artifacts
+build/
+*.zip
+*.tar.gz
+
+# Runtime artifacts
+*.pid
+*.log
+*.cache/
+
+# TLS certificates (generated, not tracked)
+certs/*.pem
+certs/*.key
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor files
+*.save
+*.bak
+*.swp
+*~
+.idea/
+.vscode/
+
+# Compiled extensions
+*.so
+*.dll
+*.dylib

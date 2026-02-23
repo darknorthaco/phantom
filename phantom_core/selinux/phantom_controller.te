@@ -1,0 +1,33 @@
+policy_module(phantom_controller, 1.0.0)
+
+########################################
+# Declarations
+
+type phantom_controller_t;
+type phantom_controller_exec_t;
+init_daemon_domain(phantom_controller_t, phantom_controller_exec_t)
+
+type phantom_controller_var_t;
+files_type(phantom_controller_var_t)
+
+type phantom_controller_port_t;
+corenet_port(phantom_controller_port_t)
+
+########################################
+# Local policy – phantom_controller_t
+
+# Networking: bind/connect on controller and socket ports
+allow phantom_controller_t phantom_controller_port_t:tcp_socket { name_bind name_connect };
+corenet_tcp_bind_generic_node(phantom_controller_t)
+corenet_tcp_connect_generic_port(phantom_controller_t)
+
+# Read/write persistent state under /var/lib/phantom
+manage_dirs_pattern(phantom_controller_t, phantom_controller_var_t, phantom_controller_var_t)
+manage_files_pattern(phantom_controller_t, phantom_controller_var_t, phantom_controller_var_t)
+
+# Read TLS certificates
+read_files_pattern(phantom_controller_t, cert_t, cert_t)
+
+# Standard daemon needs
+logging_send_syslog_msg(phantom_controller_t)
+miscfiles_read_localization(phantom_controller_t)

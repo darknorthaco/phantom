@@ -1,0 +1,28 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+*.log
+*.cache/
+*.egg-info/
+build/
+dist/
+share/man/
+
+# TLS certificates (generated, not tracked)
+certs/*.pem
+certs/*.key
+
+# Editor backup files
+*.save
+*.bak
+*.swp
+*~
+
+# Persistent state
+data/
+*.pid

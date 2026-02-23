@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  controller:
+    build: .
+    # Works with both Docker and Podman (podman-compose)
+    ports:
+      - "${PHANTOM_PORT:-8080}:8080"
+      - "${PHANTOM_SOCKET_PORT:-8081}:8081"
+    environment:
+      PHANTOM_HOST: "0.0.0.0"
+      PHANTOM_PORT: "8080"
+      PHANTOM_SECURITY: "${PHANTOM_SECURITY:-basic}"
+      PHANTOM_CORS_ORIGINS: "${PHANTOM_CORS_ORIGINS:-http://localhost:8080}"
+      PHANTOM_STATE_DIR: "/app/data"
+      PHANTOM_TLS_CERT: "${PHANTOM_TLS_CERT:-}"
+      PHANTOM_TLS_KEY: "${PHANTOM_TLS_KEY:-}"
+    volumes:
+      - phantom-data:/app/data
+      - ${PHANTOM_CERTS_DIR:-./certs}:/app/certs:ro,z
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - label=type:phantom_controller_t
+
+volumes:
+  phantom-data:

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Phantom UI</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .mode-selector {
+            margin: 20px 0;
+        }
+        .task-form {
+            margin: 20px 0;
+        }
+        .task-list {
+            margin: 20px 0;
+        }
+        .task-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Phantom Distributed Computing</h1>
+            <p>Simple Web Interface</p>
+        </div>
+
+        <div id="status" class="status disconnected">
+            Status: Disconnected
+        </div>
+
+        <div class="mode-selector">
+            <h3>Execution Mode</h3>
+            <select id="executionMode">
+                <option value="AUTO">AUTO - Automatic execution</option>
+                <option value="HYBRID">HYBRID - Approval required</option>
+                <option value="MANUAL">MANUAL - Manual control</option>
+            </select>
+            <button onclick="setMode()">Set Mode</button>
+        </div>
+
+        <div class="task-form">
+            <h3>Submit Task</h3>
+            <input type="text" id="taskName" placeholder="Task name" required>
+            <textarea id="taskCommand" placeholder="Command to execute" rows="3" required></textarea>
+            <button onclick="submitTask()">Submit Task</button>
+        </div>
+
+        <div class="task-list">
+            <h3>Tasks</h3>
+            <div id="taskList">
+                <p>No tasks yet</p>
+            </div>
+        </div>
+
+        <div class="workers">
+            <h3>Available Workers</h3>
+            <button onclick="refreshWorkers()">Refresh Workers</button>
+            <div id="workerList">
+                <p>Loading workers...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simple Phantom UI JavaScript implementation
+        class SimplePhantomUI {
+            constructor() {
+                this.connected = false;
+                this.tasks = [];
+                this.workers = [];
+                this.executionMode = 'AUTO';
+
+                // Configuration - would be passed from framework
+                this.config = {
+                    socket_host: 'localhost',
+                    socket_port: 8082,
+                    controller_host: 'localhost',
+                    controller_port: 8765,
+                    protocol: 'websocket'
+                };
+
+                this.init();
+            }
+
+            init() {
+                this.connect();
+                this.refreshWorkers();
+                this.updateStatus();
+            }
+
+            connect() {
+                // Simulate connection - in real implementation would use WebSocket
+                setTimeout(() => {
+                    this.connected = true;
+                    this.updateStatus();
+                    this.showMessage('Connected to Phantom backend');
+                }, 1000);
+            }
+
+            updateStatus() {
+                const statusEl = document.getElementById('status');
+                if (this.connected) {
+                    statusEl.className = 'status connected';
+                    statusEl.textContent = `Status: Connected (Mode: ${this.executionMode})`;
+                } else {
+                    statusEl.className = 'status disconnected';
+                    statusEl.textContent = 'Status: Disconnected';
+                }
+            }
+
+            setMode() {
+                const mode = document.getElementById('executionMode').value;
+                // Simulate API call
+                this.executionMode = mode;
+                this.updateStatus();
+                this.showMessage(`Execution mode set to: ${mode}`);
+            }
+
+            submitTask() {
+                const name = document.getElementById('taskName').value.trim();
+                const command = document.getElementById('taskCommand').value.trim();
+
+                if (!name || !command) {
+                    this.showMessage('Please fill in both task name and command', 'error');
+                    return;
+                }
+
+                const task = {
+                    id: Date.now().toString(),
+                    name: name,
+                    command: command,
+                    status: 'submitted',
+                    timestamp: new Date().toISOString()
+                };
+
+                this.tasks.push(task);
+                this.updateTaskList();
+
+                // Clear form
+                document.getElementById('taskName').value = '';
+                document.getElementById('taskCommand').value = '';
+
+                this.showMessage(`Task "${name}" submitted successfully`);
+            }
+
+            updateTaskList() {
+                const taskListEl = document.getElementById('taskList');
+
+                if (this.tasks.length === 0) {
+                    taskListEl.innerHTML = '<p>No tasks yet</p>';
+                    return;
+                }
+
+                const html = this.tasks.map(task => `
+                    <div class="task-item">
+                        <strong>${task.name}</strong><br>
+                        <code>${task.command}</code><br>
+                        <small>Status: ${task.status} | ${task.timestamp}</small>
+                        ${task.status === 'pending_approval' ?
+                            `<br><button onclick="approveTask('${task.id}', true)">Approve</button>
+                             <button onclick="rejectTask('${task.id}')">Reject</button>` :
+                            ''}
+                    </div>
+                `).join('');
+
+                taskListEl.innerHTML = html;
+            }
+
+            approveTask(taskId, approved) {
+                const task = this.tasks.find(t => t.id === taskId);
+                if (task) {
+                    task.status = approved ? 'approved' : 'rejected';
+                    this.updateTaskList();
+                    this.showMessage(`Task "${task.name}" ${approved ? 'approved' : 'rejected'}`);
+                }
+            }
+
+            rejectTask(taskId) {
+                this.approveTask(taskId, false);
+            }
+
+            refreshWorkers() {
+                // Simulate worker data
+                this.workers = [
+                    { id: 'worker-1', name: 'GPU Worker 1', status: 'online', gpu: 'RTX 3080' },
+                    { id: 'worker-2', name: 'CPU Worker 1', status: 'online', gpu: 'None' },
+                    { id: 'worker-3', name: 'GPU Worker 2', status: 'offline', gpu: 'RTX 4070' }
+                ];
+
+                this.updateWorkerList();
+            }
+
+            updateWorkerList() {
+                const workerListEl = document.getElementById('workerList');
+
+                if (this.workers.length === 0) {
+                    workerListEl.innerHTML = '<p>No workers available</p>';
+                    return;
+                }
+
+                const html = this.workers.map(worker => `
+                    <div class="task-item">
+                        <strong>${worker.name}</strong><br>
+                        <small>ID: ${worker.id} | Status: ${worker.status} | GPU: ${worker.gpu}</small>
+                    </div>
+                `).join('');
+
+                workerListEl.innerHTML = html;
+            }
+
+            showMessage(message, type = 'info') {
+                // Simple message display - could be enhanced with toast notifications
+                console.log(`[${type.toUpperCase()}] ${message}`);
+
+                // For now, just use alert for important messages
+                if (type === 'error') {
+                    alert(`Error: ${message}`);
+                }
+            }
+        }
+
+        // Global functions for HTML onclick handlers
+        function setMode() {
+            window.phantomUI.setMode();
+        }
+
+        function submitTask() {
+            window.phantomUI.submitTask();
+        }
+
+        function approveTask(taskId, approved) {
+            window.phantomUI.approveTask(taskId, approved);
+        }
+
+        function rejectTask(taskId) {
+            window.phantomUI.approveTask(taskId, false);
+        }
+
+        function refreshWorkers() {
+            window.phantomUI.refreshWorkers();
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            window.phantomUI = new SimplePhantomUI();
+        });
+    </script>
+</body>
+</html>

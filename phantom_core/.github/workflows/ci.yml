@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install flake8 black
+      - run: black --check --diff .
+      - run: flake8 --max-line-length 120 --extend-ignore=E203 --exclude=venv,build,dist,.eggs phantom_core/ security_framework/ phantom_protocol/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install fastapi uvicorn[standard] pydantic httpx requests websockets psutil numpy pyyaml cryptography pyjwt pytest pytest-asyncio
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short -x
+
+  test-grpc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies (base + gRPC extras)
+        run: |
+          pip install fastapi uvicorn[standard] pydantic httpx requests websockets psutil numpy pyyaml cryptography pyjwt pytest pytest-asyncio grpcio grpcio-tools protobuf
+      - name: Run gRPC integration tests
+        run: |
+          python -m pytest tests/ -v --tb=short -m grpc_integration
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: [lint, test, test-grpc]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t phantom-controller:test .
+      - name: Verify image health endpoint
+        run: |
+          docker run -d --name phantom-test -p 8080:8080 phantom-controller:test
+          sleep 5
+          curl -sf http://localhost:8080/health || (docker logs phantom-test && exit 1)
+          docker stop phantom-test

@@ -1,0 +1,63 @@
+// Phantom Protocol – Task Distribution channel
+// schema_version: 1
+//
+// Defines the request/response messages for the task_distribution channel
+// and the gRPC service that workers implement and the controller calls.
+//
+// Backward compatibility note:
+//   JSON+HTTP remains the default; this service is only activated when
+//   ChannelConfig(serializer="protobuf", transport="grpc") is set for the
+//   "task_distribution" channel (see phantom_protocol/config.py).
+
+syntax = "proto3";
+
+package phantom.protocol;
+
+
+import "common.proto";
+
+// A task submitted from the controller to a worker.
+message TaskRequest {
+  // Unique task identifier
+  string task_id = 1;
+
+  // Type of task (e.g. "llm_inference", "gpu_compute")
+  string task_type = 2;
+
+  // Arbitrary task parameters (string → string)
+  // For richer payloads encode as JSON inside the value string.
+  map<string, string> parameters = 3;
+
+  // Protocol schema version for forward-compatibility checks
+  string schema_version = 4;
+
+  // Correlation identifier for distributed tracing
+  string correlation_id = 5;
+}
+
+// Result returned from the worker to the controller.
+message TaskResult {
+  // Mirrors task_id from TaskRequest
+  string task_id = 1;
+
+  // Human-readable status ("completed", "failed", "partial")
+  string status = 2;
+
+  // Arbitrary result data (string → string)
+  map<string, string> result = 3;
+
+  // Populated when status == "failed"
+  ErrorStatus error = 4;
+
+  // Protocol schema version
+  string schema_version = 5;
+
+  // Mirrors correlation_id from TaskRequest
+  string correlation_id = 6;
+}
+
+// gRPC service implemented by workers, called by the controller
+service TaskDistribution {
+  // Submit a task and receive the result synchronously (unary RPC)
+  rpc SubmitTask(TaskRequest) returns (TaskResult);
+}

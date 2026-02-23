@@ -1,0 +1,2 @@
+/usr/local/bin/phantom-controller   --   gen_context(system_u:object_r:phantom_controller_exec_t,s0)
+/var/lib/phantom(/.*)?               gen_context(system_u:object_r:phantom_controller_var_t,s0)

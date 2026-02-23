@@ -1,0 +1,13 @@
+## <summary>Interface definitions for the phantom_controller module.</summary>
+
+## <desc>
+##   <p>
+##     Allow a domain to connect to the Phantom controller port.
+##   </p>
+## </desc>
+interface(`phantom_controller_connect',`
+    gen_require(`
+        type phantom_controller_port_t;
+    ')
+    corenet_tcp_connect_port($1, phantom_controller_port_t)
+')

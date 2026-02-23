@@ -1,0 +1,20 @@
+{
+    "worker_id": "windows-rtx5060-secondary",
+    "controller_host": "192.168.1.103",
+    "controller_port": 8080,
+    "worker_port": 8092,
+    "gpu_index": 1,
+    "gpu_name": "RTX 5060",
+    "max_concurrent_tasks": 3,
+    "log_level": "INFO",
+    "network_mode": true,
+    "heartbeat_interval": 30,
+    "task_timeout": 300,
+    "memory_limit_gb": 14,
+    "optimization": {
+        "tensor_cores": true,
+        "dlss_support": true,
+        "av1_encoding": true,
+        "batch_processing": true
+    }
+}

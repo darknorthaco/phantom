@@ -1,0 +1,26 @@
+// Phantom Protocol – Common types
+// schema_version: 1
+//
+// Shared envelope and status types used across all Phantom channels.
+// These fields are included in every message to enable correlation,
+// auditing, and version-aware deserialization.
+
+syntax = "proto3";
+
+package phantom.protocol;
+
+
+// Severity levels for status messages
+enum StatusCode {
+  OK = 0;
+  ERROR = 1;
+  PARTIAL = 2;
+  TIMEOUT = 3;
+}
+
+// Status / error envelope attached to every response
+message ErrorStatus {
+  StatusCode code = 1;
+  string message = 2;
+  string detail = 3;
+}
