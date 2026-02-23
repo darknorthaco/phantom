@@ -33,7 +33,8 @@
 | Task | Windows (CMD) | Windows (PS1) | Windows (GUI) | Linux / macOS | Python (Cross-platform) |
 |------|--------------|---------------|---------------|---------------|-------------------------|
 | **Install Phantom** | `package/install.bat` | `installer/phantom_installer.ps1` | `installer/windows_gui_installer.py` | `package/install.sh` | `installer/phantom_installer.py` |
-| **Uninstall Phantom** | `package/uninstall.bat` | `installer/phantom_uninstaller.ps1` | — | `package/uninstall.sh` | `installer/phantom_uninstaller.py` |
+| **Uninstall Phantom (Linux, recommended)** | — | — | — | `rm-phantom` (external) | `installer/phantom_uninstaller.py` |
+| **Uninstall Phantom (built-in)** | `package/uninstall.bat` | `installer/phantom_uninstaller.ps1` | — | `package/uninstall.sh` | `installer/phantom_uninstaller.py` |
 | **Build package** | `package/build_complete.bat` | — | — | `package/build_complete.sh` | — |
 | **Start system** | — | — | — | `phantom_core/start_complete_phantom.sh` | `phantom_core/run_integrated_phantom.py` |
 | **Start controller only** | — | — | — | — | `phantom_core/run.py` |
@@ -127,16 +128,21 @@ python installer/windows_gui_installer.py
 
 | Script | Platform | Elevated? | Description |
 |--------|----------|-----------|-------------|
-| `package/uninstall.sh` | Linux | Yes (root) | Professional uninstaller — stops services, terminates processes, frees ports (8765, 8082, 8080), removes files, desktop shortcuts, systemd unit. Interactive confirmation. |
+| `rm-phantom` (external) | Linux | Yes (root) | **Official Linux uninstaller.** External tool — install separately: `pip install rm-phantom`. When present on PATH, `installer/phantom_uninstaller.sh` delegates to it automatically. See [rm-phantom on GitHub](https://github.com/darknorthaco/rm-phantom). |
+| `package/uninstall.sh` | Linux | Yes (root) | Built-in uninstaller — stops services, terminates processes, frees ports (8765, 8082, 8080), removes files, desktop shortcuts, systemd unit. Interactive confirmation. Used as fallback when rm-phantom is not installed. |
 | `package/uninstall.bat` | Windows | Yes (Admin) | CLI uninstaller — stops service, terminates processes, verifies ports free, removes service/shortcuts/files. Interactive confirmation. |
-| `installer/phantom_uninstaller.sh` | Linux / macOS | Yes (root) | Shell wrapper — checks Python, launches `phantom_uninstaller.py`. |
+| `installer/phantom_uninstaller.sh` | Linux / macOS | Yes (root) | Shell wrapper — detects and delegates to rm-phantom on Linux when available; otherwise checks Python and launches `phantom_uninstaller.py`. |
 | `installer/phantom_uninstaller.ps1` | Windows | Yes (Admin) | PowerShell uninstaller with rich parameter support (see flags below). |
 | `installer/phantom_uninstaller.py` | Cross-platform | Yes | Python orchestrator — manifest-based removal, backup, verification. |
 
 ### Key Arguments
 
 ```bash
-# Linux — Package uninstaller (interactive)
+# Linux — rm-phantom (recommended, install separately)
+rm-phantom           # interactive
+rm-phantom --silent  # non-interactive
+
+# Linux — Package uninstaller (built-in fallback)
 sudo ./package/uninstall.sh
 
 # Windows — Package uninstaller (interactive, run as Admin)

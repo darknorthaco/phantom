@@ -58,6 +58,23 @@ if [ "$EUID" -ne 0 ]; then
     fi
 fi
 
+# On Linux, prefer rm-phantom when it is available on PATH
+if [[ "$(uname -s)" == "Linux" ]] && command -v rm-phantom &> /dev/null; then
+    log_info "Detected rm-phantom — using it as the official Linux uninstaller"
+    log_info "See https://github.com/darknorthaco/rm-phantom for details"
+    echo ""
+    rm-phantom --silent
+    exit $?
+fi
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+    log_warning "rm-phantom not found — falling back to built-in uninstaller"
+    log_warning "Install rm-phantom for the recommended experience:"
+    log_warning "  pip install rm-phantom"
+    log_warning "  https://github.com/darknorthaco/rm-phantom"
+    echo ""
+fi
+
 # Launch Python uninstaller
 log_info "Launching Phantom Uninstaller..."
 echo ""

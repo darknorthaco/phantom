@@ -55,9 +55,38 @@ reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Phantom" /f
 
 ## Linux / macOS Uninstallation
 
-### Automated Uninstaller (Recommended)
+### Using rm-phantom (Recommended for Linux)
 
-Run the shell uninstaller as root:
+[**rm-phantom**](https://github.com/darknorthaco/rm-phantom) is the official
+Linux uninstaller for Phantom. It provides a thorough, verified removal of all
+Phantom components.
+
+**Install rm-phantom:**
+
+```bash
+# Using pip
+pip install rm-phantom
+
+# Or follow the instructions at https://github.com/darknorthaco/rm-phantom
+```
+
+**Run the uninstaller:**
+
+```bash
+# Interactive mode
+rm-phantom
+
+# Silent / non-interactive mode (for scripts)
+rm-phantom --silent
+```
+
+When rm-phantom is installed, Phantom's built-in uninstall entry point
+(`installer/phantom_uninstaller.sh`) automatically detects and delegates to it.
+
+### Automated Uninstaller (Built-in Fallback)
+
+If rm-phantom is not installed, run Phantom's built-in shell uninstaller as
+root:
 
 ```bash
 sudo ./package/uninstall.sh

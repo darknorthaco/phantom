@@ -44,6 +44,15 @@ For commercial use, redistribution, or deployment in commercial products, a comm
 - **installer/modules/process_cleanup.py**: Assimilated from rm-phantom under dual-license terms
 - **installer/modules/port_verifier.py**: Assimilated from rm-phantom under dual-license terms
 
+### External Integrations
+
+Phantom integrates with the following external tools but does **not** embed their
+source code. These tools are separate projects with their own licenses.
+
+| Tool | Repository | License | Integration |
+|------|-----------|---------|-------------|
+| rm-phantom | https://github.com/darknorthaco/rm-phantom | See project repository | Official Linux uninstaller — detected and invoked by `installer/phantom_uninstaller.sh` when present on PATH. Must be installed separately (e.g. `pip install rm-phantom`). |
+
 ### Example and Template Code
 - **ui/examples/**: MIT license (educational and demonstration purposes)
 - **docs/**: MIT license (documentation and guides)
