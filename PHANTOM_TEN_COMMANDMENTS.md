@@ -8,7 +8,9 @@
 
 ## Purpose
 
-The Ten Commandments are **operational rules** derived from the [Phantom Ethos](./PHANTOM_ETHOS.md). They provide concrete, actionable guidelines for all development, analysis, and operational activities within the Phantom ecosystem.
+The Ten Commandments are **operational rules** that form part of the **Body** layer in Phantom's Soul–Mind–Body governance hierarchy. They enforce the [Phantom Doctrine](./doctrine/PHANTOM_DOCTRINE.md) (Mind) in action, under the authority of the [Phantom Manifest](./doctrine/PHANTOM_MANIFEST.md) (Soul).
+
+They provide concrete, actionable guidelines for all development, analysis, and operational activities within the Phantom ecosystem.
 
 **These commandments are absolute.** Violation of any commandment is grounds for immediate halt and human intervention.
 
@@ -186,10 +188,11 @@ Violation of the commandments results in:
 ## Hierarchy of Authority
 
 1. **Human Architect** — Final decision on all matters
-2. **Phantom Ethos** — Foundational principles
-3. **Ten Commandments** — Operational rules
-4. **Standard Operating Procedures** — Detailed workflows
-5. **Best Practices** — Recommendations (not requirements)
+2. **Phantom Manifest (Soul)** — Identity, purpose, and the Identity Contract
+3. **Phantom Doctrine (Mind)** — Governing principles and reasoning
+4. **Ten Commandments + .cursorrules (Body)** — Operational rules and development constraints
+5. **Standard Operating Procedures** — Detailed workflows
+6. **Best Practices** — Recommendations (not requirements)
 
 When rules conflict, higher authority takes precedence.
 
@@ -197,7 +200,8 @@ When rules conflict, higher authority takes precedence.
 
 ## References
 
-- [PHANTOM_ETHOS.md](./PHANTOM_ETHOS.md) — Foundational principles
+- [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) — Soul of Phantom (highest authority)
+- [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) — Mind of Phantom (governing principles)
 - [GOVERNANCE.md](./GOVERNANCE.md) — Repository governance model
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — Contribution guidelines
 

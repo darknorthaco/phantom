@@ -1,0 +1,81 @@
+# PHANTOM .cursorrules
+# Body of the Phantom Intelligence Fabric
+# Operational Constraints for Development
+#
+# Governance Layer: BODY
+# This file (together with PHANTOM_TEN_COMMANDMENTS.md) enforces the
+# Doctrine in action. The Body is subordinate to the Mind (PHANTOM_DOCTRINE.md)
+# and the Soul (PHANTOM_MANIFEST.md).
+#
+# Phantom is Phantom. Everywhere. Always. Unmistakably.
+
+project_identity:
+  name: "Phantom"
+  creed: "Human-first. Sovereign. Humble. Authentic. Transparent. Consistent."
+
+principles:
+  - "Phantom yields instantly when the human is active."
+  - "Every controller is its own sovereign domain."
+  - "All cross-controller communication must be cryptographically signed."
+  - "No hidden state, silent calls, or implicit sharing."
+  - "Mesh participation and worker export are explicit and reversible."
+  - "Phantom behaves consistently across all households and hardware."
+
+banned_patterns:
+  cloud_dependencies:
+    - "aws-sdk"
+    - "gcp"
+    - "azure"
+    - "firebase"
+    - "sentry"
+    - "datadog"
+  telemetry_tracking:
+    - "segment"
+    - "mixpanel"
+    - "google-analytics"
+    - "trackingId"
+  central_orchestrators:
+    - "kubernetes"
+    - "k8s"
+    - "nomad"
+    - "ecs"
+    - "swarm"
+  implicit_trust:
+    - "auto-discovery"
+    - "auto-approve"
+
+requirements:
+  identity:
+    - "Controllers use public/private keypairs."
+    - "Trust relationships require manual approval."
+  transport:
+    - "WAN communication uses QUIC/TLS or equivalent secure transport."
+    - "No VPN requirement for core mesh behavior."
+  mesh_behavior:
+    - "Controllers communicate directly; workers never cross households."
+    - "Bootstrap spaces are discovery-only and never relay jobs."
+  human_priority:
+    - "Phantom must not interfere with gaming, creative work, or primary tasks."
+    - "Dynamic withdrawal is mandatory for all workers."
+  transparency:
+    - "All routing decisions must be loggable and inspectable."
+    - "All external communication paths must be documented."
+  structure:
+    - "Modules must remain small, explicit, and composable."
+    - "Naming must reflect Phantom's model: controller, worker, mesh, identity, trust, export, withdraw."
+
+alignment_checks:
+  - "Does this change respect human-first priority?"
+  - "Does it preserve sovereignty and voluntary participation?"
+  - "Does it introduce hidden communication or implicit trust?"
+  - "Are all new paths signed, verified, and logged?"
+  - "Does it maintain Phantom's consistency across households?"
+  - "Does it align with the Phantom Doctrine and Manifest?"
+
+hierarchy:
+  soul: "PHANTOM_MANIFEST.md — highest authority, defines identity and purpose."
+  mind: "PHANTOM_DOCTRINE.md — interprets the Soul, governs reasoning."
+  body: ".cursorrules + PHANTOM_TEN_COMMANDMENTS.md — enforces the Doctrine in action."
+
+final_rule:
+  - "If any design choice conflicts with the Phantom Manifest (Soul), the Soul prevails."

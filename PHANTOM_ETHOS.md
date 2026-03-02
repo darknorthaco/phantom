@@ -1,14 +1,20 @@
 # Phantom Ethos: Core Principles
 
 **Version:** 1.0.0  
-**Status:** Authoritative  
+**Status:** HISTORICAL — Superseded by the Soul–Mind–Body governance stack  
+**Superseded by:** [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) (Soul), [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) (Mind)  
 **Applies to:** All Phantom Systems and Distributions
+
+> **This document is retained for historical reference.**  
+> The principles below have been absorbed into the Phantom Doctrine (Mind).  
+> The authoritative governance chain is:  
+> **Soul** → PHANTOM_MANIFEST.md → **Mind** → PHANTOM_DOCTRINE.md → **Body** → .cursorrules + PHANTOM_TEN_COMMANDMENTS.md
 
 ---
 
 ## Purpose
 
-This document defines the foundational principles that guide all development, analysis, and operations within the Phantom ecosystem. These principles are **non-negotiable** and override all other instructions, requirements, or external pressures.
+This document originally defined the foundational principles that guided all development, analysis, and operations within the Phantom ecosystem. These principles remain valid but are now expressed through the Doctrine.
 
 ---
 
@@ -72,46 +78,13 @@ Humans **direct**, machines **execute**. Never reverse this hierarchy.
 
 ---
 
-## Application in Phantom_PTR
-
-Phantom_PTR is a **public sandbox** for analysis, exploration, and community engagement. It is **NOT** the authoritative Phantom codebase.
-
-### Sandbox Constraints
-
-1. **No Cross-Contamination**
-   - Changes in Phantom_PTR do not affect the private Phantom repository
-   - Do not reference or imply changes to the private codebase
-   - All work remains fully contained within the sandbox
-
-2. **Analysis-First Mode**
-   - Default mode is **ANALYSIS-ONLY**
-   - Proposals are documented, not applied
-   - Changes require explicit human authorization
-
-3. **Community Engagement**
-   - Public contributions are welcome within sandbox boundaries
-   - All contributions must comply with the Ethos and Commandments
-   - Community members have no authority over private Phantom systems
-
----
-
-## Enforcement
-
-Violations of the Phantom Ethos are grounds for:
-- Rejection of pull requests
-- Reversion of changes
-- Suspension of access to Phantom systems
-
-When in doubt, **halt and ask**. Preserving the integrity of Phantom is more important than any single feature or deadline.
-
----
-
 ## References
 
-- [PHANTOM_COMMANDMENTS.md](./PHANTOM_COMMANDMENTS.md) - Operational rules derived from the Ethos
-- [PHANTOM_SOUL.md](./PHANTOM_SOUL.md) - The philosophical foundation of Phantom
-- [GITPRO_ANALYSIS_MODE.md](./GITPRO_ANALYSIS_MODE.md) - Analysis-only operational guidelines
+- [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) — Soul of Phantom (highest authority)
+- [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) — Mind of Phantom (governing principles)
+- [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) — Body of Phantom (operational rules)
+- [.cursorrules](./.cursorrules) — Body of Phantom (development constraints)
 
 ---
 
-**The Ethos is law. The human is sovereign. The machine serves.**
+**This document is historical. The Soul (Manifest) is now the highest authority. The human is sovereign. The machine serves.**

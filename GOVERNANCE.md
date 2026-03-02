@@ -9,7 +9,11 @@
 
 ## Purpose
 
-This document defines the governance model for the Phantom unified distribution repository. It establishes decision-making processes, contribution guidelines, and enforcement mechanisms to ensure alignment with the Phantom Ethos, Ten Commandments, and Soul of Phantom.
+This document defines the governance model for the Phantom unified distribution repository. It establishes decision-making processes, contribution guidelines, and enforcement mechanisms to ensure alignment with the Phantom Soul–Mind–Body governance hierarchy:
+
+- **Soul:** [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) — Identity and purpose (highest authority)
+- **Mind:** [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) — Governing principles
+- **Body:** [.cursorrules](./.cursorrules) + [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) — Operational enforcement
 
 ---
 
@@ -31,24 +35,31 @@ The repository owner and designated maintainers have **final decision authority*
 - Grant or revoke access
 - Override automated systems
 
-### 2. **Phantom Ethos** (Foundational Principles)
-The [Phantom Ethos](./PHANTOM_ETHOS.md) defines immutable principles that guide all decisions.
+### 2. **Phantom Manifest (Soul)** (Foundational Identity)
+The [Phantom Manifest](./doctrine/PHANTOM_MANIFEST.md) defines Phantom's identity, purpose, and the Identity Contract. It is the highest authority after the Human Architect.
+
+### 3. **Phantom Doctrine (Mind)** (Governing Principles)
+The [Phantom Doctrine](./doctrine/PHANTOM_DOCTRINE.md) interprets the Soul. It provides the principles for reasoning and decision-making.
 
 **Key Principles:**
-- Sovereignty
-- Transparency
+- Human Priority
+- Sovereign Domains
+- Authentic Trust
+- Transparent Operation
+- Voluntary Mesh Participation
+- Consistent Behavior
+- Evolution Without Drift
 - Reversibility
 - Modularity
 - Minimalism
-- Integrity
-- Human Control
+- The Opera Principle
 
-### 3. **Ten Commandments** (Operational Rules)
-The [Ten Commandments](./PHANTOM_TEN_COMMANDMENTS.md) provide concrete operational rules derived from the Ethos.
+### 4. **Ten Commandments + .cursorrules (Body)** (Operational Rules)
+The [Ten Commandments](./PHANTOM_TEN_COMMANDMENTS.md) and [.cursorrules](./.cursorrules) enforce the Doctrine in action.
 
 **Enforcement:** Mandatory for all contributors and automated agents.
 
-### 4. **Standard Operating Procedures** (Detailed Workflows)
+### 5. **Standard Operating Procedures** (Detailed Workflows)
 SOPs define step-by-step processes for common activities.
 
 **Examples:**
@@ -62,8 +73,9 @@ SOPs define step-by-step processes for common activities.
 ### For All Contributors
 
 1. **Read the Governance Documents**
-   - [PHANTOM_ETHOS.md](./PHANTOM_ETHOS.md) - Core principles
-   - [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) - Operational rules
+   - [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) - Soul (identity and purpose)
+   - [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) - Mind (governing principles)
+   - [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) - Body (operational rules)
    - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) - Community standards
 
 2. **Operate in ANALYSIS-ONLY MODE**
@@ -172,8 +184,9 @@ Changes to governance documents require:
 ### Compliance Monitoring
 
 All contributions are checked for:
-- ✅ Alignment with Phantom Ethos
-- ✅ Compliance with Ten Commandments
+- ✅ Alignment with Phantom Manifest (Soul)
+- ✅ Alignment with Phantom Doctrine (Mind)
+- ✅ Compliance with Ten Commandments (Body)
 - ✅ Proper proposal format
 - ✅ ANALYSIS-ONLY MODE adherence
 - ✅ License compliance (MIT + Commercial)
@@ -347,8 +360,9 @@ All contributions must meet:
 
 Before merging any contribution:
 
-- [ ] Aligns with Phantom Ethos
-- [ ] Follows Ten Commandments
+- [ ] Aligns with Phantom Manifest (Soul)
+- [ ] Aligns with Phantom Doctrine (Mind)
+- [ ] Follows Ten Commandments (Body)
 - [ ] Uses proper proposal format
 - [ ] Includes clear reasoning
 - [ ] Documented and tested
@@ -360,8 +374,10 @@ Before merging any contribution:
 
 ## References
 
-- [PHANTOM_ETHOS.md](./PHANTOM_ETHOS.md) - Foundational principles
-- [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) - Operational rules
+- [PHANTOM_MANIFEST.md](./doctrine/PHANTOM_MANIFEST.md) - Soul (identity and purpose)
+- [PHANTOM_DOCTRINE.md](./doctrine/PHANTOM_DOCTRINE.md) - Mind (governing principles)
+- [PHANTOM_TEN_COMMANDMENTS.md](./PHANTOM_TEN_COMMANDMENTS.md) - Body (operational rules)
+- [.cursorrules](./.cursorrules) - Body (development constraints)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - Contribution guide
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) - Community standards
 - [SECURITY.md](./SECURITY.md) - Security policy
