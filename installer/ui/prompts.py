@@ -18,7 +18,7 @@ class Prompts:
         print("\nWelcome to the Phantom ecosystem installer!")
         print("This wizard will guide you through installing:")
         print("  • Phantom Core (distributed compute fabric)")
-        print("  • LLM Task Master (AI-powered routing)")
+        print("  • LLM Task Master (mode-aware task routing)")
         print("  • Worker Nodes (Linux/Windows)")
         print("  • Socket Infrastructure (real-time communication)")
         print("  • Security Framework (multi-level)")

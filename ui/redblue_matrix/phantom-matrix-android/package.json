@@ -49,11 +49,9 @@
     "node": ">=16"
   },
   "keywords": [
-    "ai",
-    "matrix",
+    "llm",
     "distributed-computing",
     "gpu-monitoring",
-    "cyberpunk",
     "phantom",
     "dark-north-co"
   ],

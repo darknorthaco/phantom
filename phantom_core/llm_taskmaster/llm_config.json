@@ -1,0 +1,132 @@
+{
+  "_comment": "Phantom LLM Task Master Configuration — Governed by PHANTOM_DOCTRINE.md and PHANTOM_MANIFEST.md",
+  "_governance": {
+    "soul": "doctrine/PHANTOM_MANIFEST.md",
+    "mind": "doctrine/PHANTOM_DOCTRINE.md",
+    "body": ".cursorrules + PHANTOM_TEN_COMMANDMENTS.md"
+  },
+
+  "execution_mode": {
+    "default": "auto",
+    "allowed_modes": ["auto", "hybrid", "manual"],
+    "env_override": "PHANTOM_EXECUTION_MODE",
+    "allow_per_task_override": true
+  },
+
+  "model": {
+    "model_type": "rule_based_with_learning",
+    "model_path": null,
+    "model_size": "small",
+    "context_length": 1024,
+    "precision": "fp16",
+    "batch_size": 1
+  },
+
+  "resource_limits": {
+    "max_memory_mb": 2048,
+    "max_vram_mb": 2048,
+    "target_gpu": "GTX 1080",
+    "target_vram_gb": 8
+  },
+
+  "routing": {
+    "fallback_to_smart_programming": true,
+    "max_decision_history": 100,
+    "confidence_threshold": 0.5,
+    "enable_learning": true
+  },
+
+  "hybrid_mode": {
+    "proposal_timeout_seconds": 300,
+    "require_approval_reason": false,
+    "auto_expire_proposals": true,
+    "batch_approval_enabled": true,
+    "proposal_notify_via_socket": true
+  },
+
+  "human_priority": {
+    "enabled": true,
+    "check_interval_seconds": 5,
+    "cpu_threshold_percent": 70,
+    "gpu_threshold_percent": 60,
+    "vram_threshold_percent": 70,
+    "auto_mode_action": "withdraw",
+    "hybrid_mode_action": "pause",
+    "manual_mode_action": "unaffected",
+    "monitored_processes": [
+      "game", "steam", "epic", "blender", "davinci",
+      "premiere", "photoshop", "obs", "unity", "unreal"
+    ]
+  },
+
+  "socket": {
+    "default_host": "localhost",
+    "default_port": 8081,
+    "reconnect_attempts": 3,
+    "reconnect_delay_seconds": 5
+  },
+
+  "gpu_profiles": {
+    "RTX 5080": {
+      "performance_tier": "flagship",
+      "memory_gb": 24,
+      "tensor_cores": "4th_gen",
+      "best_for": ["large_model_inference", "training", "real_time_ai"],
+      "score_multiplier": 10.0
+    },
+    "RTX 5060": {
+      "performance_tier": "mainstream",
+      "memory_gb": 16,
+      "tensor_cores": "4th_gen",
+      "best_for": ["ml_inference", "image_processing", "medium_training"],
+      "score_multiplier": 7.0
+    },
+    "GTX 1080": {
+      "performance_tier": "legacy",
+      "memory_gb": 8,
+      "tensor_cores": "none",
+      "best_for": ["stable_inference", "compatibility_testing", "llm_task_master"],
+      "score_multiplier": 5.0
+    },
+    "FirePro W9100": {
+      "performance_tier": "professional",
+      "memory_gb": 16,
+      "tensor_cores": "none",
+      "best_for": ["data_processing", "large_dataset_analysis", "memory_intensive_tasks"],
+      "score_multiplier": 6.0
+    }
+  },
+
+  "task_preferences": {
+    "ml_inference": {
+      "preferred_features": ["tensor_cores", "high_memory"],
+      "avoid_features": [],
+      "memory_requirement": "medium"
+    },
+    "training": {
+      "preferred_features": ["tensor_cores", "high_memory"],
+      "avoid_features": [],
+      "memory_requirement": "high"
+    },
+    "large_model_inference": {
+      "preferred_features": ["tensor_cores", "high_memory"],
+      "avoid_features": [],
+      "memory_requirement": "very_high"
+    },
+    "data_processing": {
+      "preferred_features": ["high_memory"],
+      "avoid_features": [],
+      "memory_requirement": "high"
+    },
+    "image_processing": {
+      "preferred_features": ["tensor_cores"],
+      "avoid_features": [],
+      "memory_requirement": "low"
+    },
+    "stable_inference": {
+      "preferred_features": ["proven_stability"],
+      "avoid_features": [],
+      "memory_requirement": "low"
+    }
+  }
+}

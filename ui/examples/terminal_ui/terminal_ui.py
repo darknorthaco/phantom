@@ -149,12 +149,13 @@ Type 'connect' to connect to Phantom backend.
 
     def get_available_workers(self) -> list:
         """Get list of available workers."""
-        # Simulate worker data
+        # Placeholder data — real deployment auto-discovers hardware
+        # via controller /workers API during network scan
         if not self.workers:
             self.workers = [
-                {'id': 'worker-1', 'name': 'GPU Worker 1', 'status': 'online', 'gpu': 'RTX 3080'},
+                {'id': 'worker-1', 'name': 'GPU Worker 1', 'status': 'online', 'gpu': '(auto-detected)'},
                 {'id': 'worker-2', 'name': 'CPU Worker 1', 'status': 'online', 'gpu': 'None'},
-                {'id': 'worker-3', 'name': 'GPU Worker 2', 'status': 'offline', 'gpu': 'RTX 4070'}
+                {'id': 'worker-3', 'name': 'GPU Worker 2', 'status': 'offline', 'gpu': '(auto-detected)'}
             ]
 
         return self.workers
@@ -396,9 +397,9 @@ if __name__ == '__main__':
     # Example usage
     config = {
         'socket_host': 'localhost',
-        'socket_port': 8082,
+        'socket_port': 8081,
         'controller_host': 'localhost',
-        'controller_port': 8765,
+        'controller_port': 8080,
         'execution_mode': 'AUTO'
     }
 

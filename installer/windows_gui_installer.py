@@ -139,7 +139,7 @@ class InstallationWorker(QThread):
         # Set description
         subprocess.run([
             "sc", "description", "Phantom",
-            "Phantom Distributed Computing Platform"
+            "Phantom Distributed Compute Fabric"
         ])
 
     def _create_shortcuts(self):
@@ -183,7 +183,7 @@ class WelcomePage(QWizardPage):
     def __init__(self):
         super().__init__()
         self.setTitle("Welcome to Phantom Installation")
-        self.setSubTitle("Distributed Computing Platform")
+        self.setSubTitle("Distributed Compute Fabric")
 
         layout = QVBoxLayout()
 
@@ -191,7 +191,7 @@ class WelcomePage(QWizardPage):
         welcome_label = QLabel(
             "Welcome to the Phantom installation wizard.\n\n"
             "This wizard will guide you through the installation of Phantom, "
-            "a distributed computing platform with advanced AI capabilities.\n\n"
+            "a distributed compute fabric with distributed compute capabilities.\n\n"
             "Click Next to continue."
         )
         welcome_label.setWordWrap(True)
@@ -203,10 +203,10 @@ class WelcomePage(QWizardPage):
 
         features = [
             "• Distributed task processing across multiple nodes",
-            "• Advanced AI/LLM task master integration",
+            "• LLM Task Master (mode-aware routing)",
             "• Real-time monitoring and control",
             "• Cross-platform compatibility (Windows/Linux/macOS)",
-            "• Professional UI with Matrix-inspired design",
+            "• Professional RedBlue monitoring interface",
             "• Secure communication protocols"
         ]
 
@@ -338,7 +338,7 @@ class RequirementsPage(QWizardPage):
         requirements = [
             ("Python 3.8+", "Checking...", "python_req"),
             ("Administrator privileges", "Checking...", "admin_req"),
-            ("Network ports (8765, 8082, 8080)", "Checking...", "ports_req"),
+            ("Network ports (8080, 8081, 3000)", "Checking...", "ports_req"),
             ("Disk space (500MB+)", "Checking...", "disk_req")
         ]
 
@@ -419,7 +419,7 @@ class RequirementsPage(QWizardPage):
         """Check if required ports are available"""
         import socket
 
-        ports = [8765, 8082, 8080]
+        ports = [8080, 8081, 3000]
         for port in ports:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
@@ -509,8 +509,8 @@ class CompletionPage(QWizardPage):
         summary_layout = QVBoxLayout()
 
         components = [
-            "✓ Phantom Core (distributed computing engine)",
-            "✓ RedBlue Matrix UI (cyberpunk web interface)",
+            "✓ Phantom Core (distributed compute fabric)",
+            "✓ RedBlue UI (monitoring and control interface)",
             "✓ Windows Service (automatic startup)",
             "✓ Desktop and Start Menu shortcuts",
             "✓ Documentation and examples"
@@ -527,9 +527,9 @@ class CompletionPage(QWizardPage):
         access_layout = QVBoxLayout()
 
         access_info = [
-            "Web UI: http://localhost:8080",
-            "API Endpoint: http://localhost:8765",
-            "WebSocket: localhost:8082"
+            "Controller: http://localhost:8080",
+            "WebSocket: ws://localhost:8081",
+            "RedBlue UI: http://localhost:3000"
         ]
 
         for info in access_info:

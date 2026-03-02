@@ -108,9 +108,9 @@ const SplashScreen = ({ onComplete }) => {
             },
           ]}
         >
-          <Text style={styles.appTitle}>PHANTOM MATRIX AI</Text>
-          <Text style={styles.subtitle}>Neural Network Interface</Text>
-          <Text style={styles.tagline}>Your AI. Your Hardware. Your Rules.</Text>
+          <Text style={styles.appTitle}>PHANTOM REDBLUE</Text>
+          <Text style={styles.subtitle}>Distributed Compute Fabric</Text>
+          <Text style={styles.tagline}>Your LLM. Your Hardware. Your Rules.</Text>
         </Animated.View>
 
         {/* Loading Indicator */}
@@ -133,7 +133,7 @@ const SplashScreen = ({ onComplete }) => {
               ]}
             />
           </View>
-          <Text style={styles.loadingText}>INITIALIZING NEURAL PATHWAYS...</Text>
+          <Text style={styles.loadingText}>INITIALIZING COMPUTE FABRIC...</Text>
         </Animated.View>
 
         {/* Matrix Code Effect */}
@@ -156,7 +156,7 @@ const SplashScreen = ({ onComplete }) => {
         ]}
       >
         <Text style={styles.brandText}>Powered by Dark North Co.</Text>
-        <Text style={styles.versionText}>v1.0.0 - Matrix Edition</Text>
+        <Text style={styles.versionText}>v1.0.0 - RedBlue Edition</Text>
       </Animated.View>
     </View>
   );

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Phantom Matrix AI</string>
-    <string name="app_description">Your AI. Your Hardware. Your Rules.</string>
+    <string name="app_name">Phantom RedBlue</string>
+    <string name="app_description">Your LLM. Your Hardware. Your Rules.</string>
     <string name="company_name">Dark North Co.</string>
     
-    <!-- Neural Network Messages -->
-    <string name="neural_initializing">Initializing Neural Network...</string>
-    <string name="neural_connecting">Connecting to Phantom Matrix...</string>
-    <string name="neural_online">Neural Network Online</string>
-    <string name="neural_offline">Neural Network Offline</string>
+    <!-- Compute Fabric Messages -->
+    <string name="neural_initializing">Initializing Compute Fabric...</string>
+    <string name="neural_connecting">Connecting to Phantom RedBlue...</string>
+    <string name="neural_online">Compute Fabric Online</string>
+    <string name="neural_offline">Compute Fabric Offline</string>
     
     <!-- GPU Status Messages -->
     <string name="gpu_online">GPU Online</string>
@@ -28,7 +28,7 @@
     
     <!-- Matrix Themed Messages -->
     <string name="welcome_to_matrix">Welcome to the Matrix</string>
-    <string name="neural_link_active">Neural Link Active</string>
+    <string name="neural_link_active">Compute Link Active</string>
     <string name="phantom_online">Phantom System Online</string>
     <string name="dark_north_protocol">Dark North Co. Protocol</string>
 </resources>

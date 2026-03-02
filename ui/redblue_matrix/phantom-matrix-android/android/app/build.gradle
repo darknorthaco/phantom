@@ -100,9 +100,9 @@ android {
         versionCode 1
         versionName "1.0.0"
         
-        // Matrix-themed app configuration
-        resValue "string", "app_name", "Phantom Matrix AI"
-        resValue "string", "app_description", "Your AI. Your Hardware. Your Rules."
+        // RedBlue-themed app configuration
+        resValue "string", "app_name", "Phantom RedBlue"
+        resValue "string", "app_description", "Your LLM. Your Hardware. Your Rules."
     }
 
     splits {

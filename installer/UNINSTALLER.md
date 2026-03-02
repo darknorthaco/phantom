@@ -325,8 +325,8 @@ The uninstaller supports non-interactive mode for automation:
 ## Related Documentation
 
 - [Installation Guide](README.md) - Installing Phantom
-- [PHASE_1_INSTALLER_UNINSTALLER_AUDIT.md](../PHASE_1_INSTALLER_UNINSTALLER_AUDIT.md) - Audit findings and recommendations
-- [UNINSTALL_WIZARD_PROPOSALS.md](../UNINSTALL_WIZARD_PROPOSALS.md) - Original design proposals
+- [PHASE_1_INSTALLER_UNINSTALLER_AUDIT.md](../phantom_core/PHASE_1_INSTALLER_UNINSTALLER_AUDIT.md) - Audit findings and recommendations
+- [UNINSTALL_WIZARD_PROPOSALS.md](../phantom_core/UNINSTALL_WIZARD_PROPOSALS.md) - Original design proposals
 
 ## Support
 

@@ -1,6 +1,6 @@
 /**
- * Phantom AI Matrix Interface
- * Main JavaScript controller for the Matrix-style UI
+ * Phantom Matrix Interface
+ * Main JavaScript controller for the Phantom distributed compute UI
  */
 
 const CONFIG = {
@@ -38,8 +38,6 @@ class PhantomInterface {
             taskList: document.getElementById('task-list'),
             uptime: document.getElementById('uptime'),
             tasksCompleted: document.getElementById('tasks-completed'),
-            powerConsumption: document.getElementById('power-consumption'),
-            securityLevel: document.getElementById('security-level'),
             refreshIndicator: document.getElementById('refresh-indicator'),
             utilizationGraph: document.getElementById('utilization-graph')
         };
@@ -122,14 +120,6 @@ class PhantomInterface {
             this.emergencyStop();
         });
         
-        document.getElementById('restart-cluster').addEventListener('click', () => {
-            this.restartCluster();
-        });
-        
-        document.getElementById('load-balance').addEventListener('click', () => {
-            this.loadBalance();
-        });
-        
         // Model selection
         this.elements.aiModel.addEventListener('change', (e) => {
             this.switchModel(e.target.value);
@@ -163,7 +153,7 @@ class PhantomInterface {
             this.socket.onopen = () => {
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
-                this.addSystemMessage('PHANTOM NEURAL NETWORK CONNECTION ESTABLISHED');
+                this.addSystemMessage('PHANTOM COMPUTE FABRIC CONNECTION ESTABLISHED');
                 this.playNotificationSound();
                 
                 // Request initial system status
@@ -190,12 +180,12 @@ class PhantomInterface {
             
             this.socket.onerror = (error) => {
                 console.error('WebSocket error:', error);
-                this.addSystemMessage('NEURAL NETWORK ERROR DETECTED');
+                this.addSystemMessage('CONNECTION ERROR DETECTED');
             };
             
         } catch (error) {
             console.error('Failed to connect to Phantom:', error);
-            this.addSystemMessage('FAILED TO ESTABLISH NEURAL CONNECTION - RUNNING IN DEMO MODE');
+            this.addSystemMessage('FAILED TO ESTABLISH CONNECTION — RUNNING IN DEMO MODE');
             this.startDemoMode();
         }
     }
@@ -321,34 +311,7 @@ class PhantomInterface {
         
         this.elements.chatMessages.appendChild(messageDiv);
         this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
-        
-        // Typing effect for AI messages
-        if (type === 'ai') {
-            this.typeMessage(messageSpan);
-        }
-    }
-    
-    typeMessage(element) {
-        // Collect existing child nodes (preserve structure such as <strong> labels)
-        const nodes = Array.from(element.childNodes);
-        // Get the last text node — this holds the actual message content
-        const textNode = nodes.filter(n => n.nodeType === Node.TEXT_NODE).pop();
-        if (!textNode) return;
 
-        const fullText = textNode.textContent;
-        textNode.textContent = '';
-        let i = 0;
-        
-        const typeInterval = setInterval(() => {
-            i++;
-            textNode.textContent = fullText.substring(0, i);
-            
-            if (i >= fullText.length) {
-                clearInterval(typeInterval);
-            }
-            
-            this.playTypingSound();
-        }, 30);
     }
     
     updateGPUStatus(gpuData) {
@@ -397,14 +360,6 @@ class PhantomInterface {
         if (status.tasks_completed !== undefined) {
             this.systemState.tasksCompleted = status.tasks_completed;
             this.elements.tasksCompleted.textContent = status.tasks_completed;
-        }
-        
-        if (status.power_consumption) {
-            this.elements.powerConsumption.textContent = `${status.power_consumption}W`;
-        }
-        
-        if (status.security_level) {
-            this.updateSecurityLevel(status.security_level);
         }
     }
     
@@ -492,14 +447,6 @@ class PhantomInterface {
         }
     }
     
-    updateSecurityLevel(level) {
-        const indicator = this.elements.securityLevel.querySelector('.level-indicator');
-        const text = this.elements.securityLevel.querySelector('.level-text');
-        
-        indicator.className = `level-indicator ${level.toLowerCase()}`;
-        text.textContent = level.toUpperCase();
-    }
-    
     startSystemClock() {
         setInterval(() => {
             this.elements.systemTime.textContent = this.getCurrentTime();
@@ -556,7 +503,7 @@ class PhantomInterface {
     // Demo mode functions
     startDemoMode() {
         this.addSystemMessage('ENTERING DEMONSTRATION MODE');
-        this.addSystemMessage('SIMULATING PHANTOM NEURAL NETWORK...');
+        this.addSystemMessage('SIMULATING PHANTOM COMPUTE FABRIC...');
         
         // Simulate periodic updates
         setInterval(() => {
@@ -638,13 +585,11 @@ class PhantomInterface {
     
     simulateAIResponse(message, model, mode = 'AUTO') {
         const responses = [
-            "Neural pathways analyzed. Processing your request through distributed compute fabric.",
-            "Quantum entanglement established with knowledge matrix. Retrieving data...",
-            "Accessing distributed neural network. Cross-referencing with training data.",
-            "Matrix calculations complete. Synthesizing response from collective intelligence.",
-            "Phantom AI nodes synchronized. Generating contextual response.",
-            "Deep learning algorithms engaged. Processing natural language query.",
-            "Distributed inference complete. Compiling results from GPU cluster."
+            "Task routed to compute fabric. Processing your request.",
+            "Distributed inference in progress across GPU cluster.",
+            "Request received. Routing to assigned compute node.",
+            "Processing complete. Results compiled from assigned GPU.",
+            "Task queued on compute fabric. Awaiting GPU availability.",
         ];
         
         if (mode === 'HYBRID') {
@@ -670,33 +615,8 @@ class PhantomInterface {
         this.playNotificationSound();
     }
     
-    restartCluster() {
-        this.addSystemMessage('CLUSTER RESTART SEQUENCE INITIATED');
-        this.addSystemMessage('SHUTTING DOWN NEURAL NODES...');
-        
-        setTimeout(() => {
-            this.addSystemMessage('RESTARTING PHANTOM DISTRIBUTED SYSTEM...');
-        }, 2000);
-        
-        setTimeout(() => {
-            this.addSystemMessage('CLUSTER RESTART COMPLETE - ALL SYSTEMS ONLINE');
-            if (window.matrixRain) {
-                window.matrixRain.pulse('#00FF41');
-            }
-        }, 4000);
-    }
-    
-    loadBalance() {
-        this.addSystemMessage('INITIATING LOAD BALANCING ACROSS GPU CLUSTER');
-        this.addSystemMessage('REDISTRIBUTING NEURAL WORKLOAD...');
-        
-        setTimeout(() => {
-            this.addSystemMessage('LOAD BALANCING COMPLETE - OPTIMAL DISTRIBUTION ACHIEVED');
-        }, 3000);
-    }
-    
     switchModel(model) {
-        this.addSystemMessage(`SWITCHING TO AI MODEL: ${model.toUpperCase()}`);
+        this.addSystemMessage(`SWITCHING MODEL: ${model.toUpperCase()}`);
         
         if (this.isConnected) {
             this.sendSocketMessage({

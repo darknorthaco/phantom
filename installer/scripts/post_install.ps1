@@ -42,7 +42,7 @@ Set-Location "$InstallDir"
     
     Print-Success "Service script created at $ServiceScript"
     Write-Host "  To create service, run as Administrator:"
-    Write-Host "  New-Service -Name 'PhantomController' -BinaryPathName 'powershell.exe -File $ServiceScript' -DisplayName 'Phantom Distributed Compute' -StartupType Automatic"
+    Write-Host "  New-Service -Name 'PhantomController' -BinaryPathName 'powershell.exe -File $ServiceScript' -DisplayName 'Phantom Distributed Compute Fabric' -StartupType Automatic"
 }
 
 # Function to create convenience scripts

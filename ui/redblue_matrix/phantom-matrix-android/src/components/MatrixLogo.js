@@ -211,7 +211,7 @@ const MatrixLogo = ({ style, animated = true, size = 120 }) => {
           fill="url(#matrixGlow)"
           opacity="0.7"
         >
-          PHANTOM MATRIX AI
+          PHANTOM REDBLUE
         </SvgText>
         
         {/* Digital Enhancement Lines */}

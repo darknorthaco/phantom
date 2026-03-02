@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Phantom Matrix AI - Android Build Script
-# Dark North Co. - Your AI. Your Hardware. Your Rules.
+# Phantom RedBlue - Android Build Script
+# Dark North Co. - Your LLM. Your Hardware. Your Rules.
 
-echo "🔋 Building Phantom Matrix AI for Android..."
+echo "🔋 Building Phantom RedBlue for Android..."
 echo "================================================"
 
 # Colors for output
@@ -129,7 +129,7 @@ case $choice in
 esac
 
 echo ""
-echo -e "${GREEN}🎉 Phantom Matrix AI build complete!${NC}"
+echo -e "${GREEN}🎉 Phantom RedBlue build complete!${NC}"
 echo -e "${CYAN}================================================${NC}"
-echo -e "${CYAN}🔋 Dark North Co. - Your AI. Your Hardware. Your Rules.${NC}"
+echo -e "${CYAN}🔋 Dark North Co. - Your LLM. Your Hardware. Your Rules.${NC}"
 echo -e "${CYAN}================================================${NC}"

@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>PHANTOM AI MATRIX - Neural Network Interface</title>
+<title>PHANTOM MATRIX — Distributed Compute Interface</title>
 <link href="styles.css" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
@@ -20,8 +20,8 @@
 <!-- Header Terminal -->
 <header class="terminal-header">
 <div class="terminal-line">
-<span class="prompt">root@phantom-matrix:~$</span>
-<span class="typing-text" data-text="PHANTOM AI DISTRIBUTED NEURAL NETWORK - STATUS: ONLINE"></span>
+<span class="prompt">root@phantom:~$</span>
+<span class="typing-text" data-text="PHANTOM DISTRIBUTED COMPUTE FABRIC — STATUS: ONLINE"></span>
 </div>
 <div class="system-time" id="system-time"></div>
 </header>
@@ -30,7 +30,7 @@
 <!-- Left Panel - Cluster Status -->
 <section class="panel cluster-panel">
 <div class="panel-header">
-<h2 class="glitch" data-text="NEURAL CLUSTER STATUS">NEURAL CLUSTER STATUS</h2>
+<h2 class="glitch" data-text="COMPUTE CLUSTER STATUS">COMPUTE CLUSTER STATUS</h2>
 <div class="status-indicator online"></div>
 </div>
 <div class="cluster-topology">
@@ -135,8 +135,9 @@
 <!-- Center Panel - AI Chat Interface -->
 <section class="panel chat-panel">
 <div class="panel-header">
-<h2 class="glitch" data-text="NEURAL INTERFACE">NEURAL INTERFACE</h2>
+<h2 class="glitch" data-text="TASK INTERFACE">TASK INTERFACE</h2>
 <div class="model-selector">
+<!-- TODO: Populate model list dynamically from backend GET /api/models -->
 <select class="matrix-select" id="ai-model">
 <option value="llama2-7b">LLAMA-2-7B [GTX1080]</option>
 <option value="mistral-7b">MISTRAL-7B [GTX1080]</option>
@@ -150,15 +151,15 @@
 <div class="chat-messages" id="chat-messages">
 <div class="system-message">
 <span class="timestamp">[00:00:00]</span>
-<span class="message">PHANTOM AI NEURAL NETWORK INITIALIZED</span>
+<span class="message">PHANTOM COMPUTE FABRIC INITIALIZED</span>
 </div>
 <div class="system-message">
 <span class="timestamp">[00:00:01]</span>
-<span class="message">DISTRIBUTED CLUSTER ONLINE - 4 GPUS DETECTED</span>
+<span class="message">COMPUTE CLUSTER ONLINE — 4 GPUS DETECTED</span>
 </div>
 <div class="system-message">
 <span class="timestamp">[00:00:02]</span>
-<span class="message">READY FOR NEURAL INTERFACE...</span>
+<span class="message">READY FOR TASK ROUTING...</span>
 </div>
 </div>
 <!-- HYBRID Approval Panel (visible in HYBRID mode only) -->
@@ -185,7 +186,7 @@
 </div>
 <div class="chat-input-container">
 <div class="input-line">
-<span class="input-prompt">neo@matrix:~$</span>
+<span class="input-prompt">user@phantom:~$</span>
 <input autocomplete="off" class="matrix-input" id="chat-input" placeholder="Enter your query..." type="text"/>
 <select class="matrix-select mode-select" id="execution-mode" title="Execution Mode">
 <option value="AUTO" selected>AUTO</option>
@@ -237,14 +238,6 @@
 </div>
 </div>
 </div>
-<!-- Security Status -->
-<div class="security-status">
-<div class="security-title">SECURITY LEVEL</div>
-<div class="security-level" id="security-level">
-<span class="level-indicator enhanced"></span>
-<span class="level-text">ENHANCED</span>
-</div>
-</div>
 </div>
 </section>
 </main>
@@ -255,14 +248,6 @@
 <span class="btn-icon">⏹</span>
 <span class="btn-text">EMERGENCY STOP</span>
 </button>
-<button class="control-btn" id="restart-cluster">
-<span class="btn-icon">🔄</span>
-<span class="btn-text">RESTART CLUSTER</span>
-</button>
-<button class="control-btn" id="load-balance">
-<span class="btn-icon">⚖</span>
-<span class="btn-text">LOAD BALANCE</span>
-</button>
 </div>
 <div class="status-section">
 <div class="status-item">
@@ -272,10 +257,6 @@
 <div class="status-item">
 <span class="status-label">TASKS COMPLETED:</span>
 <span class="status-value" id="tasks-completed">0</span>
-</div>
-<div class="status-item">
-<span class="status-label">POWER CONSUMPTION:</span>
-<span class="status-value" id="power-consumption">---W</span>
 </div>
 </div>
 </footer>

@@ -64,7 +64,7 @@ const App = () => {
     const backAction = () => {
       Alert.alert(
         'Exit Phantom Matrix',
-        'Are you sure you want to disconnect from the neural network?',
+        'Are you sure you want to disconnect from the compute fabric?',
         [
           {
             text: 'Cancel',
@@ -92,15 +92,15 @@ const App = () => {
   const connectToPhantom = async () => {
     try {
       // Simulate WebSocket connection to Phantom backend
-      // In real implementation, this would connect to ws://192.168.1.103:8765
-      console.log('Connecting to Phantom Neural Network...');
+      // In real implementation, this would connect to ws://192.168.1.103:8081
+      console.log('Connecting to Phantom Compute Fabric...');
       
       // Simulate connection delay
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       setIsConnected(true);
       
-      console.log('Connected to Phantom Matrix successfully!');
+      console.log('Connected to Phantom Compute Fabric successfully!');
     } catch (error) {
       console.error('Failed to connect to Phantom:', error);
       setIsConnected(false);
@@ -145,7 +145,7 @@ const App = () => {
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({
-          response: `Message processed by ${model.toUpperCase()} neural core`,
+          response: `Message processed by ${model.toUpperCase()} compute node`,
           timestamp: new Date(),
         });
       }, 1500);

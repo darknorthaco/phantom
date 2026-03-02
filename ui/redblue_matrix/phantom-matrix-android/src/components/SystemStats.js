@@ -164,7 +164,7 @@ const SystemStats = ({ systemData }) => {
   const renderSystemHealth = () => {
     const healthMetrics = [
       { 
-        name: 'NEURAL CORES', 
+        name: 'COMPUTE NODES', 
         value: '4/4 ONLINE', 
         status: 'optimal',
         description: 'All GPU workers responding'
@@ -203,7 +203,7 @@ const SystemStats = ({ systemData }) => {
 
     return (
       <View style={styles.healthCard}>
-        <Text style={styles.cardTitle}>SYSTEM HEALTH MATRIX</Text>
+        <Text style={styles.cardTitle}>SYSTEM HEALTH MONITOR</Text>
         
         {healthMetrics.map((metric, index) => (
           <View key={index} style={styles.healthMetric}>
@@ -249,7 +249,7 @@ const SystemStats = ({ systemData }) => {
   const renderPerformanceMetrics = () => {
     return (
       <View style={styles.performanceCard}>
-        <Text style={styles.cardTitle}>NEURAL PERFORMANCE MATRIX</Text>
+        <Text style={styles.cardTitle}>COMPUTE PERFORMANCE MONITOR</Text>
         
         {/* Real-time Performance Graph */}
         <View style={styles.performanceGraph}>
@@ -335,7 +335,7 @@ const SystemStats = ({ systemData }) => {
               EMERGENCY STOP
             </Text>
             <Text style={styles.emergencyButtonDesc}>
-              Halt all neural processes
+              Halt all compute processes
             </Text>
           </TouchableOpacity>
           
@@ -362,7 +362,7 @@ const SystemStats = ({ systemData }) => {
         <View style={styles.protocolInfo}>
           <Text style={styles.protocolTitle}>DARK NORTH CO. SAFETY PROTOCOL</Text>
           <Text style={styles.protocolText}>
-            Your hardware, your control. Emergency stops bypass all AI decision-making 
+            Your hardware, your control. Emergency stops bypass all LLM decision-making 
             and return full control to human operators. No corporate override possible.
           </Text>
         </View>
@@ -386,9 +386,9 @@ const SystemStats = ({ systemData }) => {
       
       {/* Dark North Co. Footer */}
       <View style={styles.footerBranding}>
-        <Text style={styles.footerTitle}>DARK NORTH CO. PHANTOM MATRIX</Text>
-        <Text style={styles.footerSubtitle}>Distributed Neural Architecture</Text>
-        <Text style={styles.footerTagline}>Your AI. Your Hardware. Your Rules.</Text>
+        <Text style={styles.footerTitle}>DARK NORTH CO. PHANTOM REDBLUE</Text>
+        <Text style={styles.footerSubtitle}>Distributed Compute Fabric</Text>
+        <Text style={styles.footerTagline}>Your LLM. Your Hardware. Your Rules.</Text>
       </View>
     </ScrollView>
   );

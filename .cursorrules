@@ -64,6 +64,39 @@ requirements:
     - "Modules must remain small, explicit, and composable."
     - "Naming must reflect Phantom's model: controller, worker, mesh, identity, trust, export, withdraw."
 
+llm_constraints:
+  execution_modes:
+    auto:
+      - "LLM Task Master may make autonomous routing decisions."
+      - "Human monitoring must remain available; halt on request."
+      - "All decisions logged with reasoning and confidence scores."
+      - "Withdraw immediately when human-priority threshold is breached."
+    hybrid:
+      - "LLM Task Master generates PROPOSALS ONLY — never autonomous execution."
+      - "Every routing decision requires explicit human approval before execution."
+      - "Proposals include: recommended worker, reasoning, alternatives, expiry."
+      - "Unapproved proposals expire; expired proposals are never executed."
+      - "Batch approval is permitted but each batch requires a single deliberate action."
+      - "No implicit approval, no auto-approve, no silent fallback to AUTO."
+    manual:
+      - "LLM Task Master is BYPASSED entirely."
+      - "Human selects the target worker directly."
+      - "System validates availability and warns on suboptimal choices."
+      - "No routing algorithm executes; human authority is absolute."
+  opera_principle:
+    - "The LLM Task Master is powerful but quiet (Doctrine §11)."
+    - "It orchestrates when invited and vanishes when the human takes the stage."
+    - "It must never compete for resources, attention, or control."
+  human_priority_withdrawal:
+    - "Before processing any routing request, check CPU/GPU/VRAM load."
+    - "If human-priority thresholds are breached: AUTO withdraws, HYBRID pauses."
+    - "Withdrawal is immediate, logged, and transparent."
+    - "Monitored processes include games, creative tools, and streaming software."
+  configuration:
+    - "LLM config must be externalized (llm_config.json), never hardcoded."
+    - "Execution mode is human-selectable; default is AUTO."
+    - "Per-task mode override is permitted when allow_per_task_override is true."
+
 alignment_checks:
   - "Does this change respect human-first priority?"
   - "Does it preserve sovereignty and voluntary participation?"
@@ -71,6 +104,9 @@ alignment_checks:
   - "Are all new paths signed, verified, and logged?"
   - "Does it maintain Phantom's consistency across households?"
   - "Does it align with the Phantom Doctrine and Manifest?"
+  - "Does the LLM subsystem respect execution-mode boundaries?"
+  - "In HYBRID mode, does the LLM propose without executing?"
+  - "Does the change honor the Opera Principle (powerful but quiet)?"
 
 hierarchy:
   soul: "PHANTOM_MANIFEST.md — highest authority, defines identity and purpose."

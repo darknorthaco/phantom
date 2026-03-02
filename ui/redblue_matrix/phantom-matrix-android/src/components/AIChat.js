@@ -20,13 +20,13 @@ const AIChat = ({ isConnected, onSendMessage }) => {
     {
       id: 1,
       type: 'system',
-      text: 'PHANTOM NEURAL NETWORK INITIALIZED',
+      text: 'PHANTOM COMPUTE FABRIC INITIALIZED',
       timestamp: new Date(),
     },
     {
       id: 2,
       type: 'system',
-      text: 'Dark North Co. AI Cluster Online',
+      text: 'Dark North Co. Compute Cluster Online',
       timestamp: new Date(),
     },
     {
@@ -116,7 +116,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
       const aiResponse = {
         id: Date.now() + 1,
         type: 'ai',
-        text: `Processing on ${getModelName(selectedModel)}... This is your AI running on YOUR hardware. No corporate surveillance, no data mining, just pure neural computation under your control.`,
+        text: `Processing on ${getModelName(selectedModel)}... This is your LLM running on YOUR hardware. No corporate surveillance, no data mining, just pure distributed computation under your control.`,
         timestamp: new Date(),
         model: selectedModel,
       };
@@ -180,7 +180,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
     
     return (
       <View style={styles.modelSelector}>
-        <Text style={styles.modelSelectorTitle}>NEURAL CORE SELECTION</Text>
+        <Text style={styles.modelSelectorTitle}>COMPUTE NODE SELECTION</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {models.map((model) => (
             <TouchableOpacity
@@ -235,7 +235,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
           styles.connectionText,
           { color: isConnected ? '#00FF41' : '#FF4444' }
         ]}>
-          {isConnected ? 'PHANTOM NEURAL LINK ACTIVE' : 'NEURAL LINK DISCONNECTED'}
+          {isConnected ? 'PHANTOM COMPUTE LINK ACTIVE' : 'COMPUTE LINK DISCONNECTED'}
         </Text>
       </Animated.View>
 
@@ -262,7 +262,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
             style={[styles.textInput, { color: getModelColor(selectedModel) }]}
             value={message}
             onChangeText={setMessage}
-            placeholder="Enter neural command..."
+            placeholder="Enter command..."
             placeholderTextColor="#666666"
             multiline
             maxLength={500}
@@ -294,7 +294,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
         {/* Dark North Co. Branding */}
         <View style={styles.brandingContainer}>
           <Text style={styles.brandingText}>
-            Powered by Dark North Co. Neural Architecture
+            Powered by Dark North Co. Compute Architecture
           </Text>
         </View>
       </View>

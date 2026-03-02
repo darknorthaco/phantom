@@ -9,7 +9,7 @@
 
 ## Purpose
 
-This document defines the three execution modes for the Phantom distributed compute system, their operational semantics, API specifications, and governance requirements. These modes implement the core principles of PHANTOM_ETHOS.md by providing progressive levels of automation and human control.
+This document defines the three execution modes for the Phantom distributed compute system, their operational semantics, API specifications, and governance requirements. These modes implement the governing principles of the Phantom Doctrine (PHANTOM_DOCTRINE.md) under the authority of the Phantom Manifest (PHANTOM_MANIFEST.md), providing progressive levels of automation and human control aligned with the Soul–Mind–Body hierarchy.
 
 ---
 
@@ -27,13 +27,19 @@ Phantom supports **three execution modes** that determine how task routing and w
 
 ## Core Principles
 
-All execution modes comply with PHANTOM_ETHOS.md:
+All execution modes comply with the Phantom Doctrine (PHANTOM_DOCTRINE.md) and Phantom Manifest (PHANTOM_MANIFEST.md):
 
-1. **Sovereignty** - Humans retain ultimate control in all modes
-2. **Transparency** - All decisions are logged and auditable
-3. **Reversibility** - Mode changes and task routing are reversible
-4. **Human Control** - Modes progressively grant/restrict automation
-5. **Minimalism** - Simplest appropriate mode for each scenario
+1. **Human Priority** (Doctrine §1) — Phantom yields instantly when the human is active
+2. **Sovereign Domains** (Doctrine §2) — Every controller is its own sovereign domain; no cloud dependency
+3. **Authentic Trust** (Doctrine §3) — All communication is signed and verifiable
+4. **Transparent Operation** (Doctrine §4) — No hidden state, no silent calls
+5. **Voluntary Mesh Participation** (Doctrine §5) — Joining a mesh is a human decision
+6. **Consistent Behavior** (Doctrine §6) — Same logic across all households and hardware
+7. **Evolution Without Drift** (Doctrine §7) — Phantom evolves but never loses its identity
+8. **Reversibility** (Doctrine §8) — Every operation is reversible without explicit human authorization for destructive actions
+9. **Modularity** (Doctrine §9) — Components are swappable, composable, independently functional
+10. **Minimalism** (Doctrine §10) — Simplicity is sovereign; essential complexity only
+11. **The Opera Principle** (Doctrine §11) — Powerful but quiet; orchestrates when invited, vanishes when the human takes the stage
 
 ---
 
@@ -81,11 +87,18 @@ PHANTOM_INTEGRATED=true  # Required for socket-based LLM routing
 - Worker selection is automatic and transparent
 - Status updates via WebSocket or polling
 
-#### Compliance
-- ✅ Sovereignty: Human operator can monitor and halt
-- ✅ Transparency: All routing decisions logged
-- ✅ Reversibility: Tasks can be cancelled, mode changed
-- ✅ Minimalism: Most efficient for production workloads
+#### Compliance (All 11 Doctrine Principles)
+- ✅ Human Priority (§1): Withdraws immediately when human needs resources
+- ✅ Sovereign Domains (§2): No cloud dependency; controller decides locally
+- ✅ Authentic Trust (§3): Routing decisions are signed and logged
+- ✅ Transparent Operation (§4): All decisions inspectable with full reasoning
+- ✅ Voluntary Mesh (§5): Worker participation is explicit and reversible
+- ✅ Consistent Behavior (§6): Same routing logic across all deployments
+- ✅ Evolution Without Drift (§7): Learning improves routing without changing identity
+- ✅ Reversibility (§8): Tasks can be cancelled, mode changed at any time
+- ✅ Modularity (§9): LLM routing is a swappable module with smart-programming fallback
+- ✅ Minimalism (§10): Most efficient mode; no unnecessary human intervention
+- ✅ Opera Principle (§11): Operates silently in background; human monitors only
 
 ---
 
@@ -94,7 +107,7 @@ PHANTOM_INTEGRATED=true  # Required for socket-based LLM routing
 **Status**: ✅ **IMPLEMENTED** (this PR)
 
 #### Description
-Semi-automated workflow where the system proposes worker selections but requires human approval before execution. This mode implements the "propose-then-approve" pattern from PHANTOM_ETHOS.md.
+Semi-automated workflow where the system proposes worker selections but requires human approval before execution. This mode implements the "propose-then-approve" pattern mandated by the Phantom Doctrine (§8 Reversibility, §1 Human Priority) and the Phantom Commandments (I: No modification without authorization).
 
 #### Decision Flow
 ```
@@ -283,12 +296,18 @@ Response (200 OK):
 }
 ```
 
-#### Compliance
-- ✅ Sovereignty: Human approval required for all task execution
-- ✅ Transparency: Full visibility into routing proposals and reasoning
-- ✅ Reversibility: Tasks rejected before execution are never run
-- ✅ Human Control: Explicit approval workflow enforced
-- ✅ Audit-First: Propose, review, approve, apply workflow
+#### Compliance (All 11 Doctrine Principles)
+- ✅ Human Priority (§1): Human approval is the gate — nothing executes without the human
+- ✅ Sovereign Domains (§2): Controller proposes locally; no external authority consulted
+- ✅ Authentic Trust (§3): Proposals and approvals are signed and logged with identity
+- ✅ Transparent Operation (§4): Full visibility into proposals, reasoning, and alternatives
+- ✅ Voluntary Mesh (§5): Worker assignment requires explicit human consent per-task
+- ✅ Consistent Behavior (§6): Propose-then-approve workflow is identical across deployments
+- ✅ Evolution Without Drift (§7): Proposal quality improves; approval gate never weakens
+- ✅ Reversibility (§8): Rejected proposals are never executed; approvals are cancellable
+- ✅ Modularity (§9): Approval gate is independent of routing algorithm
+- ✅ Minimalism (§10): Only the approval step is added; no unnecessary overhead
+- ✅ Opera Principle (§11): LLM proposes quietly; human decides and acts
 
 ---
 
@@ -468,12 +487,18 @@ MANUAL mode includes safeguards to prevent obviously harmful decisions:
 
 **Override**: Set `override_warnings: true` to bypass non-blocking warnings.
 
-#### Compliance
-- ✅ Sovereignty: Human has absolute control over routing
-- ✅ Transparency: System explains why selections may be suboptimal
-- ✅ Reversibility: Task assignments can be changed before execution
-- ✅ Human Control: Maximum human authority over system
-- ✅ Safety: Safeguards prevent dangerous selections while preserving control
+#### Compliance (All 11 Doctrine Principles)
+- ✅ Human Priority (§1): Human is the routing algorithm — absolute control
+- ✅ Sovereign Domains (§2): No external system influences worker selection
+- ✅ Authentic Trust (§3): Manual assignments are logged with operator identity
+- ✅ Transparent Operation (§4): System explains suboptimal choices; no hidden state
+- ✅ Voluntary Mesh (§5): Human explicitly chooses which worker receives each task
+- ✅ Consistent Behavior (§6): Validation rules are identical across all deployments
+- ✅ Evolution Without Drift (§7): Safeguards may improve; human authority never diminishes
+- ✅ Reversibility (§8): Assignments can be changed or cancelled before execution
+- ✅ Modularity (§9): LLM is fully bypassed; validation is an independent module
+- ✅ Minimalism (§10): No routing overhead; direct human-to-worker assignment
+- ✅ Opera Principle (§11): Phantom is silent — it validates and warns, nothing more
 
 ---
 
@@ -919,11 +944,16 @@ Each execution mode must have:
 
 ## References
 
-- [PHANTOM_ETHOS.md](./PHANTOM_ETHOS.md) - Core principles
-- [PHANTOM_COMMANDMENTS.md](./PHANTOM_COMMANDMENTS.md) - Operational rules
-- [GITPRO_ANALYSIS_MODE.md](./GITPRO_ANALYSIS_MODE.md) - Analysis mode guidelines
-- [phantom_core/controller_api.py](./phantom_core/controller_api.py) - Controller implementation
-- [socket_infrastructure/hybrid_socket_server.py](./socket_infrastructure/hybrid_socket_server.py) - WebSocket server
+- [PHANTOM_MANIFEST.md](../doctrine/PHANTOM_MANIFEST.md) — Soul (highest authority, identity and purpose)
+- [PHANTOM_DOCTRINE.md](../doctrine/PHANTOM_DOCTRINE.md) — Mind (11 governing principles)
+- [PHANTOM_TEN_COMMANDMENTS.md](../PHANTOM_TEN_COMMANDMENTS.md) — Body (operational rules)
+- [.cursorrules](../.cursorrules) — Body (development constraints, LLM constraints section)
+- [PHANTOM_GOVERNANCE_OVERVIEW.md](../PHANTOM_GOVERNANCE_OVERVIEW.md) — Constitutional hierarchy overview
+- [PHANTOM_ETHOS.md](./PHANTOM_ETHOS.md) — Historical reference only (superseded)
+- [GITPRO_ANALYSIS_MODE.md](./GITPRO_ANALYSIS_MODE.md) — Analysis mode guidelines
+- [phantom_core/controller_api.py](./phantom_core/controller_api.py) — Controller implementation
+- [socket_infrastructure/hybrid_socket_server.py](./socket_infrastructure/hybrid_socket_server.py) — WebSocket server
+- [llm_taskmaster/llm_config.json](./llm_taskmaster/llm_config.json) — External LLM configuration
 
 ---
 
@@ -932,6 +962,7 @@ Each execution mode must have:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-02-18 | Initial specification (AUTO existing, HYBRID/MANUAL new) |
+| 1.1.0 | 2026-03-02 | D-4 Resolution: Aligned to Soul–Mind–Body hierarchy, replaced Ethos references with Doctrine/Manifest, updated compliance to all 11 Doctrine principles, added LLM constraints to .cursorrules, externalized LLM config |
 
 ---
 

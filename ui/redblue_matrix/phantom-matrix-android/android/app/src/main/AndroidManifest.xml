@@ -40,7 +40,7 @@
             android:theme="@style/SplashTheme"
             android:exported="false" />
 
-        <!-- Background Service for Neural Network Connection -->
+        <!-- Background Service for Compute Fabric Connection -->
         <service
             android:name=".PhantomService"
             android:enabled="true"

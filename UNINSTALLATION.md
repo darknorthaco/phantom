@@ -17,7 +17,7 @@ package\uninstall.bat
 The uninstaller will:
 1. Stop the Phantom Windows service
 2. Terminate all running Phantom processes
-3. Verify ports 8765, 8082, 8080 are free
+3. Verify ports 8080, 8081, 3000 are free
 4. Remove the Windows service registration
 5. Remove Desktop and Start Menu shortcuts
 6. Back up the installation directory (renamed with timestamp)
@@ -36,7 +36,7 @@ sc delete Phantom
 taskkill /f /im python.exe /fi "WINDOWTITLE eq phantom*"
 
 :: 3. Verify ports are free
-netstat -ano | findstr "8765 8082 8080"
+netstat -ano | findstr "8080 8081 3000"
 
 :: 4. Remove the installation directory
 rmdir /s /q "C:\Program Files\Phantom"
@@ -96,7 +96,7 @@ The uninstaller will:
 1. Stop the Phantom systemd service
 2. Disable and remove the service unit
 3. Terminate all Phantom processes (SIGTERM → 5s wait → SIGKILL)
-4. Verify ports 8765, 8082, 8080 are free
+4. Verify ports 8080, 8081, 3000 are free
 5. Back up the installation directory (renamed with timestamp)
 6. Remove the installation directory
 7. Verify complete cleanup
@@ -118,9 +118,9 @@ sleep 2
 pkill -9 -f phantom || true
 
 # 3. Verify ports are free
-ss -tlnp | grep -E '8765|8082|8080'
+ss -tlnp | grep -E '8080|8081|3000'
 # or
-lsof -i :8765 -i :8082 -i :8080
+lsof -i :8080 -i :8081 -i :3000
 
 # 4. Remove the installation directory
 sudo rm -rf /opt/phantom
@@ -191,9 +191,9 @@ tasklist | findstr phantom
 
 # Check ports are free
 # Linux:
-ss -tlnp | grep -E '8765|8082|8080'
+ss -tlnp | grep -E '8080|8081|3000'
 # Windows:
-netstat -ano | findstr "8765 8082 8080"
+netstat -ano | findstr "8080 8081 3000"
 
 # Check service is removed
 # Linux:
@@ -226,10 +226,10 @@ Find and kill the process holding the port:
 
 ```bash
 # Linux
-sudo lsof -i :8765 | awk 'NR>1 {print $2}' | xargs kill -9
+sudo lsof -i :8080 | awk 'NR>1 {print $2}' | xargs kill -9
 
 # Windows
-for /f "tokens=5" %a in ('netstat -ano ^| findstr :8765') do taskkill /f /pid %a
+for /f "tokens=5" %a in ('netstat -ano ^| findstr :8080') do taskkill /f /pid %a
 ```
 
 ### Service Won't Delete (Windows)

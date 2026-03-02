@@ -134,8 +134,8 @@ const MainDashboard = () => {
       
       {/* App Title */}
       <View style={styles.titleContainer}>
-        <Text style={styles.appTitle}>PHANTOM MATRIX</Text>
-        <Text style={styles.subtitle}>Neural Network Interface</Text>
+        <Text style={styles.appTitle}>PHANTOM REDBLUE</Text>
+        <Text style={styles.subtitle}>Distributed Compute Fabric</Text>
       </View>
       
       {/* Connection Status */}
@@ -164,7 +164,7 @@ const MainDashboard = () => {
         onPress={() => switchTab('chat')}
       >
         <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>
-          AI INTERFACE
+          TASK INTERFACE
         </Text>
       </TouchableOpacity>
       

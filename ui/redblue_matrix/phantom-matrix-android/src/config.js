@@ -4,7 +4,7 @@
  */
 
 export const CONFIG = {
-    BACKEND_URL: 'ws://192.168.1.103:8765',
+    BACKEND_URL: 'ws://192.168.1.103:8081',
     RECONNECT_TIMEOUT: 3000,
     MAX_RETRIES: 5,
 

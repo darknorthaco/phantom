@@ -27,7 +27,7 @@ class ComponentManager:
             "name": "LLM Task Master",
             "required": False,
             "repo": None,  # Already included in main repo
-            "description": "AI-powered intelligent task routing",
+            "description": "Mode-aware intelligent task routing",
         },
         "linux_workers": {
             "name": "Linux Workers",

@@ -1,8 +1,8 @@
-# 🔋 Phantom Matrix AI - Android App
+# 🔋 Phantom RedBlue - Android App
 
-**Your AI. Your Hardware. Your Rules.**
+**Your LLM. Your Hardware. Your Rules.**
 
-A Matrix-style Android application for monitoring and controlling the Phantom Distributed Compute Fabric. Built by Dark North Co. for true AI independence.
+A RedBlue-themed Android application for monitoring and controlling the Phantom Distributed Compute Fabric. Built by Dark North Co. for true compute independence.
 
 ![Matrix Style](https://img.shields.io/badge/Style-Matrix-00FF41)
 ![Platform](https://img.shields.io/badge/Platform-Android-green)
@@ -17,13 +17,15 @@ A Matrix-style Android application for monitoring and controlling the Phantom Di
 - Mobile-optimized performance (50 drop limit)
 
 ### 🔋 **GPU Cluster Monitoring**
+Hardware is auto-discovered during installation when Phantom scans the network for workers.
+Example topology (current Dark North Co. lab):
 - **GTX 1080** - LLM Task Master (Matrix Green)
 - **FirePro W9100** - Memory Specialist (Dark North Red)
 - **RTX 5080** - ML Powerhouse (Dark North Teal)
 - **RTX 5060** - Modern Compute (Yellow)
 
-### 🤖 **AI Chat Interface**
-- Terminal-style chat with your homebrew AI
+### 🤖 **LLM Chat Interface**
+- Terminal-style chat with your homebrew LLM
 - Model switching between all 4 GPUs
 - WebSocket integration with Phantom backend
 - No corporate surveillance - your data stays on YOUR hardware
@@ -35,9 +37,9 @@ A Matrix-style Android application for monitoring and controlling the Phantom Di
 - Emergency control protocols
 
 ### 🎨 **Dark North Co. Branding**
-- Integrated rubber duck logo with Matrix effects
+- Integrated rubber duck logo with RedBlue effects
 - Red outline with teal eye design
-- Authentic cyberpunk aesthetic
+- Authentic Dark North aesthetic
 - Professional yet playful branding
 
 ## 🚀 Quick Start
@@ -92,10 +94,10 @@ phantom-matrix-android/
 The app connects to your Phantom Distributed Compute Fabric via WebSocket:
 
 ```javascript
-// Default connection
-ws://192.168.1.103:8765
+// Default connection — hardware auto-discovered during network scan
+ws://192.168.1.103:8081
 
-// Network topology
+// Example topology (populated at runtime by controller API)
 Fedora Server (192.168.1.103):
 ├── GTX 1080 (LLM Task Master)
 └── FirePro W9100 (Memory Specialist)
@@ -111,13 +113,13 @@ Windows Workstation:
 - **Authentic Matrix digital rain** with Japanese katakana
 - **CRT monitor effects** with scan lines and glow
 - **Terminal-style interfaces** with monospace fonts
-- **Cyberpunk color scheme** (Matrix green, red, teal, yellow)
+- **RedBlue color scheme** (Matrix green, red, teal, yellow)
 
 ### Dark North Co. Branding
 - **Rubber duck logo** integrated with Matrix effects
 - **Red outline with teal eye** matching original design
 - **Professional yet playful** brand identity
-- **"Your AI. Your Hardware. Your Rules."** messaging
+- **"Your LLM. Your Hardware. Your Rules."** messaging
 
 ## 🔒 Security Features
 
@@ -143,17 +145,17 @@ Windows Workstation:
 ## 🏪 Play Store Preparation
 
 ### App Information
-- **Name**: Phantom Matrix AI
+- **Name**: Phantom RedBlue
 - **Package**: com.darknorthco.phantommatrix
 - **Category**: Tools / Productivity
-- **Target Audience**: Tech enthusiasts, AI hobbyists, Matrix fans
+- **Target Audience**: Tech enthusiasts, LLM hobbyists, distributed compute users
 
 ### Key Features for Store Listing
-1. **"Matrix Mode"** - Full-screen digital rain with AI voice
+1. **"Matrix Mode"** - Full-screen digital rain with LLM voice
 2. **"Cluster Commander"** - Remote control your GPU farm
-3. **"AI Anywhere"** - Chat with your homebrew AI on the go
+3. **"LLM Anywhere"** - Chat with your homebrew LLM on the go
 4. **"No Corporate BS"** - Your data stays on YOUR hardware
-5. **"Hacker Aesthetic"** - Authentic Matrix/cyberpunk interface
+5. **"Hacker Aesthetic"** - Authentic RedBlue/Dark North interface
 
 ## 🛠️ Development
 
@@ -195,8 +197,8 @@ Windows Workstation:
 
 The app is configured to connect to your local Phantom network:
 
-- **Primary Server**: 192.168.1.103:8765
-- **Fallback**: localhost:8765
+- **Primary Server**: 192.168.1.103:8081
+- **Fallback**: localhost:8081
 - **Security**: Local network cleartext allowed
 - **Protocols**: WebSocket, HTTP for local resources
 
@@ -212,14 +214,14 @@ The app is configured to connect to your local Phantom network:
 ### Phase 2: Enhanced Features
 - [ ] Voice input for AI chat
 - [ ] Push notifications for system alerts
-- [ ] Offline AI model integration
+- [ ] Offline LLM model integration
 - [ ] Advanced performance analytics
 - [ ] Custom Matrix rain patterns
 
 ### Phase 3: Advanced Features
 - [ ] VPN integration for remote access
 - [ ] Multi-cluster support
-- [ ] AI model marketplace
+- [ ] LLM model repository
 - [ ] Advanced security protocols
 - [ ] Tablet optimization
 
@@ -228,7 +230,7 @@ The app is configured to connect to your local Phantom network:
 This is a Dark North Co. project for the Phantom Distributed Compute Fabric. 
 
 ### Development Guidelines
-- Follow Matrix aesthetic principles
+- Follow RedBlue aesthetic principles
 - Maintain Dark North Co. branding consistency
 - Optimize for mobile performance
 - Ensure local-first architecture
@@ -237,19 +239,19 @@ This is a Dark North Co. project for the Phantom Distributed Compute Fabric.
 
 **Dark North Co. Proprietary License**
 
-Your AI. Your Hardware. Your Rules.
+Your LLM. Your Hardware. Your Rules.
 
 ---
 
-## 🔋 **Ready to Enter the Matrix?**
+## 🔋 **Ready to Enter the Fabric?**
 
 ```bash
 chmod +x build-android.sh
 ./build-android.sh
 ```
 
-**Welcome to the future of AI - where YOU control the neural network.**
+**Welcome to the future of distributed compute — where YOU control the fabric.**
 
 ---
 
-*Built with ❤️ by Dark North Co. - Empowering AI independence since 2024*
+*Built with ❤️ by Dark North Co. — Empowering compute independence since 2024*

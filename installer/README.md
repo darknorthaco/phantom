@@ -25,7 +25,7 @@ The Phantom Unified Installation Wizard is a modular, cross-platform installer t
 The installer can set up the following components:
 
 1. **Phantom Core** (Required) - Distributed compute fabric
-2. **LLM Task Master** (Optional) - AI-powered task routing
+2. **LLM Task Master** (Optional) - Mode-aware task routing
 3. **Linux Workers** (Optional) - Linux worker nodes with GPU support
 4. **Windows Workers** (Optional) - Windows worker nodes with GPU support
 5. **Security Framework** (Optional) - Multi-level security
@@ -444,4 +444,4 @@ This manifest enables safe, complete uninstallation and helps track what was ins
 
 ## License
 
-MIT License - See LICENSE file for details
+Dual-licensed: MIT (open-source) and Commercial. See LICENSE and LICENSE-COMMERCIAL.md for details.

@@ -206,7 +206,7 @@ Select components to install:
   [✓ Required] Phantom Core
       Core distributed compute fabric
   [  Optional] LLM Task Master
-      AI-powered intelligent task routing
+      Mode-aware intelligent task routing
   [  Optional] Linux Workers
       Linux worker nodes with GPU support
   [  Optional] Security Framework

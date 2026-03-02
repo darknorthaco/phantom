@@ -36,7 +36,7 @@ Available commands:
 
 ```
 phantom> connect
-Connecting to Phantom at localhost:8765...
+Connecting to Phantom at localhost:8080...
 ✅ Connected to Phantom backend
 
 phantom> mode HYBRID
@@ -51,9 +51,9 @@ phantom> tasks
 
 phantom> workers
 👷 Workers (3 total):
-  🟢 worker-1: GPU Worker 1 (online) | GPU: RTX 3080
+  🟢 worker-1: GPU Worker 1 (online) | GPU: (auto-detected)
   🟢 worker-2: CPU Worker 1 (online)
-  🔴 worker-3: GPU Worker 2 (offline) | GPU: RTX 4070
+  🔴 worker-3: GPU Worker 2 (offline) | GPU: (auto-detected)
 
 phantom> quit
 Goodbye!

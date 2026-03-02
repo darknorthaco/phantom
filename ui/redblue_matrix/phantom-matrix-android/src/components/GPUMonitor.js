@@ -180,7 +180,7 @@ const GPUMonitor = ({ gpuData }) => {
 
         {/* GPU Activity Indicator */}
         <View style={styles.activityContainer}>
-          <Text style={styles.activityLabel}>NEURAL ACTIVITY</Text>
+          <Text style={styles.activityLabel}>COMPUTE ACTIVITY</Text>
           <View style={styles.activityWave}>
             {[...Array(20)].map((_, i) => (
               <Animated.View
@@ -210,7 +210,7 @@ const GPUMonitor = ({ gpuData }) => {
     
     return (
       <View style={styles.overviewCard}>
-        <Text style={styles.overviewTitle}>PHANTOM NEURAL CLUSTER</Text>
+        <Text style={styles.overviewTitle}>PHANTOM COMPUTE CLUSTER</Text>
         
         <View style={styles.overviewStats}>
           <View style={styles.overviewStat}>
@@ -243,7 +243,7 @@ const GPUMonitor = ({ gpuData }) => {
         </View>
         
         <Text style={styles.clusterStatus}>
-          DISTRIBUTED NEURAL NETWORK: {onlineGPUs === 4 ? 'OPTIMAL' : 'DEGRADED'}
+          DISTRIBUTED COMPUTE FABRIC: {onlineGPUs === 4 ? 'OPTIMAL' : 'DEGRADED'}
         </Text>
       </View>
     );
@@ -271,7 +271,7 @@ const GPUMonitor = ({ gpuData }) => {
       {/* Dark North Co. Branding */}
       <View style={styles.brandingSection}>
         <Text style={styles.brandingText}>Powered by Dark North Co.</Text>
-        <Text style={styles.brandingSubtext}>Your AI. Your Hardware. Your Rules.</Text>
+        <Text style={styles.brandingSubtext}>Your LLM. Your Hardware. Your Rules.</Text>
       </View>
     </ScrollView>
   );
