@@ -34,7 +34,7 @@ def main():
     parser.add_argument(
         "--enable-llm-taskmaster",
         action="store_true",
-        help="Enable LLM Task Master on GTX 1080",
+        help="Enable LLM Task Master (auto-assigns to best available GPU)",
     )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     parser.add_argument("--log-level", default="INFO", help="Logging level")

@@ -85,17 +85,17 @@ const SystemStats = ({ systemData }) => {
                 transform: [{ scale: pulseAnim }]
               }
             ]}>
-              <Text style={styles.nodeLabel}>FEDORA</Text>
-              <Text style={styles.nodeSubLabel}>192.168.1.103</Text>
+              <Text style={styles.nodeLabel}>SERVER</Text>
+              <Text style={styles.nodeSubLabel}>NODE 0</Text>
             </Animated.View>
             
-            {/* Server GPUs */}
+            {/* Server GPUs — populated from discovered workers */}
             <View style={styles.gpuCluster}>
               <View style={[styles.gpuNode, { borderColor: '#00FF41' }]}>
-                <Text style={styles.gpuLabel}>GTX1080</Text>
+                <Text style={styles.gpuLabel}>GPU-0</Text>
               </View>
               <View style={[styles.gpuNode, { borderColor: '#FF4444' }]}>
-                <Text style={styles.gpuLabel}>FIREPRO</Text>
+                <Text style={styles.gpuLabel}>GPU-1</Text>
               </View>
             </View>
           </View>
@@ -124,13 +124,13 @@ const SystemStats = ({ systemData }) => {
               <Text style={styles.nodeSubLabel}>WORKSTATION</Text>
             </Animated.View>
             
-            {/* Client GPUs */}
+            {/* Workstation GPUs — populated from discovered workers */}
             <View style={styles.gpuCluster}>
               <View style={[styles.gpuNode, { borderColor: '#00FFFF' }]}>
-                <Text style={styles.gpuLabel}>RTX5080</Text>
+                <Text style={styles.gpuLabel}>GPU-2</Text>
               </View>
               <View style={[styles.gpuNode, { borderColor: '#FFFF00' }]}>
-                <Text style={styles.gpuLabel}>RTX5060</Text>
+                <Text style={styles.gpuLabel}>GPU-3</Text>
               </View>
             </View>
           </View>

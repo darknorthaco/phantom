@@ -100,8 +100,10 @@ async def generate_worker_proposal(
         gpu_info = worker.get("gpu_info", {})
         gpu_name = gpu_info.get("name", "Unknown")
 
-        # Simple scoring (GPU performance hierarchy)
-        base_score = 0.5  # Default
+        # GPU scoring — runtime capability lookup for auto-discovered hardware.
+        # Workers report their GPU name via /workers API; we score by known model.
+        # Unknown GPUs get the default base_score of 0.5.
+        base_score = 0.5  # Default for unrecognized GPUs
         if "RTX 5080" in gpu_name:
             base_score = 1.0
         elif "RTX 5060" in gpu_name:

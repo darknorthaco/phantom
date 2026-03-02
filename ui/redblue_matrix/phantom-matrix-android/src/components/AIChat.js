@@ -36,7 +36,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
       timestamp: new Date(),
     }
   ]);
-  const [selectedModel, setSelectedModel] = useState('gtx1080');
+  const [selectedModel, setSelectedModel] = useState('gpu_0');
   
   const scrollViewRef = useRef();
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -77,24 +77,19 @@ const AIChat = ({ isConnected, onSendMessage }) => {
     ).start();
   }, []);
 
+  // GPU colors/labels — generic slots; real names populated from backend
+  const GPU_COLORS = ['#00FF41', '#FF4444', '#00FFFF', '#FFFF00'];
+  const GPU_SLOTS  = ['gpu_0', 'gpu_1', 'gpu_2', 'gpu_3'];
+
   const getModelColor = (model) => {
-    switch (model) {
-      case 'gtx1080': return '#00FF41'; // Matrix green for LLM Task Master
-      case 'firepro': return '#FF4444'; // Red for Memory Specialist (matching your logo!)
-      case 'rtx5080': return '#00FFFF'; // Teal for ML Powerhouse (matching your logo eye!)
-      case 'rtx5060': return '#FFFF00'; // Yellow for Modern Compute
-      default: return '#666666';
-    }
+    const idx = GPU_SLOTS.indexOf(model);
+    return idx >= 0 ? GPU_COLORS[idx] : '#666666';
   };
 
   const getModelName = (model) => {
-    switch (model) {
-      case 'gtx1080': return 'GTX 1080 - LLM MASTER';
-      case 'firepro': return 'FIREPRO - MEMORY BANK';
-      case 'rtx5080': return 'RTX 5080 - ML POWERHOUSE';
-      case 'rtx5060': return 'RTX 5060 - MODERN CORE';
-      default: return 'UNKNOWN MODEL';
-    }
+    // When connected to backend, gpu names come from discovered hardware
+    const idx = GPU_SLOTS.indexOf(model);
+    return idx >= 0 ? `COMPUTE NODE ${idx}` : 'UNKNOWN MODEL';
   };
 
   const handleSendMessage = () => {
@@ -176,7 +171,7 @@ const AIChat = ({ isConnected, onSendMessage }) => {
   };
 
   const renderModelSelector = () => {
-    const models = ['gtx1080', 'firepro', 'rtx5080', 'rtx5060'];
+    const models = ['gpu_0', 'gpu_1', 'gpu_2', 'gpu_3'];
     
     return (
       <View style={styles.modelSelector}>

@@ -83,7 +83,9 @@ class PhantomOrchestrator:
         self.task_history: List[Dict] = []
         self.worker_performance: Dict[str, List[float]] = {}
 
-        # GPU performance profiles
+        # GPU performance profiles — capability lookup table used to score
+        # auto-discovered hardware. The orchestrator matches discovered GPU names
+        # against this table at runtime. Unknown GPUs get a default baseline score.
         self.gpu_profiles = {
             "RTX 5080": {
                 "ml_inference": 10.0,

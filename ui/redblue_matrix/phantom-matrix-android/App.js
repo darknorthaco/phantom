@@ -19,11 +19,13 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [currentTab, setCurrentTab] = useState('gpu');
+  // GPU data — keys are generic slots, populated from backend during
+  // WebSocket handshake after installation network scan discovers workers.
   const [gpuData, setGpuData] = useState({
-    gtx1080: { status: 'online', util: 75, temp: 68, mem: 8192 },
-    firepro: { status: 'online', util: 45, temp: 72, mem: 16384 },
-    rtx5080: { status: 'online', util: 89, temp: 65, mem: 16384 },
-    rtx5060: { status: 'online', util: 62, temp: 58, mem: 8192 },
+    gpu_0: { status: 'online', util: 75, temp: 68, mem: 8192, name: '(scanning...)' },
+    gpu_1: { status: 'online', util: 45, temp: 72, mem: 16384, name: '(scanning...)' },
+    gpu_2: { status: 'online', util: 89, temp: 65, mem: 16384, name: '(scanning...)' },
+    gpu_3: { status: 'online', util: 62, temp: 58, mem: 8192, name: '(scanning...)' },
   });
   const [systemData, setSystemData] = useState({
     network: {
@@ -91,8 +93,8 @@ const App = () => {
 
   const connectToPhantom = async () => {
     try {
-      // Simulate WebSocket connection to Phantom backend
-      // In real implementation, this would connect to ws://192.168.1.103:8081
+      // In real implementation, this would connect to the controller
+      // and receive discovered worker/GPU data from the installation scan
       console.log('Connecting to Phantom Compute Fabric...');
       
       // Simulate connection delay
@@ -111,25 +113,25 @@ const App = () => {
     // Simulate real-time GPU data updates; returns interval ID for cleanup
     return setInterval(() => {
       setGpuData(prevData => ({
-        gtx1080: {
-          ...prevData.gtx1080,
-          util: Math.max(0, Math.min(100, prevData.gtx1080.util + (Math.random() - 0.5) * 10)),
-          temp: Math.max(40, Math.min(85, prevData.gtx1080.temp + (Math.random() - 0.5) * 5)),
+        gpu_0: {
+          ...prevData.gpu_0,
+          util: Math.max(0, Math.min(100, prevData.gpu_0.util + (Math.random() - 0.5) * 10)),
+          temp: Math.max(40, Math.min(85, prevData.gpu_0.temp + (Math.random() - 0.5) * 5)),
         },
-        firepro: {
-          ...prevData.firepro,
-          util: Math.max(0, Math.min(100, prevData.firepro.util + (Math.random() - 0.5) * 8)),
-          temp: Math.max(45, Math.min(90, prevData.firepro.temp + (Math.random() - 0.5) * 4)),
+        gpu_1: {
+          ...prevData.gpu_1,
+          util: Math.max(0, Math.min(100, prevData.gpu_1.util + (Math.random() - 0.5) * 8)),
+          temp: Math.max(45, Math.min(90, prevData.gpu_1.temp + (Math.random() - 0.5) * 4)),
         },
-        rtx5080: {
-          ...prevData.rtx5080,
-          util: Math.max(0, Math.min(100, prevData.rtx5080.util + (Math.random() - 0.5) * 12)),
-          temp: Math.max(35, Math.min(80, prevData.rtx5080.temp + (Math.random() - 0.5) * 6)),
+        gpu_2: {
+          ...prevData.gpu_2,
+          util: Math.max(0, Math.min(100, prevData.gpu_2.util + (Math.random() - 0.5) * 12)),
+          temp: Math.max(35, Math.min(80, prevData.gpu_2.temp + (Math.random() - 0.5) * 6)),
         },
-        rtx5060: {
-          ...prevData.rtx5060,
-          util: Math.max(0, Math.min(100, prevData.rtx5060.util + (Math.random() - 0.5) * 15)),
-          temp: Math.max(30, Math.min(75, prevData.rtx5060.temp + (Math.random() - 0.5) * 7)),
+        gpu_3: {
+          ...prevData.gpu_3,
+          util: Math.max(0, Math.min(100, prevData.gpu_3.util + (Math.random() - 0.5) * 15)),
+          temp: Math.max(30, Math.min(75, prevData.gpu_3.temp + (Math.random() - 0.5) * 7)),
         },
       }));
     }, 2000);

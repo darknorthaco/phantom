@@ -4,7 +4,8 @@
  */
 
 const CONFIG = {
-    PHANTOM_BACKEND: 'ws://192.168.1.103:8765',
+    // Set during deployment via deploy-matrix-ui.sh or installer
+    PHANTOM_BACKEND: 'ws://localhost:8081',
     RECONNECT_INTERVAL: 3000,
     MAX_RECONNECT_ATTEMPTS: 5,
     MATRIX_RAIN_DROPS: 50,
@@ -42,31 +43,31 @@ class PhantomInterface {
             utilizationGraph: document.getElementById('utilization-graph')
         };
         
-        // GPU Elements
+        // GPU Elements — slot-based IDs populated from controller /workers API
         this.gpuElements = {
-            gtx1080: {
-                util: document.getElementById('gtx1080-util'),
-                temp: document.getElementById('gtx1080-temp'),
-                mem: document.getElementById('gtx1080-mem'),
-                activity: document.getElementById('gtx1080-activity')
+            gpu_0: {
+                util: document.getElementById('gpu-0-util'),
+                temp: document.getElementById('gpu-0-temp'),
+                mem: document.getElementById('gpu-0-mem'),
+                activity: document.getElementById('gpu-0-activity')
             },
-            firepro: {
-                util: document.getElementById('firepro-util'),
-                temp: document.getElementById('firepro-temp'),
-                mem: document.getElementById('firepro-mem'),
-                activity: document.getElementById('firepro-activity')
+            gpu_1: {
+                util: document.getElementById('gpu-1-util'),
+                temp: document.getElementById('gpu-1-temp'),
+                mem: document.getElementById('gpu-1-mem'),
+                activity: document.getElementById('gpu-1-activity')
             },
-            rtx5080: {
-                util: document.getElementById('rtx5080-util'),
-                temp: document.getElementById('rtx5080-temp'),
-                mem: document.getElementById('rtx5080-mem'),
-                activity: document.getElementById('rtx5080-activity')
+            gpu_2: {
+                util: document.getElementById('gpu-2-util'),
+                temp: document.getElementById('gpu-2-temp'),
+                mem: document.getElementById('gpu-2-mem'),
+                activity: document.getElementById('gpu-2-activity')
             },
-            rtx5060: {
-                util: document.getElementById('rtx5060-util'),
-                temp: document.getElementById('rtx5060-temp'),
-                mem: document.getElementById('rtx5060-mem'),
-                activity: document.getElementById('rtx5060-activity')
+            gpu_3: {
+                util: document.getElementById('gpu-3-util'),
+                temp: document.getElementById('gpu-3-temp'),
+                mem: document.getElementById('gpu-3-mem'),
+                activity: document.getElementById('gpu-3-activity')
             }
         };
         
@@ -75,10 +76,10 @@ class PhantomInterface {
             startTime: Date.now(),
             tasksCompleted: 0,
             gpuData: {
-                gtx1080: { util: 0, temp: 0, mem: 0 },
-                firepro: { util: 0, temp: 0, mem: 0 },
-                rtx5080: { util: 0, temp: 0, mem: 0 },
-                rtx5060: { util: 0, temp: 0, mem: 0 }
+                gpu_0: { util: 0, temp: 0, mem: 0 },
+                gpu_1: { util: 0, temp: 0, mem: 0 },
+                gpu_2: { util: 0, temp: 0, mem: 0 },
+                gpu_3: { util: 0, temp: 0, mem: 0 }
             },
             activeTasks: [],
             networkNodes: [
@@ -513,11 +514,11 @@ class PhantomInterface {
     }
     
     simulateInitialData() {
-        // Add some initial tasks
+        // Placeholder tasks — GPU assignments populated from discovered workers at runtime
         this.systemState.activeTasks = [
-            { id: 'TASK-001', type: 'LLM-INFERENCE', gpu: 'GTX1080', status: 'running' },
-            { id: 'TASK-002', type: 'MATRIX-MULT', gpu: 'RTX5080', status: 'running' },
-            { id: 'TASK-003', type: 'MEMORY-OPT', gpu: 'FIREPRO', status: 'completed' }
+            { id: 'TASK-001', type: 'LLM-INFERENCE', gpu: 'GPU-0', status: 'running' },
+            { id: 'TASK-002', type: 'MATRIX-MULT', gpu: 'GPU-1', status: 'running' },
+            { id: 'TASK-003', type: 'MEMORY-OPT', gpu: 'GPU-2', status: 'completed' }
         ];
         
         this.renderTaskList();
@@ -527,26 +528,28 @@ class PhantomInterface {
     }
     
     simulateGPUData() {
+        // Simulated data with generic GPU slots \u2014 real names populated
+        // from controller /workers API after installation network scan
         const gpuData = {
-            gtx1080: {
-                utilization: Math.floor(Math.random() * 40) + 30, // 30-70%
-                temperature: Math.floor(Math.random() * 20) + 65, // 65-85°C
-                memory_used: Math.floor(Math.random() * 2000) + 6000 // 6-8GB
+            gpu_0: {
+                utilization: Math.floor(Math.random() * 40) + 30,
+                temperature: Math.floor(Math.random() * 20) + 65,
+                memory_used: Math.floor(Math.random() * 2000) + 6000
             },
-            firepro: {
-                utilization: Math.floor(Math.random() * 60) + 20, // 20-80%
-                temperature: Math.floor(Math.random() * 25) + 70, // 70-95°C
-                memory_used: Math.floor(Math.random() * 4000) + 12000 // 12-16GB
+            gpu_1: {
+                utilization: Math.floor(Math.random() * 60) + 20,
+                temperature: Math.floor(Math.random() * 25) + 70,
+                memory_used: Math.floor(Math.random() * 4000) + 12000
             },
-            rtx5080: {
-                utilization: Math.floor(Math.random() * 80) + 10, // 10-90%
-                temperature: Math.floor(Math.random() * 30) + 60, // 60-90°C
-                memory_used: Math.floor(Math.random() * 8000) + 16000 // 16-24GB
+            gpu_2: {
+                utilization: Math.floor(Math.random() * 80) + 10,
+                temperature: Math.floor(Math.random() * 30) + 60,
+                memory_used: Math.floor(Math.random() * 8000) + 16000
             },
-            rtx5060: {
-                utilization: Math.floor(Math.random() * 70) + 15, // 15-85%
-                temperature: Math.floor(Math.random() * 25) + 55, // 55-80°C
-                memory_used: Math.floor(Math.random() * 4000) + 12000 // 12-16GB
+            gpu_3: {
+                utilization: Math.floor(Math.random() * 70) + 15,
+                temperature: Math.floor(Math.random() * 25) + 55,
+                memory_used: Math.floor(Math.random() * 4000) + 12000
             }
         };
         
@@ -568,7 +571,7 @@ class PhantomInterface {
         // Add new task
         if (Math.random() < 0.4 && this.systemState.activeTasks.length < 5) {
             const taskTypes = ['LLM-INFERENCE', 'MATRIX-MULT', 'CONV-NET', 'MEMORY-OPT', 'DATA-PROC'];
-            const gpus = ['GTX1080', 'FIREPRO', 'RTX5080', 'RTX5060'];
+            const gpus = ['GPU-0', 'GPU-1', 'GPU-2', 'GPU-3'];
             
             const newTask = {
                 id: `TASK-${String(Date.now()).slice(-3)}`,

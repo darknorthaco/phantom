@@ -18,10 +18,10 @@ class MatrixRain {
         this.columns = Math.floor(this.canvas.width / this.fontSize);
         this.drops = [];
         this.gpuData = {
-            gtx1080: 0,
-            firepro: 0,
-            rtx5080: 0,
-            rtx5060: 0
+            gpu_0: 0,
+            gpu_1: 0,
+            gpu_2: 0,
+            gpu_3: 0
         };
         
         // Initialize drops
@@ -68,8 +68,8 @@ class MatrixRain {
     
     getIntensityFromGPU() {
         // Calculate average GPU utilization to drive rain intensity
-        const total = this.gpuData.gtx1080 + this.gpuData.firepro + 
-                     this.gpuData.rtx5080 + this.gpuData.rtx5060;
+        const total = this.gpuData.gpu_0 + this.gpuData.gpu_1 + 
+                     this.gpuData.gpu_2 + this.gpuData.gpu_3;
         return Math.min(total / 400, 1); // Normalize to 0-1
     }
     
@@ -103,12 +103,12 @@ class MatrixRain {
                     // Color based on GPU that's most active
                     let color = '#00FF41'; // Default matrix green
                     
-                    if (this.gpuData.rtx5080 > 50) {
-                        color = '#00FFFF'; // Cyan for RTX 5080
-                    } else if (this.gpuData.firepro > 50) {
-                        color = '#FF0040'; // Red for FirePro
-                    } else if (this.gpuData.rtx5060 > 50) {
-                        color = '#FFFF00'; // Yellow for RTX 5060
+                    if (this.gpuData.gpu_2 > 50) {
+                        color = '#00FFFF'; // Cyan for GPU-2
+                    } else if (this.gpuData.gpu_1 > 50) {
+                        color = '#FF0040'; // Red for GPU-1
+                    } else if (this.gpuData.gpu_3 > 50) {
+                        color = '#FFFF00'; // Yellow for GPU-3
                     }
                     
                     // Brightest character at the head
@@ -185,10 +185,10 @@ class MatrixRain {
         const originalIntensity = this.getIntensityFromGPU();
         
         // Temporarily increase intensity
-        this.gpuData.gtx1080 = 100;
-        this.gpuData.firepro = 100;
-        this.gpuData.rtx5080 = 100;
-        this.gpuData.rtx5060 = 100;
+        this.gpuData.gpu_0 = 100;
+        this.gpuData.gpu_1 = 100;
+        this.gpuData.gpu_2 = 100;
+        this.gpuData.gpu_3 = 100;
         
         // Flash effect
         this.ctx.fillStyle = color;
@@ -198,10 +198,10 @@ class MatrixRain {
         
         // Reset after pulse
         setTimeout(() => {
-            this.gpuData.gtx1080 = originalIntensity * 100;
-            this.gpuData.firepro = originalIntensity * 100;
-            this.gpuData.rtx5080 = originalIntensity * 100;
-            this.gpuData.rtx5060 = originalIntensity * 100;
+            this.gpuData.gpu_0 = originalIntensity * 100;
+            this.gpuData.gpu_1 = originalIntensity * 100;
+            this.gpuData.gpu_2 = originalIntensity * 100;
+            this.gpuData.gpu_3 = originalIntensity * 100;
         }, 500);
     }
 }

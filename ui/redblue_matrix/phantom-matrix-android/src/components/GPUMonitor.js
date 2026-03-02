@@ -40,34 +40,27 @@ const GPUMonitor = ({ gpuData }) => {
     }).start();
   }, []);
 
+  // GPU colors — assigned by slot index; real names populated from backend
+  const GPU_COLORS = ['#00FF41', '#FF4444', '#00FFFF', '#FFFF00'];
+  const GPU_ROLES  = ['COMPUTE NODE 0', 'COMPUTE NODE 1', 'COMPUTE NODE 2', 'COMPUTE NODE 3'];
+  const GPU_SLOTS  = ['gpu_0', 'gpu_1', 'gpu_2', 'gpu_3'];
+
   const getGPUColor = (gpuType) => {
-    switch (gpuType) {
-      case 'gtx1080': return '#00FF41'; // Matrix green for LLM Task Master
-      case 'firepro': return '#FF4444'; // Red for Memory Specialist (matching your logo!)
-      case 'rtx5080': return '#00FFFF'; // Teal for ML Powerhouse (matching your logo eye!)
-      case 'rtx5060': return '#FFFF00'; // Yellow for Modern Compute
-      default: return '#666666';
-    }
+    const idx = GPU_SLOTS.indexOf(gpuType);
+    return idx >= 0 ? GPU_COLORS[idx] : '#666666';
   };
 
   const getGPURole = (gpuType) => {
-    switch (gpuType) {
-      case 'gtx1080': return 'LLM TASK MASTER';
-      case 'firepro': return 'MEMORY SPECIALIST';
-      case 'rtx5080': return 'ML POWERHOUSE';
-      case 'rtx5060': return 'MODERN COMPUTE';
-      default: return 'UNKNOWN';
-    }
+    const gpu = gpuData[gpuType];
+    if (gpu && gpu.role) return gpu.role;
+    const idx = GPU_SLOTS.indexOf(gpuType);
+    return idx >= 0 ? GPU_ROLES[idx] : 'UNKNOWN';
   };
 
   const getGPUName = (gpuType) => {
-    switch (gpuType) {
-      case 'gtx1080': return 'GTX 1080';
-      case 'firepro': return 'FIREPRO W9100';
-      case 'rtx5080': return 'RTX 5080';
-      case 'rtx5060': return 'RTX 5060';
-      default: return 'UNKNOWN GPU';
-    }
+    const gpu = gpuData[gpuType];
+    if (gpu && gpu.name && gpu.name !== '(scanning...)') return gpu.name;
+    return gpuType.toUpperCase().replace('_', '-');
   };
 
   const getStatusColor = (status) => {
@@ -254,18 +247,18 @@ const GPUMonitor = ({ gpuData }) => {
       {/* Cluster Overview */}
       {renderClusterOverview()}
       
-      {/* Fedora Server Section */}
+      {/* Server Node — first 2 discovered GPUs */}
       <View style={styles.nodeSection}>
-        <Text style={styles.nodeTitle}>FEDORA SERVER [192.168.1.103]</Text>
-        {renderGPUCard('gtx1080', gpuData.gtx1080 || {}, 0)}
-        {renderGPUCard('firepro', gpuData.firepro || {}, 1)}
+        <Text style={styles.nodeTitle}>SERVER NODE</Text>
+        {renderGPUCard('gpu_0', gpuData.gpu_0 || {}, 0)}
+        {renderGPUCard('gpu_1', gpuData.gpu_1 || {}, 1)}
       </View>
 
-      {/* Windows PC Section */}
+      {/* Workstation Node — next 2 discovered GPUs */}
       <View style={styles.nodeSection}>
-        <Text style={styles.nodeTitle}>WINDOWS WORKSTATION</Text>
-        {renderGPUCard('rtx5080', gpuData.rtx5080 || {}, 2)}
-        {renderGPUCard('rtx5060', gpuData.rtx5060 || {}, 3)}
+        <Text style={styles.nodeTitle}>WORKSTATION NODE</Text>
+        {renderGPUCard('gpu_2', gpuData.gpu_2 || {}, 2)}
+        {renderGPUCard('gpu_3', gpuData.gpu_3 || {}, 3)}
       </View>
 
       {/* Dark North Co. Branding */}

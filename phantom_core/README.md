@@ -42,24 +42,22 @@ Phantom now includes a modular, cross-platform installation wizard that makes se
 
 See [Quick Start](#-quick-start) for installation instructions.
 
-## 🎯 Your Specific Setup
+## 🎯 Auto-Discovered Hardware
 
-This package is optimized for your dual-machine topology:
+Phantom automatically discovers your hardware during installation by scanning
+the network for workers. You are then prompted to assign roles (LLM Task Master,
+router, compute worker, etc.) to each discovered GPU.
 
-### 🖥️ Fedora Server (192.168.1.103)
-- **Hardware**: i7-2700K, 32GB DDR3, GTX 1080, AMD FirePro W9100
-- **Role**: Controller + Storage Hub + Legacy Compute + LLM Task Master
-- **Workers**: 3 local workers (GTX 1080, FirePro W9100, Storage Hub)
+### Example Topology (populated during installation scan)
+- **Server Node**: Controller + Storage Hub + GPU workers
+- **Workstation Node**: High-Performance Compute Cluster
 
-### 💻 Windows Main PC
-- **Hardware**: i9-13900K, 64GB DDR5, RTX 5080, RTX 5060  
-- **Role**: High-Performance Compute Cluster
-- **Workers**: 2 remote workers (RTX 5080 primary, RTX 5060 secondary)
+All GPU names, roles, and IPs are populated at runtime — nothing is hardcoded.
 
 ## ✨ Key Features
 
 ### 🧠 Intelligent Task Routing
-- **LLM Task Master** running on GTX 1080 for AI-powered routing decisions
+- **LLM Task Master** auto-assigns to best available GPU (default model: Phi-3.5 Mini)
 - **Smart Programming** fallback with GPU-aware algorithms
 - **Performance Hierarchy** optimization for heterogeneous hardware
 
@@ -74,10 +72,10 @@ This package is optimized for your dual-machine topology:
 - **Rate Limiting & IP Filtering** with audit logging
 - **Easy Enable/Disable** without breaking socket architecture
 
-### 🎮 GPU-Specific Optimizations
-- **RTX 50-Series Plugin**: 4th gen Tensor cores, DLSS 3+, AV1 encoding
-- **GTX 1080 Plugin**: Proven stability, LLM Task Master capability
-- **FirePro Plugin**: 16GB memory specialist for large datasets
+### 🎮 GPU Plugin Architecture
+- **NVIDIA RTX Plugin**: Tensor cores, DLSS, AV1 encoding
+- **NVIDIA Legacy Plugin**: Proven stability, LLM Task Master capability
+- **AMD Professional Plugin**: Large memory specialist for datasets
 - **General Plugin**: Universal fallback support
 
 ## 🚀 Quick Start
@@ -157,31 +155,35 @@ cd rtx5060_instance
 
 ### 3. Verify Complete System
 ```bash
-# Check all 5 workers connected
-curl http://192.168.1.103:8080/workers
+# Check all workers connected
+curl http://<controller-ip>:8080/workers
 
 # View system dashboard
-curl http://192.168.1.103:8080/stats
+curl http://<controller-ip>:8080/stats
 ```
 
 **🎉 Your heterogeneous GPU cluster is ready!**
 
 ## 📊 Performance Hierarchy
 
-| GPU | Performance | Memory | Specialization |
-|-----|-------------|--------|----------------|
-| **RTX 5080** | ~165 TFLOPS | 24GB | Large models, real-time AI, training |
-| **RTX 5060** | ~85 TFLOPS | 16GB | Batch processing, medium models |
-| **GTX 1080** | ~9 TFLOPS | 8GB | Stable inference, LLM Task Master |
-| **FirePro W9100** | ~5.2 TFLOPS | 16GB | Large datasets, memory-intensive tasks |
+GPU capabilities are auto-detected during installation. The Task Master ranks
+discovered GPUs by compute power and VRAM to build a performance hierarchy.
+Example (your actual values will differ):
+
+| GPU Slot | Role | Assigned During |
+|----------|------|-----------------|
+| **GPU-0** | LLM Task Master | Installation scan |
+| **GPU-1** | Memory Specialist | Installation scan |
+| **GPU-2** | Primary Compute | Installation scan |
+| **GPU-3** | Secondary Compute | Installation scan |
 
 ## 🌐 Access Points
 
-- **Controller API**: http://192.168.1.103:8080
-- **Health Check**: http://192.168.1.103:8080/health
-- **Worker Status**: http://192.168.1.103:8080/workers
-- **System Stats**: http://192.168.1.103:8080/stats
-- **Socket Status**: http://192.168.1.103:8080/socket/status
+- **Controller API**: http://<controller-ip>:8080
+- **Health Check**: http://<controller-ip>:8080/health
+- **Worker Status**: http://<controller-ip>:8080/workers
+- **System Stats**: http://<controller-ip>:8080/stats
+- **Socket Status**: http://<controller-ip>:8080/socket/status
 
 ## 🛠️ Management Commands
 
@@ -368,24 +370,24 @@ For complete specification, see [PHANTOM_EXECUTION_MODES_AND_API_SPEC.md](./PHAN
 
 ### Automatic Intelligent Routing
 ```bash
-# Large model inference → RTX 5080
-curl -X POST http://192.168.1.103:8080/tasks/submit \
+# Large model inference → auto-routed to best available GPU
+curl -X POST http://<controller-ip>:8080/tasks/submit \
   -H "Content-Type: application/json" \
   -d '{
     "task_type": "large_model_inference",
     "parameters": {"model_size": "70B"}
   }'
 
-# Data processing → FirePro W9100
-curl -X POST http://192.168.1.103:8080/tasks/submit \
+# Data processing → auto-routed to highest-VRAM GPU
+curl -X POST http://<controller-ip>:8080/tasks/submit \
   -H "Content-Type: application/json" \
   -d '{
     "task_type": "data_processing",
     "parameters": {"dataset_size_gb": 12}
   }'
 
-# Stable inference → GTX 1080
-curl -X POST http://192.168.1.103:8080/tasks/submit \
+# Stable inference → auto-routed to available GPU
+curl -X POST http://<controller-ip>:8080/tasks/submit \
   -H "Content-Type: application/json" \
   -d '{
     "task_type": "stable_inference",
@@ -415,8 +417,8 @@ curl -X POST http://192.168.1.103:8080/tasks/submit \
 ./start_complete_phantom.sh health
 
 # Check connectivity
-ping 192.168.1.103
-curl http://192.168.1.103:8080/health
+ping <controller-ip>
+curl http://<controller-ip>:8080/health
 
 # Monitor resources
 ./monitor_system.sh --continuous
@@ -444,7 +446,7 @@ lspci | grep VGA
 **Socket issues:**
 ```bash
 # Check socket status
-curl http://192.168.1.103:8080/socket/status
+curl http://<controller-ip>:8080/socket/status
 ```
 
 ## 📚 Documentation

@@ -18,11 +18,12 @@ A RedBlue-themed Android application for monitoring and controlling the Phantom 
 
 ### 🔋 **GPU Cluster Monitoring**
 Hardware is auto-discovered during installation when Phantom scans the network for workers.
-Example topology (current Dark North Co. lab):
-- **GTX 1080** - LLM Task Master (Matrix Green)
-- **FirePro W9100** - Memory Specialist (Dark North Red)
-- **RTX 5080** - ML Powerhouse (Dark North Teal)
-- **RTX 5060** - Modern Compute (Yellow)
+GPU cards are rendered as generic slots (GPU-0, GPU-1, GPU-2, GPU-3) and populated
+with real names/roles from the controller /workers API at runtime.
+- **GPU-0** - Slot 0 (Matrix Green)
+- **GPU-1** - Slot 1 (Dark North Red)
+- **GPU-2** - Slot 2 (Dark North Teal)
+- **GPU-3** - Slot 3 (Yellow)
 
 ### 🤖 **LLM Chat Interface**
 - Terminal-style chat with your homebrew LLM
@@ -95,16 +96,17 @@ The app connects to your Phantom Distributed Compute Fabric via WebSocket:
 
 ```javascript
 // Default connection — hardware auto-discovered during network scan
-ws://192.168.1.103:8081
+ws://<controller-ip>:8081
 
-// Example topology (populated at runtime by controller API)
-Fedora Server (192.168.1.103):
-├── GTX 1080 (LLM Task Master)
-└── FirePro W9100 (Memory Specialist)
+// GPU topology populated at runtime by controller /workers API
+// Example (generic slots until scan completes):
+Server Node:
+├── GPU-0 (auto-detected)
+└── GPU-1 (auto-detected)
 
-Windows Workstation:
-├── RTX 5080 (ML Powerhouse) 
-└── RTX 5060 (Modern Compute)
+Workstation Node:
+├── GPU-2 (auto-detected)
+└── GPU-3 (auto-detected)
 ```
 
 ## 🎨 Design Philosophy

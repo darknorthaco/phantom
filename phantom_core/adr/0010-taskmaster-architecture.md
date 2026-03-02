@@ -81,9 +81,12 @@ All LLM routing is governed by `llm_config.json`:
 ```json
 {
   "execution_mode": "HYBRID",
-  "llm_backend": "ollama",
-  "model_name": "mistral",
-  "fallback_backend": "llama_cpp",
+  "llm_backend": "llama_cpp",
+  "model_name": "phi-3.5-mini",
+  "model_quant": "Q4_K_M",
+  "model_format": "GGUF",
+  "fallback_backend": "ollama",
+  "target_gpu": "auto",
   "human_override": true,
   "governance": {
     "manifest_ref": "doctrine/PHANTOM_MANIFEST.md",

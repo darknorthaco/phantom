@@ -1,6 +1,7 @@
 """
-Phantom LLM Task Master — Lightweight Routing Engine for GTX 1080
+Phantom LLM Task Master — Lightweight Routing Engine
 Optimized for intelligent task routing with minimal resource usage.
+Default model: Phi-3.5 Mini (GGUF, Q4_K_M) — runs on any 4GB+ VRAM GPU.
 
 Governance Alignment (Soul–Mind–Body Hierarchy):
   Soul  → doctrine/PHANTOM_MANIFEST.md    (Identity Contract: Sovereignty, Humility,
@@ -87,7 +88,7 @@ def load_config(path: Path = _CONFIG_PATH) -> Dict[str, Any]:
         "model": {"model_type": "rule_based_with_learning", "model_size": "small",
                   "context_length": 1024, "precision": "fp16", "batch_size": 1},
         "resource_limits": {"max_memory_mb": 2048, "max_vram_mb": 2048,
-                            "target_gpu": "GTX 1080", "target_vram_gb": 8},
+                            "target_gpu": "auto", "target_vram_gb": 4},
         "routing": {"fallback_to_smart_programming": True, "max_decision_history": 100,
                     "confidence_threshold": 0.5, "enable_learning": True},
         "hybrid_mode": {"proposal_timeout_seconds": 300, "require_approval_reason": False,
@@ -280,7 +281,10 @@ class ProposalStore:
 # LLM Task Master — Mode-Aware Implementation
 # ===========================================================================
 class LightweightLLMTaskMaster:
-    """Lightweight LLM Task Master optimized for GTX 1080.
+    """Lightweight LLM Task Master — auto-assigns to best available GPU.
+
+    Default model: Phi-3.5 Mini (GGUF, Q4_K_M). GPU target resolved at
+    runtime from hardware discovered during installation network scan.
 
     Governance Alignment:
       - Doctrine §1  (Human Priority): Yields when human is active.

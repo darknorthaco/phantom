@@ -27,27 +27,27 @@ async def test_execution_modes():
     print("Phantom Execution Modes - Validation Script")
     print("=" * 60)
 
-    # Sample workers
+    # Sample workers — in production, populated by network scan during installation
     sample_workers = {
-        "worker-rtx-5080": {
-            "worker_id": "worker-rtx-5080",
-            "host": "192.168.1.100",
-            "port": 8082,
+        "worker-gpu-0": {
+            "worker_id": "worker-gpu-0",
+            "host": "10.0.0.10",
+            "port": 8090,
             "status": "active",
             "gpu_info": {
-                "name": "NVIDIA RTX 5080",
+                "name": "(auto-detected)",
                 "memory_total": 24576,
                 "memory_free": 22000,
                 "utilization": 10.0,
             },
         },
-        "worker-gtx-1080": {
-            "worker_id": "worker-gtx-1080",
-            "host": "192.168.1.103",
-            "port": 8083,
+        "worker-gpu-1": {
+            "worker_id": "worker-gpu-1",
+            "host": "10.0.0.11",
+            "port": 8091,
             "status": "active",
             "gpu_info": {
-                "name": "NVIDIA GTX 1080",
+                "name": "(auto-detected)",
                 "memory_total": 8192,
                 "memory_free": 7000,
                 "utilization": 25.0,
@@ -55,11 +55,11 @@ async def test_execution_modes():
         },
         "worker-offline": {
             "worker_id": "worker-offline",
-            "host": "192.168.1.104",
-            "port": 8084,
+            "host": "10.0.0.12",
+            "port": 8092,
             "status": "offline",
             "gpu_info": {
-                "name": "NVIDIA RTX 5060",
+                "name": "(auto-detected)",
                 "memory_total": 16384,
                 "memory_free": 0,
             },
@@ -90,7 +90,7 @@ async def test_execution_modes():
     # Generate proposal
     try:
         proposal = await generate_worker_proposal(
-            task, active_workers, lambda t, w: "worker-rtx-5080"
+            task, active_workers, lambda t, w: "worker-gpu-0"
         )
         print(f"  ✓ Proposal generated successfully")
         print(f"    - Proposed worker: {proposal.proposed_worker}")
@@ -108,7 +108,7 @@ async def test_execution_modes():
 
     # Test valid worker selection
     validation = await validate_manual_worker_selection(
-        "worker-rtx-5080", "ml_inference", sample_workers
+        "worker-gpu-0", "ml_inference", sample_workers
     )
     print(f"  ✓ Valid worker selection:")
     print(f"    - Worker ID: {validation.worker_id}")
@@ -120,7 +120,7 @@ async def test_execution_modes():
 
     # Test suboptimal selection (with warning)
     validation2 = await validate_manual_worker_selection(
-        "worker-gtx-1080", "ml_inference", sample_workers
+        "worker-gpu-1", "ml_inference", sample_workers
     )
     print(f"\n  ✓ Suboptimal worker selection (generates warning):")
     print(f"    - Worker ID: {validation2.worker_id}")

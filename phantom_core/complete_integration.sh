@@ -35,7 +35,7 @@ socket_infrastructure:
   
 llm_taskmaster:
   enabled: true
-  target_gpu: "GTX 1080"
+  target_gpu: "auto"
   model_size: "lightweight"
   memory_limit_mb: 2048
 
@@ -52,33 +52,18 @@ workers:
     base_port: 8090
     
   windows:
-    controller_host: "192.168.1.103"
-    rtx5080_port: 8091
-    rtx5060_port: 8092
+    controller_host: "auto"
+    gpu_0_port: 8091
+    gpu_1_port: 8092
 
 network:
   topology: "heterogeneous_cluster"
-  fedora_server: "192.168.1.103"
-  windows_pc: "auto_detect"
+  server_node: "auto_detect"
+  workstation_node: "auto_detect"
   
 performance:
-  gpu_hierarchy:
-    - name: "RTX 5080"
-      performance_score: 10.0
-      memory_gb: 24
-      specialization: ["large_model_inference", "real_time_ai", "training"]
-    - name: "RTX 5060" 
-      performance_score: 7.0
-      memory_gb: 16
-      specialization: ["ml_inference", "batch_processing", "medium_training"]
-    - name: "GTX 1080"
-      performance_score: 5.0
-      memory_gb: 8
-      specialization: ["stable_inference", "llm_task_master", "compatibility"]
-    - name: "FirePro W9100"
-      performance_score: 6.0
-      memory_gb: 16
-      specialization: ["data_processing", "large_datasets", "memory_intensive"]
+  # GPU hierarchy populated during installation network scan
+  gpu_hierarchy: []
 
 monitoring:
   health_check_interval: 30

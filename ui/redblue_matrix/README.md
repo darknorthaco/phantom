@@ -50,25 +50,25 @@ Mobile command center for your AI infrastructure:
 
 ## 🚀 **Live Demo**
 
-### **David's Real Setup**
+### **Example Setup (hardware auto-discovered during installation)**
 ```
-🖥️ Fedora Server (192.168.1.103)
-├── 🎮 GTX 1080 (8GB) - LLM Task Master
-├── 🏭 AMD FirePro W9100 (16GB) - Memory Specialist  
-├── 💾 32GB DDR3 RAM
+🖥️ Server Node
+├── 🎮 GPU-0 (auto-detected) - LLM Task Master
+├── 🏭 GPU-1 (auto-detected) - Memory Specialist  
+├── 💾 DDR RAM
 └── 🗄️ Multi-TB storage for model libraries
 
-💻 Windows Workstation
-├── 🚀 RTX 5080 (16GB) - ML Powerhouse
-├── ⚡ RTX 5060 (8GB) - Modern Compute
-├── 💾 64GB DDR5 RAM
-└── 🧠 i9-13900K CPU
+💻 Workstation Node
+├── 🚀 GPU-2 (auto-detected) - ML Powerhouse
+├── ⚡ GPU-3 (auto-detected) - Modern Compute
+├── 💾 DDR RAM
+└── 🧠 CPU
 
-🌐 Matrix Web UI: http://192.168.1.103:3000
+🌐 Matrix Web UI: http://<controller-ip>:3000
 📱 Android App: Connected via WebSocket
 ```
 
-**Total Setup Cost: ~$3,000** | **Cloud Equivalent: $50,000+** | **Monthly Savings: $5,000+**
+**Your Hardware. Your Rules.** | **No Cloud Dependency** | **Full Sovereignty**
 
 ## 🎨 **Design Philosophy**
 

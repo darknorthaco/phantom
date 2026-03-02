@@ -872,6 +872,9 @@ def smart_worker_selection(task: TaskRequest, active_workers: Dict) -> str:
     """Smart programming-based worker selection"""
 
     # GPU performance hierarchy for different task types
+    # This is a capability lookup table — workers report their GPU name
+    # via auto-discovery, and we match against known models to determine
+    # optimal routing. Unknown GPUs fall through to "general" preference.
     gpu_preferences = {
         "ml_inference": ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro W9100"],
         "training": ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro W9100"],

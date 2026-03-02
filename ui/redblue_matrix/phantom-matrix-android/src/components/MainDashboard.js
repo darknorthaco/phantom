@@ -23,10 +23,10 @@ const MainDashboard = () => {
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [systemData, setSystemData] = useState({
     gpus: {
-      gtx1080: { util: 0, temp: 0, mem: 0, status: 'offline' },
-      firepro: { util: 0, temp: 0, mem: 0, status: 'offline' },
-      rtx5080: { util: 0, temp: 0, mem: 0, status: 'offline' },
-      rtx5060: { util: 0, temp: 0, mem: 0, status: 'offline' },
+      gpu_0: { util: 0, temp: 0, mem: 0, status: 'offline' },
+      gpu_1: { util: 0, temp: 0, mem: 0, status: 'offline' },
+      gpu_2: { util: 0, temp: 0, mem: 0, status: 'offline' },
+      gpu_3: { util: 0, temp: 0, mem: 0, status: 'offline' },
     },
     tasks: [],
     uptime: 0,
@@ -72,25 +72,25 @@ const MainDashboard = () => {
       setSystemData(prev => ({
         ...prev,
         gpus: {
-          gtx1080: {
+          gpu_0: {
             util: Math.floor(Math.random() * 40) + 30,
             temp: Math.floor(Math.random() * 20) + 65,
             mem: Math.floor(Math.random() * 2000) + 6000,
             status: 'online'
           },
-          firepro: {
+          gpu_1: {
             util: Math.floor(Math.random() * 60) + 20,
             temp: Math.floor(Math.random() * 25) + 70,
             mem: Math.floor(Math.random() * 4000) + 12000,
             status: 'online'
           },
-          rtx5080: {
+          gpu_2: {
             util: Math.floor(Math.random() * 80) + 10,
             temp: Math.floor(Math.random() * 30) + 60,
             mem: Math.floor(Math.random() * 8000) + 16000,
             status: 'online'
           },
-          rtx5060: {
+          gpu_3: {
             util: Math.floor(Math.random() * 70) + 15,
             temp: Math.floor(Math.random() * 25) + 55,
             mem: Math.floor(Math.random() * 4000) + 12000,

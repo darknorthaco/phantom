@@ -89,7 +89,7 @@ npx react-native run-android
 <!-- Good: Semantic and BEM naming -->
 <div class="gpu-monitor">
   <div class="gpu-monitor__card gpu-monitor__card--active">
-    <h3 class="gpu-monitor__title">GTX 1080</h3>
+    <h3 class="gpu-monitor__title">GPU-0</h3>
   </div>
 </div>
 ```

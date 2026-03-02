@@ -353,7 +353,7 @@ When `mode` is `MANUAL`, `target_gpu` is also included:
   "message":    "<user input>",
   "model":      "<selected model id>",
   "mode":       "MANUAL",
-  "target_gpu": "GTX1080 | FIREPRO | RTX5080 | RTX5060",
+  "target_gpu": "<gpu-slot-id from /workers API>",
   "timestamp":  <unix ms>
 }
 ```

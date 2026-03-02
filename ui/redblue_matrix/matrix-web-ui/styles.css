@@ -281,22 +281,22 @@ body {
     box-shadow: 0 0 15px currentColor;
 }
 
-.gpu-card.gtx1080 {
+.gpu-card.gpu-0 {
     border-color: var(--matrix-green);
     color: var(--matrix-green);
 }
 
-.gpu-card.firepro {
+.gpu-card.gpu-1 {
     border-color: var(--matrix-red);
     color: var(--matrix-red);
 }
 
-.gpu-card.rtx5080 {
+.gpu-card.gpu-2 {
     border-color: var(--matrix-cyan);
     color: var(--matrix-cyan);
 }
 
-.gpu-card.rtx5060 {
+.gpu-card.gpu-3 {
     border-color: var(--matrix-yellow);
     color: var(--matrix-yellow);
 }

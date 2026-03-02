@@ -6,7 +6,7 @@ A cyberpunk-inspired Matrix-style web interface for the Phantom Distributed Comp
 
 ### 🔋 **Matrix Digital Rain**
 - Real-time animated background using actual GPU utilization data
-- Color-coded rain based on active GPU (Green=GTX1080, Red=FirePro, Cyan=RTX5080, Yellow=RTX5060)
+- Color-coded rain based on active GPU slot (Green=GPU-0, Red=GPU-1, Cyan=GPU-2, Yellow=GPU-3)
 - Dynamic intensity based on cluster workload
 
 ### 🖥️ **Cyberpunk Dashboard**
@@ -64,9 +64,9 @@ matrix-ui/
 
 ## 🎯 **Interface Sections**
 
-### **Left Panel - Neural Cluster Status**
-- **Fedora Server Node**: GTX 1080 (LLM Task Master) + FirePro W9100 (Memory Specialist)
-- **Windows Workstation**: RTX 5080 (ML Powerhouse) + RTX 5060 (Modern Compute)
+### **Left Panel - Compute Cluster Status**
+- **Server Node**: GPU-0 + GPU-1 (roles assigned during installation)
+- **Workstation Node**: GPU-2 + GPU-3 (roles assigned during installation)
 - Real-time GPU metrics with color-coded status indicators
 
 ### **Center Panel - Neural Interface**
@@ -147,8 +147,8 @@ The interface sends/receives these message types:
 {
     type: 'gpu_status',
     gpus: {
-        gtx1080: { utilization: 45, temperature: 72, memory_used: 6800 },
-        // ... other GPUs
+        gpu_0: { utilization: 45, temperature: 72, memory_used: 6800 },
+        // ... other GPU slots
     }
 }
 ```
