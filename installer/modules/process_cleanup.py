@@ -56,6 +56,9 @@ class ProcessCleanup:
         # Method 3: Check PID files
         pids.update(self._find_by_pid_files())
 
+        # Never terminate the current process (the uninstaller itself)
+        pids.discard(os.getpid())
+
         return sorted(list(pids))
 
     def _find_by_process_name(self) -> List[int]:
