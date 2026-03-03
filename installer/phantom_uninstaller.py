@@ -182,11 +182,11 @@ def full_uninstall(
     # Remove files (tracked by manifest)
     success &= uninstaller.remove_files(preserve_data=False)
 
-    # Remove directories
-    success &= uninstaller.remove_directories(preserve_configs=False)
-
-    # Remove manifest last
+    # Remove manifest before directory cleanup so it is explicitly tracked until this point
     success &= uninstaller.remove_manifest()
+
+    # Remove directories last (shutil.rmtree would delete the manifest too, so remove it first)
+    success &= uninstaller.remove_directories(preserve_configs=False)
 
     if not dry_run:
         print("\n" + "=" * 70)
