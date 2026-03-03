@@ -51,3 +51,28 @@ See `phantom_core/README.md` for full API reference. Key endpoints on `http://12
 ### Web UI
 
 The RedBlue Matrix Web UI at `ui/redblue_matrix/matrix-web-ui/` is static HTML/CSS/JS with no build step. It can be served with any HTTP server (e.g. `python3 -m http.server 3000`).
+
+### Phantom Application (Tauri Desktop App)
+
+The `phantom_app/` directory contains a Tauri v2 application — the "stone home" for Phantom. It wraps the engine without modifying it.
+
+**Prerequisites:** Rust 1.85+, Node.js 18+, system packages `libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
+
+**Build & run:**
+```bash
+cd phantom_app
+npm install
+npm run tauri dev       # development mode (requires display)
+npm run tauri build     # release build (outputs .deb, .rpm, .AppImage)
+```
+
+**Frontend-only dev server** (no Tauri/display required):
+```bash
+cd phantom_app && npx vite --host 0.0.0.0 --port 1420
+```
+The frontend auto-detects the controller on port 8080. When running the frontend outside Tauri, set `PHANTOM_CORS_ORIGINS` to include the Vite port:
+```bash
+export PHANTOM_CORS_ORIGINS="http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420"
+```
+
+**Architecture:** Rust backend (`src-tauri/src/`) handles deployment, LAN scanning, and OS service management. React/TypeScript frontend (`src/`) provides the TOC interface. The app communicates with Phantom's controller API via HTTP — it never modifies Phantom's core.
