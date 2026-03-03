@@ -80,6 +80,14 @@ class WizardState:
     selected_model: Optional[Dict] = None
     model_path: Optional[Path] = None
 
+    # Dependency fetch
+    dependencies_staged: bool = False
+    staging_dir: Optional[Path] = None
+
+    # Reboot / resume
+    reboot_required: bool = False
+    resume_after_reboot: bool = False
+
     # Completion
     launch_phantom: bool = True
 
@@ -105,7 +113,7 @@ class PhantomWizard(tk.Tk):
     WINDOW_WIDTH = 720
     WINDOW_HEIGHT = 500
 
-    def __init__(self):
+    def __init__(self, resume_idx: int | None = None):
         super().__init__()
 
         self.theme = WinXPTheme()
@@ -129,6 +137,9 @@ class PhantomWizard(tk.Tk):
         from gui.screens import (
             WelcomeScreen,
             SystemScanScreen,
+            DependencyFetchScreen,
+            RebootPromptScreen,
+            ResumeScreen,
             WorkerDiscoveryScreen,
             WorkerSelectionScreen,
             ModelSelectionScreen,
@@ -138,18 +149,23 @@ class PhantomWizard(tk.Tk):
         )
 
         self._screen_classes: List[Type] = [
-            WelcomeScreen,
-            SystemScanScreen,
-            WorkerDiscoveryScreen,
-            WorkerSelectionScreen,
-            ModelSelectionScreen,
-            ModelDownloadScreen,
-            InstallationScreen,
-            CompletionScreen,
+            WelcomeScreen,        # 0
+            SystemScanScreen,     # 1
+            DependencyFetchScreen,# 2  — NEW
+            RebootPromptScreen,   # 3  — NEW (conditional)
+            ResumeScreen,         # 4  — NEW (post-reboot)
+            WorkerDiscoveryScreen,# 5
+            WorkerSelectionScreen,# 6
+            ModelSelectionScreen, # 7
+            ModelDownloadScreen,  # 8
+            InstallationScreen,   # 9
+            CompletionScreen,     # 10
         ]
         self._current_screen = None
         self._idx = 0
-        self._show_screen(0)
+
+        start_idx = resume_idx if resume_idx is not None else 0
+        self._show_screen(start_idx)
 
     # ------------------------------------------------------------------ #
     # Layout construction
@@ -185,6 +201,9 @@ class PhantomWizard(tk.Tk):
         step_names = [
             "Welcome",
             "System Check",
+            "Dependencies",
+            "Reboot Check",
+            "Resume",
             "Discover Workers",
             "Select Workers",
             "Select Model",
@@ -330,7 +349,14 @@ class PhantomWizard(tk.Tk):
 
     def _on_next(self) -> None:
         if self._idx < len(self._screen_classes) - 1:
-            self._show_screen(self._idx + 1)
+            next_idx = self._idx + 1
+            # Skip Reboot Prompt (3) if no reboot required
+            if next_idx == 3 and not self.state.reboot_required:
+                next_idx = 4
+            # Skip Resume (4) when moving forward in a non-resume session
+            if next_idx == 4 and not self.state.resume_after_reboot:
+                next_idx = 5
+            self._show_screen(min(next_idx, len(self._screen_classes) - 1))
         else:
             # Last screen — Finish button
             if getattr(self.state, "launch_phantom", False):
@@ -418,10 +444,16 @@ class PhantomWizard(tk.Tk):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    """Launch the Phantom GUI installer wizard."""
+def main(resume_idx: int | None = None) -> None:
+    """Launch the Phantom GUI installer wizard.
+
+    Args:
+        resume_idx: If set, jump directly to this screen index (post-reboot).
+    """
     try:
-        app = PhantomWizard()
+        app = PhantomWizard(resume_idx=resume_idx)
+        if resume_idx is not None:
+            app.state.resume_after_reboot = True
         app.mainloop()
     except tk.TclError as exc:
         print(f"Cannot start GUI: {exc}", file=sys.stderr)

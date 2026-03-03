@@ -34,6 +34,16 @@ from backend_interface.installer_driver import (  # noqa: E402
     INSTALL_STAGES,
     InstallerDriver,
 )
+from backend_interface.dependency_fetcher import DependencyFetcher  # noqa: E402
+from backend_interface.reboot_manager import (  # noqa: E402
+    RebootManager,
+    InstallerPhase,
+    InstallerState,
+)
+from backend_interface.wsl_orchestrator import (  # noqa: E402
+    WSLOrchestrator,
+    WSLStatus,
+)
 
 
 class PhantomInstallerAPI:
@@ -58,6 +68,9 @@ class PhantomInstallerAPI:
         self._model_downloader: Optional[ModelDownloader] = None
         self._config_writer: Optional[ConfigWriter] = None
         self._installer_driver: Optional[InstallerDriver] = None
+        self._dep_fetcher: Optional[DependencyFetcher] = None
+        self._reboot_manager: Optional[RebootManager] = None
+        self._wsl_orchestrator: Optional[WSLOrchestrator] = None
 
         self._log("PhantomInstallerAPI initialised")
 
@@ -240,3 +253,127 @@ class PhantomInstallerAPI:
             f"({'OK' if ok else 'FAILED'}): {INSTALL_STAGES[stage_idx]}"
         )
         return ok
+
+    # ------------------------------------------------------------------ #
+    # Dependency fetching
+    # ------------------------------------------------------------------ #
+
+    @property
+    def dep_fetcher(self) -> DependencyFetcher:
+        if self._dep_fetcher is None:
+            staging = self.install_dir / "staging"
+            self._dep_fetcher = DependencyFetcher(staging)
+        return self._dep_fetcher
+
+    def fetch_dependencies(
+        self,
+        requirements_path: Path,
+        status_cb: Callable[[str], None] = None,
+    ) -> bool:
+        """Download and stage pip dependencies.
+
+        Returns True if all wheels downloaded and verified OK.
+        """
+        self._log(f"Fetching dependencies from {requirements_path}")
+        specs = self.dep_fetcher.parse_requirements(requirements_path)
+        specs = self.dep_fetcher.resolve_platform_constraints(specs)
+        self._log(f"Resolved {len(specs)} dependency specs")
+
+        ok = self.dep_fetcher.download_wheels(
+            requirements_path, status_cb=status_cb,
+        )
+        all_ok, bad = self.dep_fetcher.verify_wheels(status_cb=status_cb)
+        if bad:
+            self._log(f"Corrupt wheels: {bad}", level="warning")
+        self.dep_fetcher.write_manifest(requirements_path)
+        self._log(f"Dependency fetch {'OK' if (ok and all_ok) else 'PARTIAL'}")
+        return ok and all_ok
+
+    def install_from_cache(
+        self,
+        target_dir: Path | None = None,
+        status_cb: Callable[[str], None] = None,
+    ) -> bool:
+        """Install staged wheels with pip --no-index."""
+        target = target_dir or self.install_dir / ".venv"
+        self._log(f"Installing cached wheels into {target}")
+        ok = self.dep_fetcher.install_from_cache(target, status_cb=status_cb)
+        self._log(f"Cache install {'OK' if ok else 'FAILED'}")
+        return ok
+
+    def detect_privileged_deps(self) -> list:
+        """Return list of privileged dependencies that require manual action."""
+        return self.dep_fetcher.detect_privileged_deps()
+
+    # ------------------------------------------------------------------ #
+    # WSL orchestration (read-only)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def wsl_orchestrator(self) -> WSLOrchestrator:
+        if self._wsl_orchestrator is None:
+            self._wsl_orchestrator = WSLOrchestrator()
+        return self._wsl_orchestrator
+
+    def check_wsl_status(self) -> Dict:
+        """Detect WSL readiness and return a summary dict for the GUI."""
+        self._log("Checking WSL status")
+        status = self.wsl_orchestrator.detect_wsl_status()
+        summary = self.wsl_orchestrator.get_status_summary(status)
+        self._log(f"WSL status: {summary['status']}")
+        return summary
+
+    def is_wsl_reboot_required(self) -> bool:
+        """Return True when WSL kernel was just installed and needs reboot."""
+        status = self.wsl_orchestrator.detect_wsl_status()
+        return self.wsl_orchestrator.is_reboot_required(status)
+
+    # ------------------------------------------------------------------ #
+    # Reboot / resume state management
+    # ------------------------------------------------------------------ #
+
+    @property
+    def reboot_manager(self) -> RebootManager:
+        if self._reboot_manager is None:
+            self._reboot_manager = RebootManager(self.install_dir)
+        return self._reboot_manager
+
+    def save_state(self) -> None:
+        """Persist current installer state to disk."""
+        self._log("Saving installer state")
+        self.reboot_manager.save_state()
+
+    def load_state(self) -> Optional[InstallerState]:
+        """Load previously persisted installer state."""
+        self._log("Loading installer state")
+        state = self.reboot_manager.load_state()
+        if state:
+            self._log(f"Restored state — phase: {state.current_phase}")
+        else:
+            self._log("No saved state found")
+        return state
+
+    def prepare_reboot(self, reason: str = "") -> Optional[str]:
+        """Prepare resume shortcut and state for reboot.
+
+        Returns the shortcut path (or None if creation failed).
+        This method NEVER triggers a reboot.  It only creates the
+        resume artefact so the user can reboot at their discretion.
+        """
+        self._log(f"Preparing reboot resume (reason={reason})")
+        shortcut = self.reboot_manager.prepare_reboot_resume(reason=reason)
+        self._log(f"Resume shortcut: {shortcut or 'FAILED'}")
+        return shortcut
+
+    def complete_resume(self) -> None:
+        """Called after reboot-resume to clean up artefacts."""
+        self._log("Completing resume — cleaning up shortcut")
+        self.reboot_manager.complete_resume()
+
+    def has_resume_state(self) -> bool:
+        """Check whether a resume-state file exists."""
+        return self.reboot_manager.has_resume_state()
+
+    def get_resume_screen_index(self) -> int:
+        """Return the wizard screen index to resume at after reboot."""
+        return self.reboot_manager.get_resume_screen_index()

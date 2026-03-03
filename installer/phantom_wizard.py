@@ -6,6 +6,10 @@ Launch this script to start the graphical installation wizard:
 
     python phantom_wizard.py
 
+Resume after a reboot:
+
+    python phantom_wizard.py --resume
+
 The CLI installer remains fully functional:
 
     python phantom_installer.py
@@ -15,6 +19,7 @@ It DOES NOT modify Phantom's constitutional architecture.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -38,5 +43,35 @@ except ModuleNotFoundError:
 
 from gui.wizard import main
 
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Phantom Distributed Compute Fabric — Setup Wizard",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="Resume installation after a system reboot.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = _parse_args()
+    resume_idx = None
+
+    if args.resume:
+        # Determine which screen to resume at from persisted state
+        try:
+            from backend_interface.reboot_manager import RebootManager
+            rm = RebootManager(Path.home() / "phantom")
+            if rm.has_resume_state():
+                resume_idx = rm.get_resume_screen_index()
+            else:
+                # No saved state — land on the Resume screen (index 4)
+                resume_idx = 4
+        except Exception:
+            resume_idx = 4
+
+    main(resume_idx=resume_idx)
