@@ -196,42 +196,34 @@ class GTX1080Plugin(NVIDIACudaPlugin):
 
         task_type = routing_request.get("task_type", "unknown")
 
-        # Score workers based on multiple factors
+        # Score workers based on reported GPU capabilities and load.
+        # Memory capacity is used as a hardware proxy to avoid hardcoding
+        # specific GPU model names.
         worker_scores = {}
 
         for worker_id, worker_info in available_workers.items():
             score = 0.0
             gpu_info = worker_info.get("gpu_info", {})
-            gpu_name = gpu_info.get("name", "").upper()
+            memory_total = gpu_info.get("memory_total", 0)
+            memory_free = gpu_info.get("memory_free", 0)
 
-            # GPU type scoring
-            if "RTX 5080" in gpu_name:
-                score += 10.0  # Highest performance
-            elif "RTX 5060" in gpu_name:
-                score += 8.0  # High performance
-            elif "GTX 1080" in gpu_name:
-                score += 6.0  # Reliable performance
-            elif "FIREPRO" in gpu_name:
-                score += 7.0  # Good for specific tasks
+            # Base score: 1 point per 4 GB; memory_total is expected in MB
+            score += memory_total / 4096
 
-            # Task-specific bonuses
-            if task_type == "ml_inference":
-                if "RTX" in gpu_name:
-                    score += 3.0
+            # Task-specific memory preferences
+            if task_type in {"ml_inference", "training"}:
+                score += memory_free / 4096  # Extra weight on free memory
             elif task_type == "data_processing":
-                if "FIREPRO" in gpu_name:
-                    score += 4.0
-            elif task_type == "image_processing":
-                score += 2.0  # All GPUs decent for this
+                if memory_total >= 16000:
+                    score += 4.0  # Bonus for large-memory GPUs
 
             # Current load penalty
             current_tasks = worker_info.get("current_tasks", 0)
             max_tasks = worker_info.get("max_concurrent_tasks", 1)
-            load_factor = current_tasks / max_tasks
+            load_factor = current_tasks / max(1, max_tasks)
             score -= load_factor * 3.0
 
             # Memory availability bonus
-            memory_free = gpu_info.get("memory_free", 0)
             if memory_free > 8000:
                 score += 2.0
             elif memory_free > 4000:
@@ -256,18 +248,17 @@ class GTX1080Plugin(NVIDIACudaPlugin):
         worker_info = available_workers[selected_worker]
         gpu_info = worker_info.get("gpu_info", {})
         gpu_name = gpu_info.get("name", "Unknown")
+        memory_total = gpu_info.get("memory_total", 0)
 
         reasons = []
 
-        # GPU capability reasoning
-        if "RTX 5080" in gpu_name:
-            reasons.append("flagship GPU performance")
-        elif "RTX 5060" in gpu_name:
-            reasons.append("modern GPU capabilities")
-        elif "GTX 1080" in gpu_name:
-            reasons.append("proven stability and compatibility")
-        elif "FirePro" in gpu_name:
-            reasons.append("professional-grade memory capacity")
+        # Memory capacity reasoning
+        if memory_total >= 24000:
+            reasons.append("high memory capacity")
+        elif memory_total >= 16000:
+            reasons.append("large memory capacity")
+        elif memory_total >= 8000:
+            reasons.append("adequate memory capacity")
 
         # Load reasoning
         current_tasks = worker_info.get("current_tasks", 0)
@@ -276,12 +267,15 @@ class GTX1080Plugin(NVIDIACudaPlugin):
         elif current_tasks == 1:
             reasons.append("light current load")
 
-        # Memory reasoning
+        # Memory availability
         memory_free = gpu_info.get("memory_free", 0)
         if memory_free > 16000:
             reasons.append("abundant memory available")
         elif memory_free > 8000:
             reasons.append("sufficient memory available")
+
+        if not reasons:
+            reasons.append(f"using {gpu_name}")
 
         return f"Selected for {', '.join(reasons)}"
 
