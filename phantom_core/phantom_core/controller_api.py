@@ -871,33 +871,22 @@ async def request_llm_worker_selection(
 def smart_worker_selection(task: TaskRequest, active_workers: Dict) -> str:
     """Smart programming-based worker selection"""
 
-    # GPU performance hierarchy for different task types
-    # This is a capability lookup table — workers report their GPU name
-    # via auto-discovery, and we match against known models to determine
-    # optimal routing. Unknown GPUs fall through to "general" preference.
-    gpu_preferences = {
-        "ml_inference": ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro W9100"],
-        "training": ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro W9100"],
-        "image_processing": ["RTX 5080", "RTX 5060", "AMD FirePro W9100", "GTX 1080"],
-        "data_processing": ["AMD FirePro W9100", "RTX 5080", "RTX 5060", "GTX 1080"],
-        "general": ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro W9100"],
-    }
-
-    task_type = task.task_type
-    preferred_gpus = gpu_preferences.get(task_type, gpu_preferences["general"])
-
-    # Score workers based on GPU preference and current load
+    # Score workers based on reported GPU capabilities and current load.
+    # Using memory capacity as a hardware proxy avoids hardcoding specific
+    # GPU model names, so any discovered GPU is scored fairly.
     worker_scores = {}
     for worker_id, worker in active_workers.items():
         gpu_info = worker.get("gpu_info", {})
-        gpu_name = gpu_info.get("name", "Unknown")
+        memory_total = gpu_info.get("memory_total", 0)
+        memory_free = gpu_info.get("memory_free", 0)
 
-        # Base score from GPU preference
-        base_score = 0
-        for i, preferred_gpu in enumerate(preferred_gpus):
-            if preferred_gpu in gpu_name:
-                base_score = len(preferred_gpus) - i
-                break
+        # Baseline score: normalized to 8 GB (= 1.0); memory_total is in MB
+        base_score = max(1.0, memory_total / 8192)
+
+        # Prefer workers with more free memory for memory-intensive tasks
+        if task.task_type in {"training", "ml_inference", "large_model_inference"}:
+            if memory_total > 0:
+                base_score *= memory_free / memory_total
 
         # Adjust for current load (simplified)
         current_tasks = len(

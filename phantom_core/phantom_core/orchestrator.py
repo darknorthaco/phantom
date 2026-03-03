@@ -639,9 +639,9 @@ class PhantomOrchestrator:
             },
             "gpu_distribution": {
                 gpu_name: sum(
-                    1 for w in self.workers.values() if gpu_name in w.gpu_info.name
+                    1 for w in self.workers.values() if w.gpu_info.name == gpu_name
                 )
-                for gpu_name in ["RTX 5080", "RTX 5060", "GTX 1080", "AMD FirePro"]
+                for gpu_name in {w.gpu_info.name for w in self.workers.values()}
             },
         }
 
