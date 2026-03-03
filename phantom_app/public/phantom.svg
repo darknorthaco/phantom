@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="maskGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0a0a14"/>
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00a6ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0044aa" stop-opacity="0.2"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer mask silhouette -->
+  <path d="M256 48 C140 48 72 140 72 240 C72 320 108 380 160 420 C180 436 200 448 220 456 L232 508 C240 516 248 520 256 520 C264 520 272 516 280 508 L292 456 C312 448 332 436 352 420 C404 380 440 320 440 240 C440 140 372 48 256 48Z"
+        fill="url(#maskGrad)" stroke="#2a2a4a" stroke-width="2"/>
+  <!-- Left eye slit -->
+  <path d="M148 220 L216 200 L216 240 L148 260Z" fill="url(#glowGrad)"/>
+  <!-- Right eye slit -->
+  <path d="M364 220 L296 200 L296 240 L364 260Z" fill="url(#glowGrad)"/>
+  <!-- Center ridge -->
+  <line x1="256" y1="140" x2="256" y2="360" stroke="#1a1a3a" stroke-width="3"/>
+  <!-- Brow accents -->
+  <path d="M148 200 L216 180" stroke="#00a6ff" stroke-width="1.5" opacity="0.5"/>
+  <path d="M364 200 L296 180" stroke="#00a6ff" stroke-width="1.5" opacity="0.5"/>
+  <!-- Cheek lines -->
+  <path d="M160 300 L220 280" stroke="#2a2a5a" stroke-width="1"/>
+  <path d="M352 300 L292 280" stroke="#2a2a5a" stroke-width="1"/>
+</svg>
