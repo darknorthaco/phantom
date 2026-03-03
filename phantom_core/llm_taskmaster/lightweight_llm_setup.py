@@ -46,6 +46,18 @@ except ImportError:
     # Fallback: socket integration not available
     LLMTaskMasterClient = None
 
+# Import the Constitutional Pipeline (ADR-0010)
+# Authority chain: MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate
+try:
+    from pipeline import (
+        TaskMasterPipeline, PipelineContext, PipelineVerdict,
+        ExecutionMode as PipelineExecutionMode, MemoryGuard, ModeGate,
+        ModelRouter, ContextBuilder, ApprovalGate,
+    )
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    PIPELINE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -376,6 +388,10 @@ class LightweightLLMTaskMaster:
             "start_time": datetime.now(),
         }
 
+        # Constitutional Pipeline (ADR-0010)
+        # Authority: MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate
+        self.pipeline: Optional["TaskMasterPipeline"] = None
+
         logger.info(
             f"🎭 LLM Task Master configured: mode={self.execution_mode.value}, "
             f"host={self.controller_host}:{self.socket_port}"
@@ -420,6 +436,25 @@ class LightweightLLMTaskMaster:
 
             # Load routing model (only for AUTO and HYBRID)
             await self.load_lightweight_model()
+
+            # Initialize the Constitutional Pipeline (ADR-0010)
+            if PIPELINE_AVAILABLE:
+                pipeline_mode = PipelineExecutionMode(self.execution_mode.value)
+                self.pipeline = TaskMasterPipeline(
+                    config=self.config,
+                    system_mode=pipeline_mode,
+                    human_priority_checker=self.human_priority_checker,
+                    proposal_store=self.proposal_store,
+                )
+                logger.info(
+                    "🏛️ Constitutional Pipeline activated: "
+                    "MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate"
+                )
+            else:
+                logger.warning(
+                    "⚠️ Pipeline module not available — falling back to legacy routing. "
+                    "(pipeline.py not found alongside lightweight_llm_setup.py)"
+                )
 
             # Start proposal expiry loop for HYBRID mode
             if self.execution_mode == ExecutionMode.HYBRID:
@@ -482,6 +517,11 @@ class LightweightLLMTaskMaster:
             )
 
         self.execution_mode = new_mode
+
+        # Update the pipeline's mode if active (Doctrine §8 — reversible at runtime)
+        if self.pipeline and PIPELINE_AVAILABLE:
+            self.pipeline.update_mode(PipelineExecutionMode(new_mode.value))
+
         change_record = {
             "timestamp": datetime.now().isoformat(),
             "previous_mode": previous,
@@ -530,183 +570,255 @@ class LightweightLLMTaskMaster:
             logger.error(f"Error in message listener: {e}")
 
     # -----------------------------------------------------------------------
-    # Core Routing Handler — MODE-AWARE
-    # (Doctrine §1: Human Priority — check before every request)
-    # (Doctrine §11: Opera Principle — quiet, only acts when invited)
+    # Core Routing Handler — CONSTITUTIONAL PIPELINE
+    # Authority chain: MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate
+    # (ADR-0010, Doctrine §1/§4/§8/§9/§11, Commandment I/IV)
     # -----------------------------------------------------------------------
 
     async def handle_routing_request(self, message: Dict[str, Any]):
-        """Handle routing request from controller — behavior depends on execution mode.
+        """Handle routing request from controller via the Constitutional Pipeline.
 
-        AUTO:   Make decision autonomously and respond immediately.
-        HYBRID: Generate proposal and wait for human approval.
-        MANUAL: Reject the request — human routes directly.
+        The pipeline runs five stages in constitutional order:
+          1. MemoryGuard  — Reject if memory is unsafe (OOM protection)
+          2. ModeGate     — Check execution mode + human priority
+          3. ModelRouter   — Score workers, select backend and best worker
+          4. ContextBuilder — Inject Soul/Mind/Body governance preamble
+          5. ApprovalGate  — AUTO executes; HYBRID proposes and blocks
+
+        Each stage logs to the audit trail (Doctrine §4, Commandment IV).
+        If any stage issues a terminal verdict, the pipeline short-circuits.
         """
         try:
             request_id = message.get("request_id")
             routing_data = message.get("data", {})
             task = routing_data.get("task", {})
             available_workers = routing_data.get("available_workers", {})
-
-            # Per-task mode override (if allowed by config)
             task_mode_override = task.get("execution_mode")
-            effective_mode = self.execution_mode
-            if task_mode_override and self.config.get("execution_mode", {}).get(
-                "allow_per_task_override", True
-            ):
-                try:
-                    effective_mode = ExecutionMode(task_mode_override.lower())
-                except ValueError:
-                    pass  # Fall back to system mode
 
-            # ----- MANUAL MODE: LLM is bypassed (Commandment I) -----
-            if effective_mode == ExecutionMode.MANUAL:
-                response = {
-                    "type": "llm_routing_response",
-                    "request_id": request_id,
-                    "status": "bypassed",
-                    "mode": "manual",
-                    "message": "MANUAL mode — LLM routing bypassed. Human selects worker directly.",
-                    "timestamp": datetime.now().isoformat(),
-                }
-                if self.socket_client:
-                    await self.socket_client.send(response)
-                logger.info("⏭️ Routing request bypassed (MANUAL mode)")
-                return
-
-            # ----- HUMAN PRIORITY CHECK (Doctrine §1) -----
-            hp_status = await self.human_priority_checker.check()
-            if hp_status["human_active"]:
-                action = self.config.get("human_priority", {}).get(
-                    f"{effective_mode.value}_mode_action", "withdraw"
+            # --- Run the Constitutional Pipeline ---
+            if self.pipeline and PIPELINE_AVAILABLE:
+                ctx = await self.pipeline.run(
+                    task=task,
+                    available_workers=available_workers,
+                    requested_mode=task_mode_override,
+                    request_id=request_id,
                 )
-                self.metrics["withdrawals"] += 1
 
-                if action == "withdraw":
-                    response = {
-                        "type": "llm_routing_response",
-                        "request_id": request_id,
-                        "status": "withdrawn",
-                        "mode": effective_mode.value,
-                        "reason": hp_status["reason"],
-                        "message": "LLM Task Master withdrawn — human activity detected. "
-                                   "(Doctrine §1 Human Priority)",
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                    if self.socket_client:
-                        await self.socket_client.send(response)
-                    logger.info(f"🛑 WITHDRAWAL: {hp_status['reason']}")
-                    return
+                # Update metrics from pipeline result
+                self._update_metrics_from_pipeline(ctx)
 
-                elif action == "pause":
-                    response = {
-                        "type": "llm_routing_response",
-                        "request_id": request_id,
-                        "status": "paused",
-                        "mode": effective_mode.value,
-                        "reason": hp_status["reason"],
-                        "message": "LLM Task Master paused — human activity detected. "
-                                   "Proposal generation deferred. (Doctrine §1)",
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                    if self.socket_client:
-                        await self.socket_client.send(response)
-                    logger.info(f"⏸️ PAUSED: {hp_status['reason']}")
-                    return
+                # Send response over socket
+                response = ctx.to_response()
 
-            # ----- ROUTING DECISION -----
-            decision_start = datetime.now()
-            selected_worker = await self.make_routing_decision(task, available_workers)
-            decision_time = (datetime.now() - decision_start).total_seconds()
-
-            reasoning = await self.generate_reasoning(
-                task, available_workers, selected_worker
-            )
-            confidence = await self.calculate_confidence(
-                task, available_workers, selected_worker
-            )
-
-            # ----- AUTO MODE: Execute immediately -----
-            if effective_mode == ExecutionMode.AUTO:
-                response = {
-                    "type": "llm_routing_response",
-                    "request_id": request_id,
-                    "status": "decided",
-                    "mode": "auto",
-                    "selected_worker": selected_worker,
-                    "confidence": confidence,
-                    "reasoning": reasoning,
-                    "decision_time_ms": decision_time * 1000,
-                    "timestamp": datetime.now().isoformat(),
-                }
+                # For HYBRID proposals, enrich the socket message
+                if ctx.final_verdict == PipelineVerdict.PROPOSE:
+                    response["type"] = "proposal_ready"
+                    response["proposal_id"] = ctx.proposal_id
+                    response["requires_approval"] = True
+                    response["message"] = self._build_hybrid_message(ctx)
 
                 if self.socket_client:
                     await self.socket_client.send(response)
 
-                self.metrics["decisions_made"] += 1
-                self.update_average_decision_time(decision_time)
-                self.store_decision(task, available_workers, selected_worker, reasoning)
-
-                logger.info(
-                    f"🎯 AUTO decision: {selected_worker} "
-                    f"(confidence: {confidence:.2f}, {decision_time*1000:.0f}ms)"
-                )
+                self._log_pipeline_result(ctx)
                 return
 
-            # ----- HYBRID MODE: Propose only — DO NOT EXECUTE -----
-            # (Commandment I: No execution without human authorization)
-            if effective_mode == ExecutionMode.HYBRID:
-                # Score all workers for alternatives
-                alternatives = await self._build_alternatives(
-                    task, available_workers, selected_worker
-                )
-
-                proposal_data = {
-                    "request_id": request_id,
-                    "task": task,
-                    "proposed_worker": selected_worker,
-                    "confidence": confidence,
-                    "reasoning": reasoning,
-                    "alternatives": alternatives,
-                    "decision_time_ms": decision_time * 1000,
-                    "available_workers": list(available_workers.keys()),
-                }
-
-                proposal_id = self.proposal_store.add(proposal_data)
-                self.metrics["proposals_generated"] += 1
-
-                # Send proposal to UI/controller — NOT a routing decision
-                proposal_notification = {
-                    "type": "proposal_ready",
-                    "request_id": request_id,
-                    "proposal_id": proposal_id,
-                    "mode": "hybrid",
-                    "status": "pending_approval",
-                    "proposed_worker": selected_worker,
-                    "confidence": confidence,
-                    "reasoning": reasoning,
-                    "alternatives": alternatives,
-                    "expires_at": (
-                        datetime.now().isoformat()  # Simplified; real impl uses timedelta
-                    ),
-                    "requires_approval": True,
-                    "message": "HYBRID mode — proposal generated. Awaiting human approval. "
-                               "(Commandment I: No execution without authorization)",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-                if self.socket_client:
-                    await self.socket_client.send(proposal_notification)
-
-                logger.info(
-                    f"📋 HYBRID proposal [{proposal_id[:8]}]: "
-                    f"proposed={selected_worker}, confidence={confidence:.2f} "
-                    f"— AWAITING HUMAN APPROVAL"
-                )
-                return
+            # --- Fallback: Legacy inline routing (pipeline.py not available) ---
+            await self._legacy_handle_routing_request(
+                message, request_id, task, available_workers, task_mode_override
+            )
 
         except Exception as e:
             logger.error(f"Error handling routing request: {e}")
+
+    def _update_metrics_from_pipeline(self, ctx: "PipelineContext") -> None:
+        """Update internal metrics from a completed pipeline run."""
+        verdict = ctx.final_verdict
+
+        if verdict == PipelineVerdict.EXECUTE:
+            self.metrics["decisions_made"] += 1
+            elapsed_s = ctx.elapsed_ms / 1000 if ctx.elapsed_ms else 0
+            self.update_average_decision_time(elapsed_s)
+
+        elif verdict == PipelineVerdict.PROPOSE:
+            self.metrics["proposals_generated"] += 1
+
+        elif verdict in (PipelineVerdict.WITHDRAW, PipelineVerdict.PAUSE):
+            self.metrics["withdrawals"] += 1
+
+    def _build_hybrid_message(self, ctx: "PipelineContext") -> str:
+        """Build the human-facing HYBRID proposal message.
+
+        'Hey, I have N workers available to work that job you just input —
+         would you like me to proceed using all available workers,
+         or select yourself?'
+        """
+        worker_count = len(ctx.available_workers)
+        worker_names = ", ".join(
+            f"{wid} ({winfo.get('gpu_info', {}).get('name', '?')})"
+            for wid, winfo in ctx.available_workers.items()
+        )
+        task_type = ctx.task.get("task_type", "unknown")
+        return (
+            f"I have {worker_count} worker(s) available for this "
+            f"{task_type} task: {worker_names}. "
+            f"My recommendation is {ctx.selected_worker} "
+            f"(confidence: {ctx.confidence:.0%}). "
+            f"Would you like me to proceed with this worker, "
+            f"use all available workers, or select yourself?"
+        )
+
+    def _log_pipeline_result(self, ctx: "PipelineContext") -> None:
+        """Log the pipeline result with appropriate emoji and detail."""
+        verdict = ctx.final_verdict
+        icons = {
+            PipelineVerdict.EXECUTE: "🎯",
+            PipelineVerdict.PROPOSE: "📋",
+            PipelineVerdict.BYPASS: "⏭️",
+            PipelineVerdict.REJECT: "🚫",
+            PipelineVerdict.WITHDRAW: "🛑",
+            PipelineVerdict.PAUSE: "⏸️",
+            PipelineVerdict.DOWNGRADE: "⬇️",
+        }
+        icon = icons.get(verdict, "❓")
+
+        if verdict == PipelineVerdict.EXECUTE:
+            logger.info(
+                f"{icon} AUTO decision: {ctx.selected_worker} "
+                f"(confidence: {ctx.confidence:.2f}, {ctx.elapsed_ms:.0f}ms)"
+            )
+        elif verdict == PipelineVerdict.PROPOSE:
+            pid = ctx.proposal_id[:8] if ctx.proposal_id else "?"
+            logger.info(
+                f"{icon} HYBRID proposal [{pid}]: "
+                f"proposed={ctx.selected_worker}, confidence={ctx.confidence:.2f} "
+                f"— AWAITING HUMAN APPROVAL"
+            )
+        else:
+            reason = ""
+            if ctx.audit_trail:
+                reason = ctx.audit_trail[-1].reason
+            logger.info(f"{icon} Pipeline verdict: {verdict.value} — {reason}")
+
+    # -----------------------------------------------------------------------
+    # Legacy Routing Fallback (used when pipeline.py is not importable)
+    # -----------------------------------------------------------------------
+
+    async def _legacy_handle_routing_request(
+        self, message: Dict[str, Any], request_id: str,
+        task: Dict[str, Any], available_workers: Dict[str, Any],
+        task_mode_override: Optional[str],
+    ):
+        """Legacy inline routing — preserved as fallback when pipeline.py is absent.
+
+        This is the original monolithic handler.  Once pipeline.py is confirmed
+        stable, this method can be removed.  (Doctrine §8 Reversibility)
+        """
+        effective_mode = self.execution_mode
+        if task_mode_override and self.config.get("execution_mode", {}).get(
+            "allow_per_task_override", True
+        ):
+            try:
+                effective_mode = ExecutionMode(task_mode_override.lower())
+            except ValueError:
+                pass
+
+        # MANUAL bypass
+        if effective_mode == ExecutionMode.MANUAL:
+            response = {
+                "type": "llm_routing_response",
+                "request_id": request_id,
+                "status": "bypassed",
+                "mode": "manual",
+                "message": "MANUAL mode — LLM routing bypassed. Human selects worker directly.",
+                "timestamp": datetime.now().isoformat(),
+            }
+            if self.socket_client:
+                await self.socket_client.send(response)
+            logger.info("⏭️ Routing request bypassed (MANUAL mode) [legacy]")
+            return
+
+        # Human priority check
+        hp_status = await self.human_priority_checker.check()
+        if hp_status["human_active"]:
+            action = self.config.get("human_priority", {}).get(
+                f"{effective_mode.value}_mode_action", "withdraw"
+            )
+            self.metrics["withdrawals"] += 1
+            status = "withdrawn" if action == "withdraw" else "paused"
+            response = {
+                "type": "llm_routing_response",
+                "request_id": request_id,
+                "status": status,
+                "mode": effective_mode.value,
+                "reason": hp_status["reason"],
+                "timestamp": datetime.now().isoformat(),
+            }
+            if self.socket_client:
+                await self.socket_client.send(response)
+            logger.info(f"{'🛑' if status == 'withdrawn' else '⏸️'} {status.upper()}: {hp_status['reason']} [legacy]")
+            return
+
+        # Routing decision
+        decision_start = datetime.now()
+        selected_worker = await self.make_routing_decision(task, available_workers)
+        decision_time = (datetime.now() - decision_start).total_seconds()
+
+        reasoning = await self.generate_reasoning(task, available_workers, selected_worker)
+        confidence = await self.calculate_confidence(task, available_workers, selected_worker)
+
+        if effective_mode == ExecutionMode.AUTO:
+            response = {
+                "type": "llm_routing_response",
+                "request_id": request_id,
+                "status": "decided",
+                "mode": "auto",
+                "selected_worker": selected_worker,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "decision_time_ms": decision_time * 1000,
+                "timestamp": datetime.now().isoformat(),
+            }
+            if self.socket_client:
+                await self.socket_client.send(response)
+            self.metrics["decisions_made"] += 1
+            self.update_average_decision_time(decision_time)
+            self.store_decision(task, available_workers, selected_worker, reasoning)
+            logger.info(f"🎯 AUTO decision: {selected_worker} (confidence: {confidence:.2f}) [legacy]")
+            return
+
+        if effective_mode == ExecutionMode.HYBRID:
+            alternatives = await self._build_alternatives(task, available_workers, selected_worker)
+            proposal_data = {
+                "request_id": request_id,
+                "task": task,
+                "proposed_worker": selected_worker,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "alternatives": alternatives,
+                "decision_time_ms": decision_time * 1000,
+                "available_workers": list(available_workers.keys()),
+            }
+            proposal_id = self.proposal_store.add(proposal_data)
+            self.metrics["proposals_generated"] += 1
+            notification = {
+                "type": "proposal_ready",
+                "request_id": request_id,
+                "proposal_id": proposal_id,
+                "mode": "hybrid",
+                "status": "pending_approval",
+                "proposed_worker": selected_worker,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "alternatives": alternatives,
+                "requires_approval": True,
+                "message": "HYBRID mode — proposal generated. Awaiting human approval.",
+                "timestamp": datetime.now().isoformat(),
+            }
+            if self.socket_client:
+                await self.socket_client.send(notification)
+            logger.info(f"📋 HYBRID proposal [{proposal_id[:8]}]: proposed={selected_worker} [legacy]")
+            return
 
     # -----------------------------------------------------------------------
     # HYBRID Mode: Approval / Rejection Handlers
@@ -1151,6 +1263,11 @@ class LightweightLLMTaskMaster:
                 "soul": "doctrine/PHANTOM_MANIFEST.md",
                 "mind": "doctrine/PHANTOM_DOCTRINE.md",
                 "body": ".cursorrules + PHANTOM_TEN_COMMANDMENTS.md",
+            },
+            "pipeline": {
+                "active": self.pipeline is not None,
+                "authority_chain": "MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate",
+                "stages": ["MemoryGuard", "ModeGate", "ModelRouter", "ContextBuilder", "ApprovalGate"],
             },
         }
 

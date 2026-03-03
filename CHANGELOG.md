@@ -5,6 +5,32 @@ All notable changes to the Phantom distributed computing platform will be docume
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-02 — Constitutional Pipeline (ADR-0010)
+
+### Added — LLM Task Master Pipeline
+- **Constitutional Pipeline** (`phantom_core/llm_taskmaster/pipeline.py`): Five discrete, auditable pipeline stages implementing the authority chain defined in ADR-0010
+  - **MemoryGuard**: Pre-check stage that inspects system RAM, GPU VRAM, swap pressure, and model footprint before any routing begins. Rejects unsafe requests, downgrades borderline AUTO to HYBRID. Never proceeds silently.
+  - **ModeGate**: Enforces execution mode boundaries (AUTO/HYBRID/MANUAL) and human priority withdrawal (Doctrine §1, Opera Principle §11). Honors MemoryGuard borderline verdicts.
+  - **ModelRouter**: Hardware-agnostic worker scoring and LLM backend selection (llama.cpp → ollama → vllm → rule_engine). Generates confidence scores and human-readable reasoning (Commandment IV).
+  - **ContextBuilder**: Injects immutable Soul–Mind–Body governance preamble into every LLM prompt. Validates prompt size against context length — never truncates silently.
+  - **ApprovalGate**: Final authority — AUTO executes immediately with audit logging; HYBRID generates a human-facing proposal ("I have N workers available — would you like me to proceed or select yourself?") and blocks for approval (Commandment I).
+- **PipelineContext**: Shared dataclass that flows through all five stages carrying request data, memory readings, routing decisions, governance prompts, and a full audit trail (Doctrine §4, Commandment IV).
+- **PipelineVerdict**: Enumeration of pipeline outcomes (PROCEED, BYPASS, PROPOSE, EXECUTE, REJECT, WITHDRAW, PAUSE, DOWNGRADE) — every decision is explicit and deterministic.
+- **LLMBackend**: Enumeration of supported inference backends (llama.cpp, ollama, vllm, rule_engine) per ADR-0010.
+
+### Changed — LLM Task Master Integration
+- **`lightweight_llm_setup.py`**: Refactored `handle_routing_request()` to dispatch through the Constitutional Pipeline when available, with legacy inline routing preserved as fallback (Doctrine §8 Reversibility).
+- **`set_execution_mode()`**: Now propagates mode changes to the pipeline at runtime.
+- **`get_status()`**: Now reports pipeline activation state and authority chain.
+- **Initialization**: Pipeline is instantiated during `initialize()` and wired with the human priority checker and proposal store.
+
+### Governance Alignment
+- Authority chain: MemoryGuard → Mode Gate → Model Router → Context Builder → Approval Gate
+- Every pipeline stage logs to the audit trail (Doctrine §4 Transparent Operation)
+- Each stage is independently testable, swappable, and overridable (Doctrine §9 Modularity)
+- No silent execution, no hidden truncation, no implicit fallback (Commandment IV)
+- Memory safety treated as a constitutional requirement equal to identity and doctrine compliance
+
 ## [1.0.0] - 2026-02-23 — Initial Release (Unified Distribution)
 
 ### Added — Platform
