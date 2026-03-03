@@ -73,7 +73,7 @@ class InstallationScreen(WizardScreen):
         workers = self.wizard.state.selected_workers or []
         worker_configs = [
             {
-                "worker_id": w.get("name") or f"worker-{i + 1}",
+                "worker_id": w.get("name") or w.get("hostname") or f"worker-{i + 1}",
                 "controller_host": "localhost",
                 "controller_port": 8080,
                 "worker_host": w.get("ip", ""),

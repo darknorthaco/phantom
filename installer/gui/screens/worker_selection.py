@@ -134,11 +134,12 @@ class WorkerSelectionScreen(WizardScreen):
 
     def _update_validation(self) -> None:
         tm = self.wizard.state.task_master
-        model = self.wizard.state.selected_model
         if tm is None:
             self._validation_lbl.config(text="", fg=self.wizard.theme.TEXT_FG)
             return
-        vram_needed = model.get("vram_min_gb", 6) if model else 6
+        model = self.wizard.state.selected_model
+        # Default to 6 GB if no model chosen yet (model selection is a later step).
+        vram_needed = model["vram_min_gb"] if model is not None else 6
         msg = self.wizard.api.worker_adapter.get_task_master_message(tm, vram_needed)
         color = self.wizard.theme.SUCCESS if msg.startswith("✓") else self.wizard.theme.WARNING
         self._validation_lbl.config(text=msg, fg=color)

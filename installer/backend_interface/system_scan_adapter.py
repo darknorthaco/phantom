@@ -58,7 +58,7 @@ def run_system_scan(ports: List[int] = None) -> Dict:
     disk_ok = checker.check_disk_space(min_gb=5.0)
     disk_detail = ""
     for msg in checker.checks_passed + checker.checks_warnings + checker.checks_failed:
-        if "disk" in msg.lower() or "Disk" in msg:
+        if "disk" in msg.lower():
             disk_detail = msg
             break
     if not disk_detail:

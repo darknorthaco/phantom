@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 # Add installer directory to path
 # __file__ is phantom_core/tests/test_wizard_backend.py
-# installer/ is at the project root (three levels up from this file)
+# Go two levels up (.parent.parent = project root) then into installer/
 _installer_dir = Path(__file__).parent.parent.parent / "installer"
 if str(_installer_dir) not in sys.path:
     sys.path.insert(0, str(_installer_dir))
@@ -199,33 +199,41 @@ class TestModelDownloader(unittest.TestCase):
 
     def test_verify_checksum_empty_skips(self):
         from backend_interface.model_downloader import ModelDownloader
-        tmp = Path(tempfile.mktemp(suffix=".gguf"))
-        tmp.write_bytes(b"dummy data")
+        fd, path = tempfile.mkstemp(suffix=".gguf")
+        tmp = Path(path)
         try:
+            import os
+            os.write(fd, b"dummy data")
+            os.close(fd)
             self.assertTrue(ModelDownloader._verify_checksum(tmp, ""))
         finally:
-            tmp.unlink()
+            tmp.unlink(missing_ok=True)
 
     def test_verify_checksum_correct(self):
-        import hashlib
+        import hashlib, os
         from backend_interface.model_downloader import ModelDownloader
         data = b"test content"
         expected = hashlib.sha256(data).hexdigest()
-        tmp = Path(tempfile.mktemp(suffix=".gguf"))
-        tmp.write_bytes(data)
+        fd, path = tempfile.mkstemp(suffix=".gguf")
+        tmp = Path(path)
         try:
+            os.write(fd, data)
+            os.close(fd)
             self.assertTrue(ModelDownloader._verify_checksum(tmp, expected))
         finally:
-            tmp.unlink()
+            tmp.unlink(missing_ok=True)
 
     def test_verify_checksum_incorrect(self):
+        import os
         from backend_interface.model_downloader import ModelDownloader
-        tmp = Path(tempfile.mktemp(suffix=".gguf"))
-        tmp.write_bytes(b"real data")
+        fd, path = tempfile.mkstemp(suffix=".gguf")
+        tmp = Path(path)
         try:
+            os.write(fd, b"real data")
+            os.close(fd)
             self.assertFalse(ModelDownloader._verify_checksum(tmp, "deadbeef" * 8))
         finally:
-            tmp.unlink()
+            tmp.unlink(missing_ok=True)
 
     def test_download_skips_existing_valid_file(self):
         """If a valid file already exists it should be returned without re-downloading."""

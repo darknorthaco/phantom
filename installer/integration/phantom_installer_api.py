@@ -66,7 +66,9 @@ class PhantomInstallerAPI:
     # ------------------------------------------------------------------ #
 
     def _setup_audit_logger(self) -> logging.Logger:
-        logger = logging.getLogger(f"phantom_audit_{id(self)}")
+        # Use a fixed logger name scoped to the install directory to avoid proliferation.
+        logger_name = f"phantom_audit.{self.install_dir.name}"
+        logger = logging.getLogger(logger_name)
         logger.setLevel(logging.DEBUG)
         if not logger.handlers:
             fh = logging.FileHandler(

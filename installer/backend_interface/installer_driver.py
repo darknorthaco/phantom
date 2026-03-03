@@ -146,13 +146,13 @@ class InstallerDriver:
 
             elif stage_idx == 1:
                 _log("Installing selected components…")
-                _success, failed = self.component_manager.install_selected_components(
+                success, failed = self.component_manager.install_selected_components(
                     progress_callback=lambda m: _log(f"  {m}")
                 )
                 if failed:
                     _log(f"WARNING: Components failed to install: {', '.join(failed)}")
                 else:
-                    _log("All components installed.")
+                    _log(f"All {len(success)} component(s) installed.")
 
             elif stage_idx == 2:
                 _log("Generating configuration files…")

@@ -102,7 +102,10 @@ class ModelDownloader:
                 if status_cb:
                     status_cb(f"Model already present: {dest.name}")
                 return dest
-            dest.unlink()  # corrupt or stale — re-download
+            # File exists but checksum fails — log and remove before re-downloading.
+            if status_cb:
+                status_cb(f"Existing file failed checksum; re-downloading: {dest.name}")
+            dest.unlink()
 
         if status_cb:
             status_cb(f"Connecting to {model['url'].split('/')[2]}…")
