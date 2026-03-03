@@ -39,14 +39,16 @@ git fetch --prune origin
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 # List remote branches merged into origin/master, excluding master itself
-MERGED_BRANCHES=$(git branch -r --merged "origin/$MAIN_BRANCH" \
+MERGED_BRANCHES=()
+while IFS= read -r branch; do
+  [ -n "$branch" ] && MERGED_BRANCHES+=("$branch")
+done < <(git branch -r --merged "origin/$MAIN_BRANCH" \
   | grep -v "origin/$MAIN_BRANCH" \
   | grep -v "origin/HEAD" \
   | sed 's|origin/||' \
-  | sed 's/^[[:space:]]*//' \
-  || true)
+  | sed 's/^[[:space:]]*//')
 
-if [ -z "$MERGED_BRANCHES" ]; then
+if [ ${#MERGED_BRANCHES[@]} -eq 0 ]; then
   echo "No merged remote branches to clean up. Only '$MAIN_BRANCH' remains."
   exit 0
 fi
@@ -54,7 +56,7 @@ fi
 echo ""
 echo "The following remote branches have been merged into '$MAIN_BRANCH':"
 echo "-------------------------------------------------------------------"
-for branch in $MERGED_BRANCHES; do
+for branch in "${MERGED_BRANCHES[@]}"; do
   if [ "$branch" = "$CURRENT_BRANCH" ]; then
     echo "  $branch  (current branch — will skip)"
   else
@@ -76,7 +78,7 @@ if ! $AUTO_YES; then
   fi
 fi
 
-for branch in $MERGED_BRANCHES; do
+for branch in "${MERGED_BRANCHES[@]}"; do
   if [ "$branch" = "$CURRENT_BRANCH" ]; then
     echo "Skipping '$branch' (current branch)"
     continue
