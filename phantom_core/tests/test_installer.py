@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 # Add installer to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "installer"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "installer"))
 
 from modules.system_check import SystemChecker  # noqa: E402
 from modules.component_manager import ComponentManager  # noqa: E402
@@ -95,11 +95,12 @@ class TestComponentManager(unittest.TestCase):
         self.assertTrue(info["required"])
 
     def test_redblue_ui_repo_reference(self):
-        """RedBlue UI should reference the private UI repository"""
+        """RedBlue UI is already included in the main repo (no external clone needed)"""
         info = self.manager.get_component_info("redblue_ui")
         self.assertIsNotNone(info)
-        self.assertEqual(
-            info["repo"], "https://github.com/darknorthaco/redblue-private"
+        self.assertIsNone(
+            info["repo"],
+            "RedBlue UI should have repo=None since it is bundled in the main installation",
         )
 
     def test_create_directory_structure(self):

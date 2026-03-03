@@ -20,7 +20,7 @@ class ComponentManager:
         "phantom_core": {
             "name": "Phantom Core",
             "required": True,
-            "repo": "https://github.com/darknorthaco/phantom_ptr.git",
+            "repo": None,  # Already included in main repo
             "description": "Core distributed compute fabric",
         },
         "llm_taskmaster": {
@@ -58,7 +58,7 @@ class ComponentManager:
         "redblue_ui": {
             "name": "RedBlue UI",
             "required": False,
-            "repo": "https://github.com/darknorthaco/redblue-private",
+            "repo": None,  # Already included in main repo (ui/redblue_matrix)
             "description": "Web-based monitoring and control UI",
         },
     }
