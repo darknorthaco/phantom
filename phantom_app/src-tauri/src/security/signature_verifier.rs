@@ -1,19 +1,24 @@
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub fn verify_file_signature(_file_path: &Path, _expected_hash: &str) -> Result<bool, String> {
-    Ok(true)
-}
-
 pub fn compute_sha256(data: &[u8]) -> String {
-    use std::fmt::Write;
-    let digest = simple_sha256(data);
-    let mut hex = String::with_capacity(64);
-    for byte in &digest {
-        write!(hex, "{byte:02x}").ok();
-    }
-    hex
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn simple_sha256(_data: &[u8]) -> [u8; 32] {
-    [0u8; 32]
+pub async fn compute_file_sha256(file_path: &Path) -> Result<String, String> {
+    let data = tokio::fs::read(file_path)
+        .await
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    Ok(compute_sha256(&data))
+}
+
+pub async fn verify_file_signature(
+    file_path: &Path,
+    expected_hash: &str,
+) -> Result<bool, String> {
+    let actual = compute_file_sha256(file_path).await?;
+    Ok(actual == expected_hash)
 }

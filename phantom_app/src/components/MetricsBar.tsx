@@ -1,11 +1,12 @@
 interface Props {
   health: Record<string, unknown> | null;
+  onRefresh: () => void;
 }
 
-export default function MetricsBar({ health }: Props) {
+export default function MetricsBar({ health, onRefresh }: Props) {
   const workersCount = (health?.workers_count as number) ?? 0;
   const activeTasks = (health?.active_tasks as number) ?? 0;
-  const mode = (health?.execution_mode as string) ?? 'AUTO';
+  const mode = (health?.execution_mode as string) ?? 'MANUAL';
   const status = (health?.status as string) ?? 'unknown';
 
   return (
@@ -30,7 +31,10 @@ export default function MetricsBar({ health }: Props) {
         <span className="metric-label">Tasks</span>
         <span className="metric-value">{activeTasks}</span>
       </div>
-      <div className="metric-item" style={{ marginLeft: 'auto' }}>
+      <div className="metric-item" style={{ marginLeft: 'auto', cursor: 'pointer' }} onClick={onRefresh}>
+        <span className="metric-label" style={{ textDecoration: 'underline' }}>Refresh</span>
+      </div>
+      <div className="metric-item">
         <span className="metric-label">PHANTOM v1.0</span>
       </div>
     </div>
