@@ -72,6 +72,27 @@ Before contributing, you **MUST** read and understand:
 - **ALWAYS** create feature branches: `feature/description` or `phase-N-description`
 - **ALWAYS** open PRs with detailed descriptions and success criteria
 
+### Branch Cleanup
+
+After a PR is merged, its feature branch is no longer needed. To prevent stale
+branches from accumulating:
+
+1. **Enable auto-delete** (recommended): Go to **Settings → General → Pull Requests**
+   and check **"Automatically delete head branches"**. GitHub will remove the branch
+   as soon as each PR is merged.
+
+2. **Run the cleanup script** to delete all already-merged remote branches at once:
+   ```bash
+   ./scripts/cleanup_branches.sh            # interactive
+   ./scripts/cleanup_branches.sh --dry-run   # preview only
+   ./scripts/cleanup_branches.sh --yes       # non-interactive
+   ```
+
+3. **Delete a single branch manually**:
+   ```bash
+   git push origin --delete <branch-name>
+   ```
+
 ### PR Requirements
 Every PR must include:
 - Clear title: `[PHASE N] Description` or `[FEATURE] Description`
