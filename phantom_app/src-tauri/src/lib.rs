@@ -195,24 +195,41 @@ async fn load_llm_config(
 // ── Phase 6: System metrics ────────────────────────────────────────
 
 #[tauri::command]
-fn get_system_metrics() -> PhantomMetrics {
+async fn get_system_metrics(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<PhantomMetrics, String> {
     use sysinfo::System;
 
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    // CPU / RAM from sysinfo (synchronous, cheap)
+    let (cpu_percent, memory_used_mb, memory_total_mb) = {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        (
+            sys.global_cpu_usage() as f64,
+            sys.used_memory() / (1024 * 1024),
+            sys.total_memory() / (1024 * 1024),
+        )
+    };
 
-    let cpu_percent = sys.global_cpu_usage() as f64;
-    let memory_used_mb = sys.used_memory() / (1024 * 1024);
-    let memory_total_mb = sys.total_memory() / (1024 * 1024);
+    // Worker count and active tasks from the live controller health endpoint
+    let url = {
+        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
+    };
+    let client = PhantomApiClient::new(&url);
 
-    PhantomMetrics {
+    let (workers_count, active_tasks) = match client.health().await {
+        Ok(h) => (h.workers_count, h.active_tasks),
+        Err(_) => (0, 0), // controller not reachable yet — return zeros gracefully
+    };
+
+    Ok(PhantomMetrics {
         cpu_percent,
         memory_used_mb,
         memory_total_mb,
-        worker_count: 0,
-        active_tasks: 0,
+        workers_count,
+        active_tasks,
         throughput: 0.0,
-    }
+    })
 }
 
 // ── Phase 7: Dependency integrity ──────────────────────────────────
