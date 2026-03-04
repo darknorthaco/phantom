@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
+import WizardWelcome from './components/WizardWelcome';
 import FrontPorchDeploy from './components/FrontPorchDeploy';
+import ConsentModal from './components/ConsentModal';
 import MetricsBar from './components/MetricsBar';
 import SidebarNavigator from './components/SidebarNavigator';
 import PhantomConsole from './components/PhantomConsole';
@@ -8,67 +10,80 @@ import RoutingPanel from './components/RoutingPanel';
 import ModelsPanel from './components/ModelsPanel';
 import EphemeralPanel from './components/EphemeralPanel';
 import DeploymentsPanel from './components/DeploymentsPanel';
+import AuditLogPanel from './components/AuditLogPanel';
 import ExperimentalAOL from './components/ExperimentalAOL';
 import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
 
-type Phase = 'front_porch' | 'deploying' | 'toc';
+type Phase = 'wizard' | 'front_porch' | 'deploying' | 'consent_toc' | 'toc';
 
 export default function App() {
-  const [phase, setPhase] = useState<Phase>('front_porch');
+  const [phase, setPhase] = useState<Phase>('wizard');
   const [activeView, setActiveView] = useState('console');
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
 
-  const checkHealth = useCallback(() => {
+  const checkHealthOnce = useCallback(() => {
     fetch('http://127.0.0.1:8080/health')
       .then((r) => r.json())
       .then((d) => setHealth(d))
       .catch(() => setHealth(null));
   }, []);
 
-  useEffect(() => {
-    checkHealth();
-    const controllerUp = setInterval(checkHealth, 5000);
-    return () => clearInterval(controllerUp);
-  }, [checkHealth]);
-
-  useEffect(() => {
-    if (health && health.status === 'healthy' && phase === 'front_porch') {
-      setPhase('toc');
-    }
-  }, [health, phase]);
-
-  const handleDeployComplete = () => {
-    setPhase('toc');
-    checkHealth();
+  const handleWizardConsent = () => {
+    setPhase('front_porch');
   };
 
+  const handleDeployComplete = () => {
+    setPhase('consent_toc');
+    checkHealthOnce();
+  };
+
+  const handleEnterToc = () => {
+    checkHealthOnce();
+    setPhase('toc');
+  };
+
+  // Wizard Step 1: Welcome + Consent
+  if (phase === 'wizard') {
+    return <WizardWelcome onConsent={handleWizardConsent} />;
+  }
+
+  // Wizard Step 2: Deploy Phantom
   if (phase === 'front_porch' || phase === 'deploying') {
     return <FrontPorchDeploy onDeployComplete={handleDeployComplete} />;
   }
 
+  // Consent gate before entering TOC
+  if (phase === 'consent_toc') {
+    return (
+      <div className="deploy-screen">
+        <ConsentModal
+          title="Enter Command Center"
+          message="Deployment complete. You are about to enter the Phantom Tactical Operations Center. The controller is active and awaiting your commands."
+          onConfirm={handleEnterToc}
+          onCancel={() => setPhase('front_porch')}
+        />
+      </div>
+    );
+  }
+
+  // TOC Interface
   const renderPanel = () => {
     switch (activeView) {
-      case 'console':     return <PhantomConsole />;
-      case 'workers':     return <WorkersPanel />;
-      case 'routing':     return <RoutingPanel />;
-      case 'models':      return <ModelsPanel />;
-      case 'ephemeral':   return <EphemeralPanel />;
-      case 'deployments': return <DeploymentsPanel />;
-      case 'experimental':return <ExperimentalAOL />;
+      case 'console':      return <PhantomConsole />;
+      case 'workers':      return <WorkersPanel />;
+      case 'routing':      return <RoutingPanel />;
+      case 'models':       return <ModelsPanel />;
+      case 'ephemeral':    return <EphemeralPanel />;
+      case 'deployments':  return <DeploymentsPanel />;
+      case 'logs':         return <AuditLogPanel />;
+      case 'experimental': return <ExperimentalAOL />;
       case 'tasks':
         return (
           <div className="panel">
             <div className="panel-header"><span className="panel-title">Tasks</span></div>
             <div className="empty-state">No active tasks. Submit tasks via the Console or API.</div>
-          </div>
-        );
-      case 'logs':
-        return (
-          <div className="panel">
-            <div className="panel-header"><span className="panel-title">Logs</span></div>
-            <div className="empty-state">System logs will appear here.</div>
           </div>
         );
       case 'settings':
@@ -79,6 +94,10 @@ export default function App() {
               <div className="card-title">Controller Endpoint</div>
               <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>http://127.0.0.1:8080</p>
             </div>
+            <div className="card">
+              <div className="card-title">Default Execution Mode</div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>MANUAL (sacred default per doctrine)</p>
+            </div>
           </div>
         );
       default: return <PhantomConsole />;
@@ -87,7 +106,7 @@ export default function App() {
 
   return (
     <div className="toc-layout">
-      <MetricsBar health={health} />
+      <MetricsBar health={health} onRefresh={checkHealthOnce} />
       <SidebarNavigator active={activeView} onNavigate={setActiveView} />
       <div className="main-content">
         {renderPanel()}

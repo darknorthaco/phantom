@@ -115,3 +115,174 @@ hierarchy:
 
 final_rule:
   - "If any design choice conflicts with the Phantom Manifest (Soul), the Soul prevails."
+
+# =====================================================================
+# PHANTOM APPLICATION — STONE‑HOME EXTENSION
+# =====================================================================
+# These rules extend the existing Phantom BODY governance to cover the
+# full Tauri Stone‑Home application, deployment wizard, UI, backend
+# integration, and constitutional constraints for Cursor.
+# =====================================================================
+
+stone_home:
+  model:
+    - "The Phantom Application is a sovereign stone‑home shell."
+    - "Phantom core is external and must never be modified."
+    - "All control flows through APIs, config files, and services."
+    - "The application may observe, orchestrate, and manage — never rewrite."
+    - "The app is the house; Phantom is the engine."
+
+  prohibitions:
+    - "Do not modify Phantom controller, worker, or protocol code."
+    - "Do not introduce cloud dependencies or telemetry."
+    - "Do not create hidden communication paths."
+    - "Do not auto‑approve trust relationships."
+    - "Do not bypass explicit human consent."
+
+tauri_application:
+  frontend:
+    - "React + TypeScript + Vite must remain the UI stack."
+    - "Components must remain modular: Console, Workers, Routing, Models, Ephemeral, Deployments, ExperimentalAOL."
+    - "FrontPorchDeploy and WizardWelcome must remain separate screens."
+    - "MetricsBar and SidebarNavigator must remain global UI anchors."
+    - "CSS animations and layout must preserve the Phantom aesthetic."
+
+  backend:
+    - "Rust backend must remain modular under src-tauri/src/backend."
+    - "Linux and Windows service logic must remain OS‑segmented via cfg(target_os)."
+    - "PhantomDeployer must preserve the 10‑step deployment sequence."
+    - "PhantomApiClient must preserve endpoint structure and naming."
+    - "TLS, signing, and identity logic must be implemented in security/."
+
+wizard_flow:
+  step_1:
+    - "Welcome screen introduces Phantom and requires explicit consent."
+    - "Deployment plan must be shown before any action is taken."
+
+  step_2:
+    - "Deployment screen must show the Phantom mask, pulsing animation, loading bar, and micro‑status text."
+    - "All deployment progress must stream from backend events."
+    - "No silent transitions; user must see each step."
+
+deployment_screen:
+  mask_animation:
+    - "Opacity pulse: 0.80 → 1.00 → 0.80 over 3s ease-in-out."
+    - "Glow pulse synchronized at half intensity."
+    - "Animation must remain smooth, sovereign, and non‑aggressive."
+
+  loading_bar:
+    - "Width 60–70% of viewport; height 12–16px."
+    - "Smooth fill tied to backend progress."
+    - "No fake progress; only real events."
+
+  micro_status:
+    - "Font 10–11px monospace."
+    - "Single-line updates only."
+    - "Must show real backend operations."
+
+deployment_backend:
+  sequence:
+    - "0: Preflight checks"
+    - "1: Create venv"
+    - "2: Install dependencies"
+    - "3: Verify GPU plugins"
+    - "4: Install Phantom service"
+    - "5: Start controller"
+    - "6: Open ports"
+    - "7: LAN scan"
+    - "8: Auto-register workers (explicit approval required)"
+    - "9: Load execution modes"
+
+  constraints:
+    - "Sequence must not be reordered."
+    - "Steps may be implemented but not removed."
+    - "All steps must be logged for audit."
+
+service_management:
+  linux:
+    - "Use systemd_installer and systemd_manager."
+    - "Unit files must be explicit and human-readable."
+
+  windows:
+    - "Implement service_installer and service_manager using sc.exe or NSSM."
+    - "No registry hacks or hidden services."
+
+api_client:
+  rules:
+    - "Use reqwest with async/await."
+    - "Endpoints: /health, /workers, /stats, /task, /mode."
+    - "No new endpoints may be invented."
+    - "All responses must be logged on error."
+
+ui_governance:
+  toc_interface:
+    - "Console must support: health, workers, stats, mode, help."
+    - "WorkersPanel must show ID, host, port, GPU, status."
+    - "RoutingPanel must support AUTO, HYBRID, MANUAL."
+    - "ModelsPanel must reflect LLM Task Master status."
+    - "EphemeralPanel must manage time-limited access."
+    - "DeploymentsPanel must show component health."
+    - "ExperimentalAOL must manage WAN trust relationships."
+
+security:
+  identity:
+    - "Controllers must generate and store keypairs."
+    - "Identity handshake must occur before WAN communication."
+
+  signing:
+    - "All cross-controller messages must be signed."
+    - "signature_verifier.rs must implement real SHA-256."
+
+  tls:
+    - "tls_manager.rs must load certificates and verify peers."
+    - "QUIC/TLS is required for WAN links."
+
+  integrity:
+    - "dependency_integrity.rs must verify checksums against manifest.json."
+    - "No dependency may be installed without verification."
+
+audit_logging:
+  rules:
+    - "All deployment steps must be logged."
+    - "All mode changes must be logged."
+    - "All trust decisions must be logged."
+    - "All worker registrations must be logged."
+    - "Logs must be human-readable and stored locally."
+
+communication:
+  explicitness:
+    - "No silent polling without user consent."
+    - "No auto-transition to TOC without explicit confirmation."
+    - "All communication paths must be documented."
+
+style_consistency:
+  naming:
+    - "Use PhantomDeployer, PhantomApiClient, PhantomState, AppPhase."
+    - "Use controller, worker, mesh, identity, trust, export, withdraw where applicable."
+
+  coding:
+    - "TypeScript strict mode required."
+    - "Rust 2021 edition required."
+    - "Async/await required for all I/O."
+
+allowed_actions:
+  - "Implement missing backend steps."
+  - "Implement TLS and signing."
+  - "Implement audit logging."
+  - "Refine UI and animations."
+  - "Add Wizard Step 1."
+  - "Polish Phantom mask SVG."
+  - "Add branding and icons."
+  - "Implement WebSockets for real-time updates."
+
+forbidden_actions:
+  - "Do not modify Phantom core."
+  - "Do not bypass explicit consent."
+  - "Do not weaken security."
+  - "Do not add cloud dependencies."
+  - "Do not introduce telemetry."
+  - "Do not create hidden communication paths."
+
+enforcement:
+  - "These rules are binding for all Cursor actions."
+  - "If any rule conflicts with the Phantom Manifest (Soul), the Manifest prevails."
