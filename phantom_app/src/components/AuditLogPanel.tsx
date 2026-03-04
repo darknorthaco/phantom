@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getAuditLog } from '../utils/tauri';
 
 interface AuditEntry {
   timestamp: string;
@@ -9,12 +10,20 @@ interface AuditEntry {
 export default function AuditLogPanel() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchLogs = () => {
+  const fetchLogs = async () => {
     setLoading(true);
-    fetch('http://127.0.0.1:8080/health').catch(() => {});
-    setEntries([]);
-    setLoading(false);
+    setError(null);
+    try {
+      const raw = await getAuditLog(100);
+      setEntries(raw as unknown as AuditEntry[]);
+    } catch (e) {
+      setError(String(e));
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { fetchLogs(); }, []);
@@ -23,7 +32,9 @@ export default function AuditLogPanel() {
     <div className="panel">
       <div className="panel-header">
         <span className="panel-title">Audit Log</span>
-        <button className="console-send-btn" onClick={fetchLogs}>Refresh</button>
+        <button className="console-send-btn" onClick={fetchLogs} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
       </div>
 
       <div className="card">
@@ -37,6 +48,10 @@ export default function AuditLogPanel() {
 
       {loading ? (
         <div className="empty-state">Loading audit entries…</div>
+      ) : error ? (
+        <div className="empty-state" style={{ color: 'var(--accent-crimson)' }}>
+          Failed to load audit log: {error}
+        </div>
       ) : entries.length === 0 ? (
         <div className="empty-state">No audit entries yet. Events will appear after deployment.</div>
       ) : (

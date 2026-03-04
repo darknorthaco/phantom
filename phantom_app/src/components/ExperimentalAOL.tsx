@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { getIdentity, getTrustLedger, approvePeer, rejectPeer } from '../utils/tauri';
 
 interface TrustedPeer {
   peer_id: string;
@@ -17,18 +18,56 @@ interface TrustLedger {
 }
 
 export default function ExperimentalAOL() {
-  const [identityInfo, setIdentityInfo] = useState<Record<string, string> | null>(null);
-  const [ledger] = useState<TrustLedger>({ pending: [], approved: [], rejected: [] });
+  const [identityInfo, setIdentityInfo] = useState<Record<string, unknown> | null>(null);
+  const [ledger, setLedger] = useState<TrustLedger>({ pending: [], approved: [], rejected: [] });
+  const [loadingIdentity, setLoadingIdentity] = useState(false);
+  const [loadingLedger, setLoadingLedger] = useState(false);
+  const [identityError, setIdentityError] = useState<string | null>(null);
 
   const loadIdentity = async () => {
+    setLoadingIdentity(true);
+    setIdentityError(null);
     try {
-      const res = await fetch('http://127.0.0.1:8080/');
-      const data = await res.json();
-      setIdentityInfo({ controller: 'v' + data.version, mode: data.execution_mode });
-    } catch {
-      setIdentityInfo({ error: 'Controller not reachable' });
+      const info = await getIdentity();
+      setIdentityInfo(info);
+    } catch (e) {
+      setIdentityError(String(e));
+    } finally {
+      setLoadingIdentity(false);
     }
   };
+
+  const loadLedger = async () => {
+    setLoadingLedger(true);
+    try {
+      const raw = await getTrustLedger();
+      setLedger(raw as unknown as TrustLedger);
+    } catch {
+      // Trust ledger not available outside Tauri context
+    } finally {
+      setLoadingLedger(false);
+    }
+  };
+
+  const handleApprove = async (peerId: string) => {
+    try {
+      await approvePeer(peerId);
+      await loadLedger();
+    } catch (e) {
+      console.error('Failed to approve peer:', e);
+    }
+  };
+
+  const handleReject = async (peerId: string) => {
+    try {
+      await rejectPeer(peerId);
+      await loadLedger();
+    } catch (e) {
+      console.error('Failed to reject peer:', e);
+    }
+  };
+
+  useEffect(() => { loadLedger(); }, []);
 
   return (
     <div className="panel">
@@ -44,17 +83,46 @@ export default function ExperimentalAOL() {
           The public key serves as the controller's sovereign identity.
         </p>
         {identityInfo ? (
-          <pre style={{ color: 'var(--text-secondary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+          <pre style={{
+            color: 'var(--text-secondary)',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
             {JSON.stringify(identityInfo, null, 2)}
           </pre>
         ) : (
-          <button className="console-send-btn" onClick={loadIdentity}>Load Identity</button>
+          <>
+            {identityError && (
+              <div style={{ color: 'var(--accent-crimson)', fontSize: 11, marginBottom: 8 }}>
+                {identityError}
+              </div>
+            )}
+            <button
+              className="console-send-btn"
+              onClick={loadIdentity}
+              disabled={loadingIdentity}
+            >
+              {loadingIdentity ? 'Loading…' : 'Load Identity'}
+            </button>
+          </>
         )}
       </div>
 
       {/* Trust Ledger */}
       <div className="card">
-        <div className="card-title">Trust Ledger</div>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Trust Ledger</span>
+          <button
+            className="console-send-btn"
+            onClick={loadLedger}
+            disabled={loadingLedger}
+            style={{ fontSize: 10, padding: '2px 8px' }}
+          >
+            {loadingLedger ? '…' : 'Refresh'}
+          </button>
+        </div>
         <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 12 }}>
           All WAN peer trust relationships require explicit human approval. No auto-approve. No implicit trust.
         </p>
@@ -71,10 +139,18 @@ export default function ExperimentalAOL() {
                   <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{p.address}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="console-send-btn" style={{ fontSize: 10, padding: '4px 12px', background: 'var(--accent-green)' }}>
+                  <button
+                    className="console-send-btn"
+                    style={{ fontSize: 10, padding: '4px 12px', background: 'var(--accent-green)' }}
+                    onClick={() => handleApprove(p.peer_id)}
+                  >
                     Approve
                   </button>
-                  <button className="console-send-btn" style={{ fontSize: 10, padding: '4px 12px', background: 'var(--accent-crimson)' }}>
+                  <button
+                    className="console-send-btn"
+                    style={{ fontSize: 10, padding: '4px 12px', background: 'var(--accent-crimson)' }}
+                    onClick={() => handleReject(p.peer_id)}
+                  >
                     Reject
                   </button>
                 </div>
@@ -97,7 +173,20 @@ export default function ExperimentalAOL() {
           </>
         )}
 
-        {ledger.pending.length === 0 && ledger.approved.length === 0 && (
+        {ledger.rejected.length > 0 && (
+          <>
+            <div style={{ color: 'var(--accent-crimson)', fontSize: 11, fontFamily: 'var(--font-mono)', marginTop: 16, marginBottom: 8 }}>
+              REJECTED ({ledger.rejected.length})
+            </div>
+            {ledger.rejected.map((p) => (
+              <div key={p.peer_id} style={{ fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                {p.peer_id} — <span style={{ color: 'var(--text-muted)' }}>{p.address}</span>
+              </div>
+            ))}
+          </>
+        )}
+
+        {ledger.pending.length === 0 && ledger.approved.length === 0 && ledger.rejected.length === 0 && (
           <div className="empty-state">No WAN peers configured. Trust relationships are created when peers connect.</div>
         )}
       </div>
