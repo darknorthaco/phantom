@@ -39,8 +39,10 @@ logger = logging.getLogger(__name__)
 # Shared Enumerations
 # ---------------------------------------------------------------------------
 
+
 class ExecutionMode(str, Enum):
     """Phantom execution modes — human-selectable, always changeable (§8)."""
+
     AUTO = "auto"
     HYBRID = "hybrid"
     MANUAL = "manual"
@@ -48,21 +50,23 @@ class ExecutionMode(str, Enum):
 
 class PipelineVerdict(str, Enum):
     """Outcome of any pipeline stage."""
-    PROCEED = "proceed"          # Continue to next stage
-    BYPASS = "bypass"            # Skip remaining stages (MANUAL mode)
-    PROPOSE = "propose"          # Generate proposal, await human (HYBRID)
-    EXECUTE = "execute"          # Execute immediately (AUTO)
-    REJECT = "reject"            # Hard stop — unsafe or forbidden
-    WITHDRAW = "withdraw"        # Human priority withdrawal (§1)
-    PAUSE = "pause"              # Temporary hold (HYBRID + human active)
-    DOWNGRADE = "downgrade"      # Memory pressure — use smaller model
+
+    PROCEED = "proceed"  # Continue to next stage
+    BYPASS = "bypass"  # Skip remaining stages (MANUAL mode)
+    PROPOSE = "propose"  # Generate proposal, await human (HYBRID)
+    EXECUTE = "execute"  # Execute immediately (AUTO)
+    REJECT = "reject"  # Hard stop — unsafe or forbidden
+    WITHDRAW = "withdraw"  # Human priority withdrawal (§1)
+    PAUSE = "pause"  # Temporary hold (HYBRID + human active)
+    DOWNGRADE = "downgrade"  # Memory pressure — use smaller model
 
 
 class LLMBackend(str, Enum):
     """Supported LLM inference backends (ADR-0010)."""
-    LLAMA_CPP = "llama.cpp"      # Primary — native GGUF, lowest overhead
-    OLLAMA = "ollama"            # Fallback — easy local inference
-    VLLM = "vllm"               # High-throughput serving
+
+    LLAMA_CPP = "llama.cpp"  # Primary — native GGUF, lowest overhead
+    OLLAMA = "ollama"  # Fallback — easy local inference
+    VLLM = "vllm"  # High-throughput serving
     RULE_ENGINE = "rule_engine"  # Scaffold — no real LLM, rule-based routing
 
 
@@ -70,9 +74,11 @@ class LLMBackend(str, Enum):
 # Pipeline Context — flows through every stage
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AuditEntry:
     """Single audit trail entry — one per pipeline stage decision."""
+
     stage: str
     verdict: str
     reason: str
@@ -138,12 +144,11 @@ class PipelineContext:
     pipeline_start: Optional[datetime] = None
     pipeline_end: Optional[datetime] = None
 
-    def audit(self, stage: str, verdict: str, reason: str,
-              **details: Any) -> None:
+    def audit(self, stage: str, verdict: str, reason: str, **details: Any) -> None:
         """Append an audit entry.  Every stage MUST call this."""
-        self.audit_trail.append(AuditEntry(
-            stage=stage, verdict=verdict, reason=reason, details=details
-        ))
+        self.audit_trail.append(
+            AuditEntry(stage=stage, verdict=verdict, reason=reason, details=details)
+        )
         logger.info(f"[AUDIT] {stage}: {verdict} — {reason}")
 
     @property
@@ -160,15 +165,22 @@ class PipelineContext:
             "status": self.final_verdict.value,
             "mode": self.effective_mode.value if self.effective_mode else "unknown",
             "selected_worker": self.selected_worker,
-            "selected_backend": self.selected_backend.value if self.selected_backend else None,
+            "selected_backend": (
+                self.selected_backend.value if self.selected_backend else None
+            ),
             "confidence": self.confidence,
             "reasoning": self.routing_reasoning,
             "proposal_id": self.proposal_id,
             "memory_safe": self.memory_safe,
             "elapsed_ms": self.elapsed_ms,
             "audit_trail": [
-                {"stage": e.stage, "verdict": e.verdict, "reason": e.reason,
-                 "timestamp": e.timestamp, "details": e.details}
+                {
+                    "stage": e.stage,
+                    "verdict": e.verdict,
+                    "reason": e.reason,
+                    "timestamp": e.timestamp,
+                    "details": e.details,
+                }
                 for e in self.audit_trail
             ],
             "timestamp": datetime.now().isoformat(),
@@ -180,6 +192,7 @@ class PipelineContext:
 # Constitutional pre-check — no pipeline stage may proceed if memory is unsafe.
 # Authority: Memory Guard → Mode Gate → Model Router → Context Builder → Approval Gate
 # ===========================================================================
+
 
 class MemoryGuard:
     """First constitutional authority — protects the node from OOM.
@@ -203,9 +216,9 @@ class MemoryGuard:
     """
 
     # Safe thresholds (percentage of total)
-    RAM_SAFE_PERCENT = 30       # Must have ≥30% RAM free
-    VRAM_SAFE_PERCENT = 25      # Must have ≥25% VRAM free
-    SWAP_DANGER_PERCENT = 50    # Swap usage >50% is dangerous
+    RAM_SAFE_PERCENT = 30  # Must have ≥30% RAM free
+    VRAM_SAFE_PERCENT = 25  # Must have ≥25% VRAM free
+    SWAP_DANGER_PERCENT = 50  # Swap usage >50% is dangerous
     # Borderline: between safe and dangerous
     RAM_BORDERLINE_PERCENT = 20
     VRAM_BORDERLINE_PERCENT = 15
@@ -238,12 +251,12 @@ class MemoryGuard:
 
         # Known model sizes (approximate, conservative)
         known_models = {
-            "phi-3.5-mini": 2400,       # 3.8B params, Q4_K_M ≈ 2.3GB
-            "phi-3-mini": 2200,          # 3.8B params
-            "llama-3.2-1b": 800,         # 1B params
-            "llama-3.2-3b": 2000,        # 3B params
-            "mistral-7b": 4500,          # 7B params
-            "gemma-2b": 1500,            # 2B params
+            "phi-3.5-mini": 2400,  # 3.8B params, Q4_K_M ≈ 2.3GB
+            "phi-3-mini": 2200,  # 3.8B params
+            "llama-3.2-1b": 800,  # 1B params
+            "llama-3.2-3b": 2000,  # 3B params
+            "mistral-7b": 4500,  # 7B params
+            "gemma-2b": 1500,  # 2B params
         }
 
         for name, footprint in known_models.items():
@@ -260,6 +273,7 @@ class MemoryGuard:
         """
         try:
             import psutil
+
             vm = psutil.virtual_memory()
             swap = psutil.swap_memory()
             return {
@@ -290,10 +304,16 @@ class MemoryGuard:
         # Try NVIDIA (pynvml/nvidia-smi)
         try:
             import subprocess
+
             result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total,memory.used,memory.free",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.total,memory.used,memory.free",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 parts = result.stdout.strip().split(",")
@@ -313,9 +333,12 @@ class MemoryGuard:
         # Try AMD ROCm
         try:
             import subprocess
+
             result = subprocess.run(
                 ["rocm-smi", "--showmeminfo", "vram", "--csv"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 # Parse ROCm CSV output
@@ -358,8 +381,16 @@ class MemoryGuard:
         ctx.swap_used_mb = ram["swap_used_mb"]
         ctx.model_footprint_mb = self.model_footprint_mb
 
-        ram_free_pct = (ram["ram_available_mb"] / ram["ram_total_mb"] * 100) if ram["ram_total_mb"] > 0 else 0
-        vram_free_pct = (vram["vram_available_mb"] / vram["vram_total_mb"] * 100) if vram["vram_total_mb"] > 0 else 0
+        ram_free_pct = (
+            (ram["ram_available_mb"] / ram["ram_total_mb"] * 100)
+            if ram["ram_total_mb"] > 0
+            else 0
+        )
+        vram_free_pct = (
+            (vram["vram_available_mb"] / vram["vram_total_mb"] * 100)
+            if vram["vram_total_mb"] > 0
+            else 0
+        )
         swap_pct = ram["swap_percent_used"]
 
         # Check 1: Can the model even fit in available VRAM?
@@ -367,12 +398,16 @@ class MemoryGuard:
             ctx.memory_safe = False
             ctx.memory_verdict = "reject_insufficient_vram"
             ctx.final_verdict = PipelineVerdict.REJECT
-            ctx.audit("MemoryGuard", "REJECT",
-                      f"Model footprint ({self.model_footprint_mb:.0f}MB) exceeds "
-                      f"available VRAM ({vram['vram_available_mb']:.0f}MB). "
-                      f"Cannot proceed — OOM risk.",
-                      ram_free_pct=ram_free_pct, vram_free_pct=vram_free_pct,
-                      model_footprint_mb=self.model_footprint_mb)
+            ctx.audit(
+                "MemoryGuard",
+                "REJECT",
+                f"Model footprint ({self.model_footprint_mb:.0f}MB) exceeds "
+                f"available VRAM ({vram['vram_available_mb']:.0f}MB). "
+                f"Cannot proceed — OOM risk.",
+                ram_free_pct=ram_free_pct,
+                vram_free_pct=vram_free_pct,
+                model_footprint_mb=self.model_footprint_mb,
+            )
             return ctx
 
         # Check 2: RAM critically low
@@ -380,11 +415,14 @@ class MemoryGuard:
             ctx.memory_safe = False
             ctx.memory_verdict = "reject_ram_critical"
             ctx.final_verdict = PipelineVerdict.REJECT
-            ctx.audit("MemoryGuard", "REJECT",
-                      f"System RAM critically low ({ram_free_pct:.1f}% free, "
-                      f"threshold {self.RAM_BORDERLINE_PERCENT}%). "
-                      f"Node stability at risk.",
-                      ram_available_mb=ram["ram_available_mb"])
+            ctx.audit(
+                "MemoryGuard",
+                "REJECT",
+                f"System RAM critically low ({ram_free_pct:.1f}% free, "
+                f"threshold {self.RAM_BORDERLINE_PERCENT}%). "
+                f"Node stability at risk.",
+                ram_available_mb=ram["ram_available_mb"],
+            )
             return ctx
 
         # Check 3: Swap thrashing
@@ -392,11 +430,14 @@ class MemoryGuard:
             ctx.memory_safe = False
             ctx.memory_verdict = "reject_swap_pressure"
             ctx.final_verdict = PipelineVerdict.REJECT
-            ctx.audit("MemoryGuard", "REJECT",
-                      f"Swap usage dangerously high ({swap_pct:.1f}%, "
-                      f"threshold {self.SWAP_DANGER_PERCENT}%). "
-                      f"System is thrashing.",
-                      swap_used_mb=ram["swap_used_mb"])
+            ctx.audit(
+                "MemoryGuard",
+                "REJECT",
+                f"Swap usage dangerously high ({swap_pct:.1f}%, "
+                f"threshold {self.SWAP_DANGER_PERCENT}%). "
+                f"System is thrashing.",
+                swap_used_mb=ram["swap_used_mb"],
+            )
             return ctx
 
         # Check 4: VRAM borderline — model fits but tight
@@ -404,12 +445,15 @@ class MemoryGuard:
             # Not an outright reject, but force HYBRID (no silent AUTO)
             ctx.memory_safe = True  # Can technically proceed
             ctx.memory_verdict = "borderline_force_hybrid"
-            ctx.audit("MemoryGuard", "DOWNGRADE",
-                      f"VRAM borderline ({vram_free_pct:.1f}% free). "
-                      f"Model fits but margin is thin. "
-                      f"Forcing HYBRID mode — no silent AUTO execution.",
-                      vram_available_mb=vram["vram_available_mb"],
-                      model_footprint_mb=self.model_footprint_mb)
+            ctx.audit(
+                "MemoryGuard",
+                "DOWNGRADE",
+                f"VRAM borderline ({vram_free_pct:.1f}% free). "
+                f"Model fits but margin is thin. "
+                f"Forcing HYBRID mode — no silent AUTO execution.",
+                vram_available_mb=vram["vram_available_mb"],
+                model_footprint_mb=self.model_footprint_mb,
+            )
             # ModeGate will read this and cap at HYBRID
             return ctx
 
@@ -417,22 +461,30 @@ class MemoryGuard:
         if ram_free_pct < self.RAM_SAFE_PERCENT:
             ctx.memory_safe = True
             ctx.memory_verdict = "borderline_ram"
-            ctx.audit("MemoryGuard", "PROCEED_WITH_CAUTION",
-                      f"RAM somewhat low ({ram_free_pct:.1f}% free). "
-                      f"Proceeding but flagged for monitoring.",
-                      ram_available_mb=ram["ram_available_mb"])
+            ctx.audit(
+                "MemoryGuard",
+                "PROCEED_WITH_CAUTION",
+                f"RAM somewhat low ({ram_free_pct:.1f}% free). "
+                f"Proceeding but flagged for monitoring.",
+                ram_available_mb=ram["ram_available_mb"],
+            )
             return ctx
 
         # All clear
         ctx.memory_safe = True
         ctx.memory_verdict = "safe"
-        ctx.audit("MemoryGuard", "SAFE",
-                  f"Memory check passed. RAM {ram_free_pct:.1f}% free, "
-                  f"VRAM {vram_free_pct:.1f}% free, "
-                  f"model footprint {self.model_footprint_mb:.0f}MB. "
-                  f"Pipeline may proceed.",
-                  ram_free_pct=ram_free_pct, vram_free_pct=vram_free_pct,
-                  swap_pct=swap_pct, model_footprint_mb=self.model_footprint_mb)
+        ctx.audit(
+            "MemoryGuard",
+            "SAFE",
+            f"Memory check passed. RAM {ram_free_pct:.1f}% free, "
+            f"VRAM {vram_free_pct:.1f}% free, "
+            f"model footprint {self.model_footprint_mb:.0f}MB. "
+            f"Pipeline may proceed.",
+            ram_free_pct=ram_free_pct,
+            vram_free_pct=vram_free_pct,
+            swap_pct=swap_pct,
+            model_footprint_mb=self.model_footprint_mb,
+        )
         return ctx
 
 
@@ -440,6 +492,7 @@ class MemoryGuard:
 # Stage 2: MODE GATE
 # First authority — decides whether routing is even allowed.
 # ===========================================================================
+
 
 class ModeGate:
     """Second constitutional authority — enforces execution mode boundaries.
@@ -454,14 +507,18 @@ class ModeGate:
     MemoryGuard borderline verdicts can force HYBRID — ModeGate honors that.
     """
 
-    def __init__(self, config: Dict[str, Any], system_mode: ExecutionMode,
-                 human_priority_checker=None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        system_mode: ExecutionMode,
+        human_priority_checker=None,
+    ):
         self.config = config
         self.system_mode = system_mode
         self.human_priority_checker = human_priority_checker
-        self.allow_per_task_override = config.get(
-            "execution_mode", {}
-        ).get("allow_per_task_override", True)
+        self.allow_per_task_override = config.get("execution_mode", {}).get(
+            "allow_per_task_override", True
+        )
 
     async def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Determine effective mode and gate accordingly."""
@@ -472,26 +529,35 @@ class ModeGate:
             try:
                 effective_mode = ExecutionMode(ctx.requested_mode.lower())
             except ValueError:
-                ctx.audit("ModeGate", "WARN",
-                          f"Invalid per-task mode '{ctx.requested_mode}' — "
-                          f"falling back to system mode {self.system_mode.value}")
+                ctx.audit(
+                    "ModeGate",
+                    "WARN",
+                    f"Invalid per-task mode '{ctx.requested_mode}' — "
+                    f"falling back to system mode {self.system_mode.value}",
+                )
 
         # MemoryGuard borderline → cap at HYBRID (never allow silent AUTO)
         if ctx.memory_verdict == "borderline_force_hybrid":
             if effective_mode == ExecutionMode.AUTO:
                 effective_mode = ExecutionMode.HYBRID
-                ctx.audit("ModeGate", "DOWNGRADE",
-                          "MemoryGuard flagged borderline VRAM. "
-                          "AUTO downgraded to HYBRID — no silent execution under memory pressure.")
+                ctx.audit(
+                    "ModeGate",
+                    "DOWNGRADE",
+                    "MemoryGuard flagged borderline VRAM. "
+                    "AUTO downgraded to HYBRID — no silent execution under memory pressure.",
+                )
 
         ctx.effective_mode = effective_mode
 
         # ----- MANUAL: bypass entire pipeline -----
         if effective_mode == ExecutionMode.MANUAL:
             ctx.final_verdict = PipelineVerdict.BYPASS
-            ctx.audit("ModeGate", "BYPASS",
-                      "MANUAL mode — LLM routing bypassed. "
-                      "Human selects worker directly. (Commandment I)")
+            ctx.audit(
+                "ModeGate",
+                "BYPASS",
+                "MANUAL mode — LLM routing bypassed. "
+                "Human selects worker directly. (Commandment I)",
+            )
             return ctx
 
         # ----- Human Priority Check (Doctrine §1) -----
@@ -507,25 +573,34 @@ class ModeGate:
                     action = hp_cfg.get("auto_mode_action", "withdraw")
                     if action == "withdraw":
                         ctx.final_verdict = PipelineVerdict.WITHDRAW
-                        ctx.audit("ModeGate", "WITHDRAW",
-                                  f"Human activity detected: {ctx.human_priority_reason}. "
-                                  f"AUTO mode withdrawing. (Doctrine §1 Human Priority, "
-                                  f"Opera Principle §11)")
+                        ctx.audit(
+                            "ModeGate",
+                            "WITHDRAW",
+                            f"Human activity detected: {ctx.human_priority_reason}. "
+                            f"AUTO mode withdrawing. (Doctrine §1 Human Priority, "
+                            f"Opera Principle §11)",
+                        )
                         return ctx
 
                 elif effective_mode == ExecutionMode.HYBRID:
                     action = hp_cfg.get("hybrid_mode_action", "pause")
                     if action == "pause":
                         ctx.final_verdict = PipelineVerdict.PAUSE
-                        ctx.audit("ModeGate", "PAUSE",
-                                  f"Human activity detected: {ctx.human_priority_reason}. "
-                                  f"HYBRID mode paused — proposal deferred. (Doctrine §1)")
+                        ctx.audit(
+                            "ModeGate",
+                            "PAUSE",
+                            f"Human activity detected: {ctx.human_priority_reason}. "
+                            f"HYBRID mode paused — proposal deferred. (Doctrine §1)",
+                        )
                         return ctx
 
         # Mode is valid and human is not blocking — proceed
-        ctx.audit("ModeGate", "PROCEED",
-                  f"Mode={effective_mode.value}, human_active={ctx.human_active}. "
-                  f"Pipeline may proceed to ModelRouter.")
+        ctx.audit(
+            "ModeGate",
+            "PROCEED",
+            f"Mode={effective_mode.value}, human_active={ctx.human_active}. "
+            f"Pipeline may proceed to ModelRouter.",
+        )
         return ctx
 
 
@@ -533,6 +608,7 @@ class ModeGate:
 # Stage 3: MODEL ROUTER
 # Second authority — selects backend and worker based on capability scoring.
 # ===========================================================================
+
 
 class ModelRouter:
     """Third constitutional authority — selects the LLM backend and target worker.
@@ -556,21 +632,28 @@ class ModelRouter:
         self.config = config
         self.gpu_profiles = config.get("gpu_profiles", {})
         self.task_preferences = config.get("task_preferences", {})
-        self.confidence_threshold = config.get("routing", {}).get("confidence_threshold", 0.5)
+        self.confidence_threshold = config.get("routing", {}).get(
+            "confidence_threshold", 0.5
+        )
         self.decision_history: List[Dict[str, Any]] = []
         self.max_history = config.get("routing", {}).get("max_decision_history", 100)
 
     async def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Score workers, select backend, pick the best worker."""
 
-        if ctx.final_verdict in (PipelineVerdict.REJECT, PipelineVerdict.BYPASS,
-                                  PipelineVerdict.WITHDRAW, PipelineVerdict.PAUSE):
+        if ctx.final_verdict in (
+            PipelineVerdict.REJECT,
+            PipelineVerdict.BYPASS,
+            PipelineVerdict.WITHDRAW,
+            PipelineVerdict.PAUSE,
+        ):
             return ctx  # Pipeline already terminated by earlier stage
 
         if not ctx.available_workers:
             ctx.final_verdict = PipelineVerdict.REJECT
-            ctx.audit("ModelRouter", "REJECT",
-                      "No workers available. Cannot route task.")
+            ctx.audit(
+                "ModelRouter", "REJECT", "No workers available. Cannot route task."
+            )
             return ctx
 
         task_type = ctx.task.get("task_type", "unknown")
@@ -587,35 +670,42 @@ class ModelRouter:
             ctx.selected_worker = best_id
         else:
             ctx.final_verdict = PipelineVerdict.REJECT
-            ctx.audit("ModelRouter", "REJECT",
-                      "Worker scoring produced no results.")
+            ctx.audit("ModelRouter", "REJECT", "Worker scoring produced no results.")
             return ctx
 
         # Select backend based on model config
         ctx.selected_backend = self._select_backend()
-        ctx.selected_model = self.config.get("model", {}).get("default_model", "phi-3.5-mini")
+        ctx.selected_model = self.config.get("model", {}).get(
+            "default_model", "phi-3.5-mini"
+        )
 
         # Calculate confidence
-        ctx.confidence = self._calculate_confidence(ctx.worker_scores, ctx.selected_worker, task_type)
+        ctx.confidence = self._calculate_confidence(
+            ctx.worker_scores, ctx.selected_worker, task_type
+        )
 
         # Generate human-readable reasoning (Commandment IV)
         ctx.routing_reasoning = self._generate_reasoning(
             ctx.task, ctx.available_workers, ctx.selected_worker, ctx.worker_scores
         )
 
-        ctx.audit("ModelRouter", "ROUTED",
-                  f"Selected worker={ctx.selected_worker}, "
-                  f"backend={ctx.selected_backend.value}, "
-                  f"confidence={ctx.confidence:.2f}. "
-                  f"Scores: {ctx.worker_scores}",
-                  selected_worker=ctx.selected_worker,
-                  confidence=ctx.confidence,
-                  backend=ctx.selected_backend.value)
+        ctx.audit(
+            "ModelRouter",
+            "ROUTED",
+            f"Selected worker={ctx.selected_worker}, "
+            f"backend={ctx.selected_backend.value}, "
+            f"confidence={ctx.confidence:.2f}. "
+            f"Scores: {ctx.worker_scores}",
+            selected_worker=ctx.selected_worker,
+            confidence=ctx.confidence,
+            backend=ctx.selected_backend.value,
+        )
 
         return ctx
 
-    def _score_worker(self, worker_info: Dict[str, Any], task_type: str,
-                      task_params: Dict[str, Any]) -> float:
+    def _score_worker(
+        self, worker_info: Dict[str, Any], task_type: str, task_params: Dict[str, Any]
+    ) -> float:
         """Score a worker for a specific task using capability matching."""
         gpu_info = worker_info.get("gpu_info", {})
         gpu_name = gpu_info.get("name", "Unknown")
@@ -658,9 +748,12 @@ class ModelRouter:
         )
         return max(0.1, final_score)
 
-    def _memory_score(self, gpu_profile: Dict[str, Any],
-                      task_prefs: Dict[str, Any],
-                      task_params: Dict[str, Any]) -> float:
+    def _memory_score(
+        self,
+        gpu_profile: Dict[str, Any],
+        task_prefs: Dict[str, Any],
+        task_params: Dict[str, Any],
+    ) -> float:
         """Score memory adequacy."""
         gpu_memory = gpu_profile.get("memory_gb", 4)
         memory_reqs = {"low": 2, "medium": 6, "high": 12, "very_high": 20}
@@ -671,16 +764,23 @@ class ModelRouter:
             return 1.0 + min(0.5, (gpu_memory - required) / required)
         return max(0.1, gpu_memory / required)
 
-    def _feature_score(self, gpu_profile: Dict[str, Any],
-                       task_prefs: Dict[str, Any]) -> float:
+    def _feature_score(
+        self, gpu_profile: Dict[str, Any], task_prefs: Dict[str, Any]
+    ) -> float:
         """Score feature compatibility."""
         score = 1.0
         for feat in task_prefs.get("preferred_features", []):
-            if feat == "tensor_cores" and gpu_profile.get("tensor_cores") not in ("none", None):
+            if feat == "tensor_cores" and gpu_profile.get("tensor_cores") not in (
+                "none",
+                None,
+            ):
                 score *= 1.5
             elif feat == "high_memory" and gpu_profile.get("memory_gb", 0) >= 16:
                 score *= 1.3
-            elif feat == "proven_stability" and gpu_profile.get("performance_tier") == "legacy":
+            elif (
+                feat == "proven_stability"
+                and gpu_profile.get("performance_tier") == "legacy"
+            ):
                 score *= 1.2
         for feat in task_prefs.get("avoid_features", []):
             if feat == "legacy" and gpu_profile.get("performance_tier") == "legacy":
@@ -690,8 +790,11 @@ class ModelRouter:
     def _history_bonus(self, worker_info: Dict[str, Any], task_type: str) -> float:
         """Bonus from historical performance on similar tasks."""
         worker_id = worker_info.get("worker_id", "")
-        similar = [d for d in self.decision_history
-                   if d.get("worker_id") == worker_id and d.get("task_type") == task_type]
+        similar = [
+            d
+            for d in self.decision_history
+            if d.get("worker_id") == worker_id and d.get("task_type") == task_type
+        ]
         return min(0.2, len(similar) * 0.05) if similar else 0.0
 
     def _select_backend(self) -> LLMBackend:
@@ -714,8 +817,9 @@ class ModelRouter:
         # Fallback priority
         return LLMBackend.OLLAMA
 
-    def _calculate_confidence(self, scores: Dict[str, float],
-                              selected: str, task_type: str) -> float:
+    def _calculate_confidence(
+        self, scores: Dict[str, float], selected: str, task_type: str
+    ) -> float:
         """Calculate confidence in the routing decision."""
         confidence = 0.7
 
@@ -732,9 +836,13 @@ class ModelRouter:
 
         return min(0.95, max(0.1, confidence))
 
-    def _generate_reasoning(self, task: Dict[str, Any],
-                            workers: Dict[str, Any], selected: str,
-                            scores: Dict[str, float]) -> str:
+    def _generate_reasoning(
+        self,
+        task: Dict[str, Any],
+        workers: Dict[str, Any],
+        selected: str,
+        scores: Dict[str, float],
+    ) -> str:
         """Generate human-readable reasoning (Commandment IV: Show Thy Reasoning)."""
         if not selected or selected not in workers:
             return "No suitable worker available for this task."
@@ -777,26 +885,33 @@ class ModelRouter:
         total_workers = len(workers)
         reasons.append(f"scored {score:.2f} across {total_workers} candidate(s)")
 
-        return f"Selected {gpu_name}: {', '.join(reasons)}" if reasons else \
-               f"Selected {gpu_name} as best available option"
+        return (
+            f"Selected {gpu_name}: {', '.join(reasons)}"
+            if reasons
+            else f"Selected {gpu_name} as best available option"
+        )
 
-    def store_decision(self, task: Dict[str, Any], selected_worker: str,
-                       reasoning: str) -> None:
+    def store_decision(
+        self, task: Dict[str, Any], selected_worker: str, reasoning: str
+    ) -> None:
         """Store decision for historical learning (Doctrine §4)."""
-        self.decision_history.append({
-            "timestamp": datetime.now().isoformat(),
-            "task_type": task.get("task_type"),
-            "worker_id": selected_worker,
-            "reasoning": reasoning,
-        })
+        self.decision_history.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "task_type": task.get("task_type"),
+                "worker_id": selected_worker,
+                "reasoning": reasoning,
+            }
+        )
         if len(self.decision_history) > self.max_history:
-            self.decision_history = self.decision_history[-self.max_history // 2:]
+            self.decision_history = self.decision_history[-self.max_history // 2 :]
 
 
 # ===========================================================================
 # Stage 4: CONTEXT BUILDER
 # Third authority — shapes the prompt and injects doctrine governance.
 # ===========================================================================
+
 
 class ContextBuilder:
     """Fourth constitutional authority — constructs the governed LLM prompt.
@@ -850,8 +965,12 @@ every routing decision with explicit reasoning."""
     async def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Build the governed LLM context/prompt."""
 
-        if ctx.final_verdict in (PipelineVerdict.REJECT, PipelineVerdict.BYPASS,
-                                  PipelineVerdict.WITHDRAW, PipelineVerdict.PAUSE):
+        if ctx.final_verdict in (
+            PipelineVerdict.REJECT,
+            PipelineVerdict.BYPASS,
+            PipelineVerdict.WITHDRAW,
+            PipelineVerdict.PAUSE,
+        ):
             return ctx  # Pipeline already terminated
 
         ctx.governance_preamble = self.GOVERNANCE_PREAMBLE
@@ -869,7 +988,9 @@ every routing decision with explicit reasoning."""
             gpu = winfo.get("gpu_info", {}).get("name", "Unknown")
             load = winfo.get("current_tasks", 0)
             score = ctx.worker_scores.get(wid, 0)
-            worker_summary.append(f"  - {wid}: GPU={gpu}, load={load}, score={score:.2f}")
+            worker_summary.append(
+                f"  - {wid}: GPU={gpu}, load={load}, score={score:.2f}"
+            )
 
         workers_text = "\n".join(worker_summary) if worker_summary else "  (none)"
 
@@ -888,21 +1009,27 @@ every routing decision with explicit reasoning."""
         total_tokens_est = self._estimate_tokens(ctx.system_prompt + ctx.user_prompt)
         if total_tokens_est > self.context_length:
             # Truncate worker list if needed — but NEVER silently
-            ctx.audit("ContextBuilder", "WARN",
-                      f"Prompt estimated at {total_tokens_est} tokens, "
-                      f"context limit is {self.context_length}. "
-                      f"Worker list may be trimmed. This is logged explicitly.",
-                      estimated_tokens=total_tokens_est,
-                      context_length=self.context_length)
+            ctx.audit(
+                "ContextBuilder",
+                "WARN",
+                f"Prompt estimated at {total_tokens_est} tokens, "
+                f"context limit is {self.context_length}. "
+                f"Worker list may be trimmed. This is logged explicitly.",
+                estimated_tokens=total_tokens_est,
+                context_length=self.context_length,
+            )
 
-        ctx.audit("ContextBuilder", "BUILT",
-                  f"Governance preamble injected. "
-                  f"System prompt: {len(ctx.system_prompt)} chars, "
-                  f"User prompt: {len(ctx.user_prompt)} chars, "
-                  f"Estimated tokens: {total_tokens_est}.",
-                  system_prompt_len=len(ctx.system_prompt),
-                  user_prompt_len=len(ctx.user_prompt),
-                  estimated_tokens=total_tokens_est)
+        ctx.audit(
+            "ContextBuilder",
+            "BUILT",
+            f"Governance preamble injected. "
+            f"System prompt: {len(ctx.system_prompt)} chars, "
+            f"User prompt: {len(ctx.user_prompt)} chars, "
+            f"Estimated tokens: {total_tokens_est}.",
+            system_prompt_len=len(ctx.system_prompt),
+            user_prompt_len=len(ctx.user_prompt),
+            estimated_tokens=total_tokens_est,
+        )
 
         return ctx
 
@@ -916,6 +1043,7 @@ every routing decision with explicit reasoning."""
 # Stage 5: APPROVAL GATE
 # Final authority — enforces HYBRID/MANUAL human oversight.
 # ===========================================================================
+
 
 class ApprovalGate:
     """Fifth constitutional authority — the final gate before execution.
@@ -939,8 +1067,12 @@ class ApprovalGate:
     async def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Apply the final approval gate."""
 
-        if ctx.final_verdict in (PipelineVerdict.REJECT, PipelineVerdict.BYPASS,
-                                  PipelineVerdict.WITHDRAW, PipelineVerdict.PAUSE):
+        if ctx.final_verdict in (
+            PipelineVerdict.REJECT,
+            PipelineVerdict.BYPASS,
+            PipelineVerdict.WITHDRAW,
+            PipelineVerdict.PAUSE,
+        ):
             return ctx  # Pipeline already terminated
 
         mode = ctx.effective_mode
@@ -949,11 +1081,14 @@ class ApprovalGate:
         if mode == ExecutionMode.AUTO:
             ctx.final_verdict = PipelineVerdict.EXECUTE
             ctx.approval_status = "auto_approved"
-            ctx.audit("ApprovalGate", "EXECUTE",
-                      f"AUTO mode — executing immediately. "
-                      f"Worker={ctx.selected_worker}, "
-                      f"confidence={ctx.confidence:.2f}. "
-                      f"Decision logged for audit trail (Doctrine §4).")
+            ctx.audit(
+                "ApprovalGate",
+                "EXECUTE",
+                f"AUTO mode — executing immediately. "
+                f"Worker={ctx.selected_worker}, "
+                f"confidence={ctx.confidence:.2f}. "
+                f"Decision logged for audit trail (Doctrine §4).",
+            )
             return ctx
 
         # ----- HYBRID: Propose and block for human approval -----
@@ -1003,44 +1138,54 @@ class ApprovalGate:
                 f"use all available workers, or select yourself?"
             )
 
-            ctx.audit("ApprovalGate", "PROPOSE",
-                      f"HYBRID mode — proposal generated [{ctx.proposal_id[:8] if ctx.proposal_id else '?'}]. "
-                      f"Awaiting human approval. "
-                      f"(Commandment I: No execution without authorization). "
-                      f"Message: {human_message}",
-                      proposal_id=ctx.proposal_id,
-                      alternatives=alternatives,
-                      worker_count=worker_count)
+            ctx.audit(
+                "ApprovalGate",
+                "PROPOSE",
+                f"HYBRID mode — proposal generated [{ctx.proposal_id[:8] if ctx.proposal_id else '?'}]. "
+                f"Awaiting human approval. "
+                f"(Commandment I: No execution without authorization). "
+                f"Message: {human_message}",
+                proposal_id=ctx.proposal_id,
+                alternatives=alternatives,
+                worker_count=worker_count,
+            )
             return ctx
 
         # ----- MANUAL: Should not reach here — reject as safety net -----
         ctx.final_verdict = PipelineVerdict.BYPASS
-        ctx.audit("ApprovalGate", "BYPASS",
-                  "MANUAL mode reached ApprovalGate unexpectedly — bypassing. "
-                  "Human routes directly. (Commandment I)")
+        ctx.audit(
+            "ApprovalGate",
+            "BYPASS",
+            "MANUAL mode reached ApprovalGate unexpectedly — bypassing. "
+            "Human routes directly. (Commandment I)",
+        )
         return ctx
 
     def _build_alternatives(self, ctx: PipelineContext) -> List[Dict[str, Any]]:
         """Build ordered list of alternative workers for the proposal."""
         alternatives = []
-        for wid, score in sorted(ctx.worker_scores.items(),
-                                  key=lambda x: x[1], reverse=True):
+        for wid, score in sorted(
+            ctx.worker_scores.items(), key=lambda x: x[1], reverse=True
+        ):
             if wid == ctx.selected_worker:
                 continue
             worker_info = ctx.available_workers.get(wid, {})
             gpu_name = worker_info.get("gpu_info", {}).get("name", "Unknown")
-            alternatives.append({
-                "worker_id": wid,
-                "gpu": gpu_name,
-                "score": round(score, 3),
-                "reason": f"{gpu_name} — score {score:.2f}",
-            })
+            alternatives.append(
+                {
+                    "worker_id": wid,
+                    "gpu": gpu_name,
+                    "score": round(score, 3),
+                    "reason": f"{gpu_name} — score {score:.2f}",
+                }
+            )
         return alternatives
 
 
 # ===========================================================================
 # Pipeline Orchestrator — runs the five stages in constitutional order
 # ===========================================================================
+
 
 class TaskMasterPipeline:
     """Orchestrates the five constitutional pipeline stages in order.
@@ -1058,8 +1203,13 @@ class TaskMasterPipeline:
                 Doctrine §10 (Minimalism — pipeline does one thing: orchestrate).
     """
 
-    def __init__(self, config: Dict[str, Any], system_mode: ExecutionMode,
-                 human_priority_checker=None, proposal_store=None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        system_mode: ExecutionMode,
+        human_priority_checker=None,
+        proposal_store=None,
+    ):
         self.config = config
         self.system_mode = system_mode
 
@@ -1081,10 +1231,13 @@ class TaskMasterPipeline:
         self.mode_gate.system_mode = new_mode
         logger.info(f"🔄 Pipeline mode updated to {new_mode.value}")
 
-    async def run(self, task: Dict[str, Any],
-                  available_workers: Dict[str, Any],
-                  requested_mode: Optional[str] = None,
-                  request_id: Optional[str] = None) -> PipelineContext:
+    async def run(
+        self,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
+        requested_mode: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> PipelineContext:
         """Execute the full pipeline for a routing request.
 
         Returns the PipelineContext with all decisions, audit trail,
@@ -1114,10 +1267,12 @@ class TaskMasterPipeline:
                 ctx = await stage.execute(ctx)
 
                 # Short-circuit: if a terminal verdict was issued, stop
-                if ctx.final_verdict in (PipelineVerdict.REJECT,
-                                          PipelineVerdict.BYPASS,
-                                          PipelineVerdict.WITHDRAW,
-                                          PipelineVerdict.PAUSE):
+                if ctx.final_verdict in (
+                    PipelineVerdict.REJECT,
+                    PipelineVerdict.BYPASS,
+                    PipelineVerdict.WITHDRAW,
+                    PipelineVerdict.PAUSE,
+                ):
                     logger.info(
                         f"⛔ Pipeline short-circuited at {stage_name}: "
                         f"{ctx.final_verdict.value}"
@@ -1126,9 +1281,12 @@ class TaskMasterPipeline:
 
             except Exception as exc:
                 ctx.final_verdict = PipelineVerdict.REJECT
-                ctx.audit(stage_name, "ERROR",
-                          f"Stage raised exception: {exc}. "
-                          f"Pipeline halted for safety. (Doctrine §8 Reversibility)")
+                ctx.audit(
+                    stage_name,
+                    "ERROR",
+                    f"Stage raised exception: {exc}. "
+                    f"Pipeline halted for safety. (Doctrine §8 Reversibility)",
+                )
                 logger.error(f"❌ Pipeline error in {stage_name}: {exc}")
                 break
 
@@ -1142,7 +1300,8 @@ class TaskMasterPipeline:
 
         # Store routing decision for learning (if we got that far)
         if ctx.selected_worker and ctx.final_verdict in (
-            PipelineVerdict.EXECUTE, PipelineVerdict.PROPOSE
+            PipelineVerdict.EXECUTE,
+            PipelineVerdict.PROPOSE,
         ):
             self.model_router.store_decision(
                 ctx.task, ctx.selected_worker, ctx.routing_reasoning

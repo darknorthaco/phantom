@@ -50,10 +50,17 @@ except ImportError:
 # Authority chain: MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate
 try:
     from pipeline import (
-        TaskMasterPipeline, PipelineContext, PipelineVerdict,
-        ExecutionMode as PipelineExecutionMode, MemoryGuard, ModeGate,
-        ModelRouter, ContextBuilder, ApprovalGate,
+        TaskMasterPipeline,
+        PipelineContext,
+        PipelineVerdict,
+        ExecutionMode as PipelineExecutionMode,
+        MemoryGuard,
+        ModeGate,
+        ModelRouter,
+        ContextBuilder,
+        ApprovalGate,
     )
+
     PIPELINE_AVAILABLE = True
 except ImportError:
     PIPELINE_AVAILABLE = False
@@ -71,6 +78,7 @@ _CONFIG_PATH = Path(__file__).parent / "llm_config.json"
 # ---------------------------------------------------------------------------
 class ExecutionMode(str, Enum):
     """Phantom execution modes as defined in PHANTOM_EXECUTION_MODES_AND_API_SPEC.md"""
+
     AUTO = "auto"
     HYBRID = "hybrid"
     MANUAL = "manual"
@@ -96,22 +104,57 @@ def load_config(path: Path = _CONFIG_PATH) -> Dict[str, Any]:
 
     # Minimal safe defaults (Doctrine §10 Minimalism)
     return {
-        "execution_mode": {"default": "auto", "allowed_modes": ["auto", "hybrid", "manual"]},
-        "model": {"model_type": "rule_based_with_learning", "model_size": "small",
-                  "context_length": 1024, "precision": "fp16", "batch_size": 1},
-        "resource_limits": {"max_memory_mb": 2048, "max_vram_mb": 2048,
-                            "target_gpu": "auto", "target_vram_gb": 4},
-        "routing": {"fallback_to_smart_programming": True, "max_decision_history": 100,
-                    "confidence_threshold": 0.5, "enable_learning": True},
-        "hybrid_mode": {"proposal_timeout_seconds": 300, "require_approval_reason": False,
-                        "auto_expire_proposals": True, "batch_approval_enabled": True},
-        "human_priority": {"enabled": True, "check_interval_seconds": 5,
-                           "cpu_threshold_percent": 70, "gpu_threshold_percent": 60,
-                           "vram_threshold_percent": 70, "auto_mode_action": "withdraw",
-                           "hybrid_mode_action": "pause", "manual_mode_action": "unaffected",
-                           "monitored_processes": ["game", "steam", "epic", "blender",
-                                                   "davinci", "premiere", "photoshop",
-                                                   "obs", "unity", "unreal"]},
+        "execution_mode": {
+            "default": "auto",
+            "allowed_modes": ["auto", "hybrid", "manual"],
+        },
+        "model": {
+            "model_type": "rule_based_with_learning",
+            "model_size": "small",
+            "context_length": 1024,
+            "precision": "fp16",
+            "batch_size": 1,
+        },
+        "resource_limits": {
+            "max_memory_mb": 2048,
+            "max_vram_mb": 2048,
+            "target_gpu": "auto",
+            "target_vram_gb": 4,
+        },
+        "routing": {
+            "fallback_to_smart_programming": True,
+            "max_decision_history": 100,
+            "confidence_threshold": 0.5,
+            "enable_learning": True,
+        },
+        "hybrid_mode": {
+            "proposal_timeout_seconds": 300,
+            "require_approval_reason": False,
+            "auto_expire_proposals": True,
+            "batch_approval_enabled": True,
+        },
+        "human_priority": {
+            "enabled": True,
+            "check_interval_seconds": 5,
+            "cpu_threshold_percent": 70,
+            "gpu_threshold_percent": 60,
+            "vram_threshold_percent": 70,
+            "auto_mode_action": "withdraw",
+            "hybrid_mode_action": "pause",
+            "manual_mode_action": "unaffected",
+            "monitored_processes": [
+                "game",
+                "steam",
+                "epic",
+                "blender",
+                "davinci",
+                "premiere",
+                "photoshop",
+                "obs",
+                "unity",
+                "unreal",
+            ],
+        },
         "socket": {"default_host": "localhost", "default_port": 8081},
         "gpu_profiles": {},
         "task_preferences": {},
@@ -142,6 +185,7 @@ class HumanPriorityChecker:
         self._psutil_available = False
         try:
             import psutil  # noqa: F401
+
             self._psutil_available = True
         except ImportError:
             logger.warning(
@@ -175,7 +219,9 @@ class HumanPriorityChecker:
             result["cpu_percent"] = cpu
             if cpu > self.cpu_threshold:
                 result["human_active"] = True
-                result["reason"] = f"CPU usage {cpu:.1f}% exceeds threshold {self.cpu_threshold}%"
+                result["reason"] = (
+                    f"CPU usage {cpu:.1f}% exceeds threshold {self.cpu_threshold}%"
+                )
                 return result
 
             # Monitored-process check
@@ -196,7 +242,9 @@ class HumanPriorityChecker:
             result["gpu_percent"] = gpu_usage
             if gpu_usage > self.gpu_threshold:
                 result["human_active"] = True
-                result["reason"] = f"GPU usage {gpu_usage:.1f}% exceeds threshold {self.gpu_threshold}%"
+                result["reason"] = (
+                    f"GPU usage {gpu_usage:.1f}% exceeds threshold {self.gpu_threshold}%"
+                )
                 return result
 
         return result
@@ -213,7 +261,11 @@ class HumanPriorityChecker:
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             if proc.returncode == 0 and stdout:
-                values = [float(v.strip()) for v in stdout.decode().strip().split("\n") if v.strip()]
+                values = [
+                    float(v.strip())
+                    for v in stdout.decode().strip().split("\n")
+                    if v.strip()
+                ]
                 return max(values) if values else None
         except (FileNotFoundError, asyncio.TimeoutError, ValueError):
             pass
@@ -239,9 +291,13 @@ class ProposalStore:
         self.proposals[proposal_id] = proposal
         return proposal_id
 
-    def approve(self, proposal_id: str, approver: str,
-                override_worker: Optional[str] = None,
-                reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def approve(
+        self,
+        proposal_id: str,
+        approver: str,
+        override_worker: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Approve a pending proposal. Returns the proposal or None if not found/expired."""
         proposal = self.proposals.get(proposal_id)
         if not proposal or proposal["status"] != "pending_approval":
@@ -256,8 +312,9 @@ class ProposalStore:
             proposal["approval_reason"] = reason
         return proposal
 
-    def reject(self, proposal_id: str, rejector: str,
-               reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def reject(
+        self, proposal_id: str, rejector: str, reason: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Reject a pending proposal."""
         proposal = self.proposals.get(proposal_id)
         if not proposal or proposal["status"] != "pending_approval":
@@ -324,7 +381,9 @@ class LightweightLLMTaskMaster:
 
         # Connection settings — config overrideable by constructor args
         sock_cfg = self.config.get("socket", {})
-        self.controller_host = controller_host or sock_cfg.get("default_host", "localhost")
+        self.controller_host = controller_host or sock_cfg.get(
+            "default_host", "localhost"
+        )
         self.socket_port = socket_port or sock_cfg.get("default_port", 8081)
         self.socket_client = None
         self.running = False
@@ -338,7 +397,9 @@ class LightweightLLMTaskMaster:
         try:
             self.execution_mode = ExecutionMode(raw_mode.lower())
         except ValueError:
-            logger.warning(f"⚠️ Unknown execution mode '{raw_mode}' — defaulting to AUTO")
+            logger.warning(
+                f"⚠️ Unknown execution mode '{raw_mode}' — defaulting to AUTO"
+            )
             self.execution_mode = ExecutionMode.AUTO
 
         # Model config from external file
@@ -346,7 +407,9 @@ class LightweightLLMTaskMaster:
         self.model_config = {
             "model_type": model_cfg.get("model_type", "rule_based_with_learning"),
             "model_size": model_cfg.get("model_size", "small"),
-            "max_memory_mb": self.config.get("resource_limits", {}).get("max_memory_mb", 2048),
+            "max_memory_mb": self.config.get("resource_limits", {}).get(
+                "max_memory_mb", 2048
+            ),
             "context_length": model_cfg.get("context_length", 1024),
             "batch_size": model_cfg.get("batch_size", 1),
             "precision": model_cfg.get("precision", "fp16"),
@@ -501,8 +564,9 @@ class LightweightLLMTaskMaster:
     # Mode Management (Doctrine §8 Reversibility — mode is always changeable)
     # -----------------------------------------------------------------------
 
-    def set_execution_mode(self, mode: str, changed_by: str = "system",
-                           reason: str = "") -> Dict[str, Any]:
+    def set_execution_mode(
+        self, mode: str, changed_by: str = "system", reason: str = ""
+    ) -> Dict[str, Any]:
         """Change the execution mode at runtime.
 
         The human user selects the mode. Default is AUTO but all three modes
@@ -705,8 +769,11 @@ class LightweightLLMTaskMaster:
     # -----------------------------------------------------------------------
 
     async def _legacy_handle_routing_request(
-        self, message: Dict[str, Any], request_id: str,
-        task: Dict[str, Any], available_workers: Dict[str, Any],
+        self,
+        message: Dict[str, Any],
+        request_id: str,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
         task_mode_override: Optional[str],
     ):
         """Legacy inline routing — preserved as fallback when pipeline.py is absent.
@@ -756,7 +823,9 @@ class LightweightLLMTaskMaster:
             }
             if self.socket_client:
                 await self.socket_client.send(response)
-            logger.info(f"{'🛑' if status == 'withdrawn' else '⏸️'} {status.upper()}: {hp_status['reason']} [legacy]")
+            logger.info(
+                f"{'🛑' if status == 'withdrawn' else '⏸️'} {status.upper()}: {hp_status['reason']} [legacy]"
+            )
             return
 
         # Routing decision
@@ -764,8 +833,12 @@ class LightweightLLMTaskMaster:
         selected_worker = await self.make_routing_decision(task, available_workers)
         decision_time = (datetime.now() - decision_start).total_seconds()
 
-        reasoning = await self.generate_reasoning(task, available_workers, selected_worker)
-        confidence = await self.calculate_confidence(task, available_workers, selected_worker)
+        reasoning = await self.generate_reasoning(
+            task, available_workers, selected_worker
+        )
+        confidence = await self.calculate_confidence(
+            task, available_workers, selected_worker
+        )
 
         if effective_mode == ExecutionMode.AUTO:
             response = {
@@ -784,11 +857,15 @@ class LightweightLLMTaskMaster:
             self.metrics["decisions_made"] += 1
             self.update_average_decision_time(decision_time)
             self.store_decision(task, available_workers, selected_worker, reasoning)
-            logger.info(f"🎯 AUTO decision: {selected_worker} (confidence: {confidence:.2f}) [legacy]")
+            logger.info(
+                f"🎯 AUTO decision: {selected_worker} (confidence: {confidence:.2f}) [legacy]"
+            )
             return
 
         if effective_mode == ExecutionMode.HYBRID:
-            alternatives = await self._build_alternatives(task, available_workers, selected_worker)
+            alternatives = await self._build_alternatives(
+                task, available_workers, selected_worker
+            )
             proposal_data = {
                 "request_id": request_id,
                 "task": task,
@@ -817,7 +894,9 @@ class LightweightLLMTaskMaster:
             }
             if self.socket_client:
                 await self.socket_client.send(notification)
-            logger.info(f"📋 HYBRID proposal [{proposal_id[:8]}]: proposed={selected_worker} [legacy]")
+            logger.info(
+                f"📋 HYBRID proposal [{proposal_id[:8]}]: proposed={selected_worker} [legacy]"
+            )
             return
 
     # -----------------------------------------------------------------------
@@ -921,22 +1000,28 @@ class LightweightLLMTaskMaster:
                 expired = self.proposal_store.expire_stale()
                 for pid in expired:
                     self.metrics["proposals_expired"] += 1
-                    logger.info(f"⏰ HYBRID proposal [{pid[:8]}] EXPIRED — not executed")
+                    logger.info(
+                        f"⏰ HYBRID proposal [{pid[:8]}] EXPIRED — not executed"
+                    )
 
                     if self.socket_client:
-                        await self.socket_client.send({
-                            "type": "proposal_expired",
-                            "proposal_id": pid,
-                            "expired_at": datetime.now().isoformat(),
-                            "reason": "No approval received within timeout period",
-                        })
+                        await self.socket_client.send(
+                            {
+                                "type": "proposal_expired",
+                                "proposal_id": pid,
+                                "expired_at": datetime.now().isoformat(),
+                                "reason": "No approval received within timeout period",
+                            }
+                        )
             except Exception as e:
                 logger.error(f"Error in proposal expiry loop: {e}")
 
             await asyncio.sleep(30)  # Check every 30 seconds
 
     async def _build_alternatives(
-        self, task: Dict[str, Any], available_workers: Dict[str, Any],
+        self,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
         primary_worker: Optional[str],
     ) -> List[Dict[str, Any]]:
         """Build ordered list of alternative workers for HYBRID proposals."""
@@ -947,14 +1032,18 @@ class LightweightLLMTaskMaster:
         for worker_id, worker_info in available_workers.items():
             if worker_id == primary_worker:
                 continue
-            score = await self.score_worker_for_task(worker_info, task_type, task_params)
+            score = await self.score_worker_for_task(
+                worker_info, task_type, task_params
+            )
             gpu_name = worker_info.get("gpu_info", {}).get("name", "Unknown")
-            alternatives.append({
-                "worker_id": worker_id,
-                "gpu": gpu_name,
-                "score": round(score, 3),
-                "reason": f"{gpu_name} — score {score:.2f}",
-            })
+            alternatives.append(
+                {
+                    "worker_id": worker_id,
+                    "gpu": gpu_name,
+                    "score": round(score, 3),
+                    "reason": f"{gpu_name} — score {score:.2f}",
+                }
+            )
 
         alternatives.sort(key=lambda x: x["score"], reverse=True)
         return alternatives
@@ -980,7 +1069,9 @@ class LightweightLLMTaskMaster:
 
         worker_scores = {}
         for worker_id, worker_info in available_workers.items():
-            score = await self.score_worker_for_task(worker_info, task_type, task_params)
+            score = await self.score_worker_for_task(
+                worker_info, task_type, task_params
+            )
             worker_scores[worker_id] = score
 
         if worker_scores:
@@ -1019,7 +1110,9 @@ class LightweightLLMTaskMaster:
         max_tasks = worker_info.get("max_concurrent_tasks", 1)
         load_penalty = (current_tasks / max_tasks) * 2.0 if max_tasks else 0.0
 
-        history_bonus = await self.get_historical_performance_bonus(worker_info, task_type)
+        history_bonus = await self.get_historical_performance_bonus(
+            worker_info, task_type
+        )
 
         final_score = (
             base_score * memory_score * feature_score * (1 + history_bonus)
@@ -1095,7 +1188,9 @@ class LightweightLLMTaskMaster:
         return 0.0
 
     async def generate_reasoning(
-        self, task: Dict[str, Any], available_workers: Dict[str, Any],
+        self,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
         selected_worker: Optional[str],
     ) -> str:
         """Generate human-readable reasoning for the decision.
@@ -1154,7 +1249,9 @@ class LightweightLLMTaskMaster:
             return f"Selected {gpu_name} as best available option"
 
     async def calculate_confidence(
-        self, task: Dict[str, Any], available_workers: Dict[str, Any],
+        self,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
         selected_worker: Optional[str],
     ) -> float:
         """Calculate confidence score for the decision."""
@@ -1168,7 +1265,9 @@ class LightweightLLMTaskMaster:
         task_params = task.get("parameters", {})
 
         for worker_id, worker_info in available_workers.items():
-            score = await self.score_worker_for_task(worker_info, task_type, task_params)
+            score = await self.score_worker_for_task(
+                worker_info, task_type, task_params
+            )
             worker_scores[worker_id] = score
 
         if len(worker_scores) > 1:
@@ -1190,8 +1289,11 @@ class LightweightLLMTaskMaster:
     # -----------------------------------------------------------------------
 
     def store_decision(
-        self, task: Dict[str, Any], available_workers: Dict[str, Any],
-        selected_worker: str, reasoning: str,
+        self,
+        task: Dict[str, Any],
+        available_workers: Dict[str, Any],
+        selected_worker: str,
+        reasoning: str,
     ):
         """Store decision for learning and analysis (Doctrine §4 Transparency)."""
         decision_record = {
@@ -1267,7 +1369,13 @@ class LightweightLLMTaskMaster:
             "pipeline": {
                 "active": self.pipeline is not None,
                 "authority_chain": "MemoryGuard → ModeGate → ModelRouter → ContextBuilder → ApprovalGate",
-                "stages": ["MemoryGuard", "ModeGate", "ModelRouter", "ContextBuilder", "ApprovalGate"],
+                "stages": [
+                    "MemoryGuard",
+                    "ModeGate",
+                    "ModelRouter",
+                    "ContextBuilder",
+                    "ApprovalGate",
+                ],
             },
         }
 
@@ -1302,9 +1410,7 @@ class LightweightLLMTaskMaster:
         if self.execution_mode == ExecutionMode.HYBRID:
             expired = self.proposal_store.expire_stale()
             if expired:
-                logger.info(
-                    f"⏰ Expired {len(expired)} pending proposals on shutdown"
-                )
+                logger.info(f"⏰ Expired {len(expired)} pending proposals on shutdown")
 
         if self.socket_client:
             await self.socket_client.disconnect()
@@ -1324,15 +1430,18 @@ async def main():
         "--controller-host", default=None, help="Controller host (default: from config)"
     )
     parser.add_argument(
-        "--socket-port", type=int, default=None, help="Socket port (default: from config)"
+        "--socket-port",
+        type=int,
+        default=None,
+        help="Socket port (default: from config)",
     )
     parser.add_argument(
-        "--mode", default=None, choices=["auto", "hybrid", "manual"],
-        help="Execution mode (default: from config or env PHANTOM_EXECUTION_MODE)"
+        "--mode",
+        default=None,
+        choices=["auto", "hybrid", "manual"],
+        help="Execution mode (default: from config or env PHANTOM_EXECUTION_MODE)",
     )
-    parser.add_argument(
-        "--config", default=None, help="Path to llm_config.json"
-    )
+    parser.add_argument("--config", default=None, help="Path to llm_config.json")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
 
     args = parser.parse_args()

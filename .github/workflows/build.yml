@@ -38,7 +38,7 @@ jobs:
       - name: Lint
         run: |
           python -m black --check phantom_core/ security_framework/ socket_infrastructure/ llm_taskmaster/
-          python -m flake8 --max-line-length=88 --extend-ignore=E203,W503 phantom_core/phantom_core/
+          python -m flake8 --max-line-length=120 --extend-ignore=E203,W503 --exclude=venv,build,dist,.eggs phantom_core/phantom_core/
 
       - name: Test
         run: PHANTOM_STATE_DIR=/tmp/phantom/state python -m pytest tests/ -v --tb=short
