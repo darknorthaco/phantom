@@ -58,7 +58,13 @@ impl PhantomDeployer {
             .await
             .map_err(|e| format!("Failed to create phantom root: {e}"))?;
 
-        let output = Command::new("python3")
+        // On Windows the launcher is "python", on Unix "python3"
+        #[cfg(target_os = "windows")]
+        let py_cmd = "python";
+        #[cfg(not(target_os = "windows"))]
+        let py_cmd = "python3";
+
+        let output = Command::new(py_cmd)
             .args(["-m", "venv", &venv_path.to_string_lossy()])
             .output()
             .await
@@ -74,7 +80,7 @@ impl PhantomDeployer {
     }
 
     async fn install_python_deps(&self) -> Result<(), String> {
-        let pip = self.phantom_root.join("venv/bin/pip");
+        let pip = venv_pip(&self.phantom_root);
         let req = self.engine_source.join("requirements.txt");
 
         if !req.exists() {
@@ -150,8 +156,8 @@ impl PhantomDeployer {
     }
 
     async fn install_service(&self) -> Result<(), String> {
-        let python = self.phantom_root.join("venv/bin/python3");
-        let run_py = self.engine_source.join("run.py");
+        let python    = venv_python(&self.phantom_root);
+        let run_py    = self.engine_source.join("run.py");
         let state_dir = self.phantom_root.join("state");
 
         #[cfg(target_os = "linux")]
@@ -223,7 +229,7 @@ impl PhantomDeployer {
     }
 
     async fn start_controller(&self) -> Result<(), String> {
-        let python = self.phantom_root.join("venv/bin/python3");
+        let python = venv_python(&self.phantom_root);
         // Prefer the deployed copy; fall back to engine_source (dev mode).
         let deployed_run_py = self.phantom_root.join("engine/run.py");
         let run_py = if deployed_run_py.exists() {
@@ -473,6 +479,26 @@ fn whoami_or_root() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "root".to_string())
+}
+
+/// Return the correct Python executable path inside the venv.
+/// Windows:  .phantom\venv\Scripts\python.exe
+/// Unix:     .phantom/venv/bin/python3
+fn venv_python(phantom_root: &PathBuf) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    return phantom_root.join("venv\\Scripts\\python.exe");
+    #[cfg(not(target_os = "windows"))]
+    return phantom_root.join("venv/bin/python3");
+}
+
+/// Return the correct pip executable path inside the venv.
+/// Windows:  .phantom\venv\Scripts\pip.exe
+/// Unix:     .phantom/venv/bin/pip
+fn venv_pip(phantom_root: &PathBuf) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    return phantom_root.join("venv\\Scripts\\pip.exe");
+    #[cfg(not(target_os = "windows"))]
+    return phantom_root.join("venv/bin/pip");
 }
 
 /// Read a string field from `~/.phantom/phantom_config.json`.

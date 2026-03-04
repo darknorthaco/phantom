@@ -12,6 +12,7 @@ import EphemeralPanel from './components/EphemeralPanel';
 import DeploymentsPanel from './components/DeploymentsPanel';
 import AuditLogPanel from './components/AuditLogPanel';
 import ExperimentalAOL from './components/ExperimentalAOL';
+import ChatPanel from './components/ChatPanel';
 import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
@@ -91,6 +92,7 @@ export default function App() {
   // TOC Interface
   const renderPanel = () => {
     switch (activeView) {
+      case 'chat':         return <ChatPanel />;
       case 'console':      return <PhantomConsole />;
       case 'workers':      return <WorkersPanel />;
       case 'routing':      return <RoutingPanel />;

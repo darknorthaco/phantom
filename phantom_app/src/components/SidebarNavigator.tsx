@@ -7,6 +7,7 @@ const NAV_SECTIONS = [
   {
     label: 'Operations',
     items: [
+      { id: 'chat',        icon: '◎', name: 'Chat' },
       { id: 'console',     icon: '▸', name: 'Console' },
       { id: 'workers',     icon: '◈', name: 'Workers' },
       { id: 'routing',     icon: '⇄', name: 'Routing' },
