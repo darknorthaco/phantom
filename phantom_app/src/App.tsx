@@ -23,14 +23,14 @@ export default function App() {
   const [activeView, setActiveView] = useState('console');
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
 
-  const checkHealthOnce = useCallback(() => {
+  const checkHealth = useCallback(() => {
     fetch('http://127.0.0.1:8080/health')
       .then((r) => r.json())
       .then((d) => setHealth(d))
       .catch(() => setHealth(null));
   }, []);
 
-  // Auto-detect deployed controller on mount
+  // Auto-detect deployed controller on mount; skip wizard if already running.
   useEffect(() => {
     fetch('http://127.0.0.1:8080/health')
       .then((r) => r.json())
@@ -43,17 +43,24 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // Live health polling while in TOC — keeps MetricsBar current.
+  useEffect(() => {
+    if (phase !== 'toc') return;
+    const id = setInterval(checkHealth, 15_000);
+    return () => clearInterval(id);
+  }, [phase, checkHealth]);
+
   const handleWizardConsent = () => {
     setPhase('front_porch');
   };
 
   const handleDeployComplete = () => {
     setPhase('consent_toc');
-    checkHealthOnce();
+    checkHealth();
   };
 
   const handleEnterToc = () => {
-    checkHealthOnce();
+    checkHealth();
     setPhase('toc');
   };
 
@@ -119,7 +126,7 @@ export default function App() {
 
   return (
     <div className="toc-layout">
-      <MetricsBar health={health} onRefresh={checkHealthOnce} />
+      <MetricsBar health={health} onRefresh={checkHealth} />
       <SidebarNavigator active={activeView} onNavigate={setActiveView} />
       <div className="main-content">
         {renderPanel()}
