@@ -2870,6 +2870,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
 ]
 

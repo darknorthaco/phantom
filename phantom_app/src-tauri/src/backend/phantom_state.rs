@@ -23,7 +23,7 @@ pub struct PhantomMetrics {
     pub cpu_percent: f64,
     pub memory_used_mb: u64,
     pub memory_total_mb: u64,
-    pub worker_count: u32,
+    pub workers_count: u32,
     pub active_tasks: u32,
     pub throughput: f64,
 }

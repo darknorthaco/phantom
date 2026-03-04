@@ -6,12 +6,13 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && node scripts/prepare-resources.mjs",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Phantom — Sovereign Distributed Compute",
         "width": 1280,
         "height": 800,
@@ -28,12 +29,31 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/phantom_core/**/*": "phantom_core/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["python3", "python3-venv", "python3-pip"]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/128x128.png",
+        "installMode": "currentUser",
+        "languages": ["English"]
+      }
+    }
   }
 }

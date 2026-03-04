@@ -40,6 +40,8 @@ class SocketManager:
         self.set_mode_handler = None
         self.server = None
         self.running = False
+        # Pending LLM routing requests: request_id → asyncio.Future
+        self._pending_routing: Dict[str, asyncio.Future] = {}
 
     async def start(self):
         """Start the WebSocket server"""
@@ -185,10 +187,20 @@ class SocketManager:
         )
 
     async def handle_llm_routing_response(self, data: Dict):
-        """Handle routing response from LLM Task Master"""
-        # Store the response for the controller to pick up
-        # This would typically use a shared state or callback mechanism
-        logger.info(f"🤖 LLM routing response: {data}")
+        """Resolve the pending Future for the matching request_id."""
+        request_id = data.get("request_id")
+        if not request_id:
+            logger.warning("🤖 LLM routing response missing request_id — discarding")
+            return
+
+        future = self._pending_routing.get(request_id)
+        if future is None:
+            logger.warning(f"🤖 No pending request for id {request_id} — discarding")
+            return
+
+        if not future.done():
+            future.set_result(data)
+            logger.info(f"🤖 LLM routing response resolved for request {request_id}")
 
     async def handle_worker_status_update(self, data: Dict):
         """Handle status updates from workers"""
@@ -337,15 +349,23 @@ class SocketManager:
             return False
 
     async def request_llm_routing(
-        self, routing_request: Dict[str, Any]
+        self, routing_request: Dict[str, Any], timeout_seconds: float = 10.0
     ) -> Optional[Dict[str, Any]]:
-        """Request worker selection from LLM Task Master"""
+        """Request worker selection from LLM Task Master.
+
+        Sends a routing_request message, registers a Future keyed by the
+        request_id, and awaits the Future.  handle_llm_routing_response()
+        resolves the Future when the LLM Task Master replies with a matching
+        request_id.  Returns the response dict, or None on timeout/error.
+        """
         if not self.llm_taskmaster_client:
             return None
 
         request_id = str(uuid.uuid4())
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        self._pending_routing[request_id] = future
 
-        # Send routing request
         message = {
             "type": "routing_request",
             "request_id": request_id,
@@ -353,23 +373,29 @@ class SocketManager:
             "timestamp": datetime.now().isoformat(),
         }
 
-        success = await self.send_to_llm_taskmaster(message)
-        if not success:
-            return None
-
-        # Wait for response (with timeout)
         try:
-            # This is a simplified implementation
-            # In practice, you'd use asyncio.Event or similar for proper async waiting
-            await asyncio.sleep(1.0)  # Give LLM time to respond
+            success = await self.send_to_llm_taskmaster(message)
+            if not success:
+                return None
 
-            # The actual response would be handled through the message handler
-            # and stored in a shared state for retrieval
-            return None  # Placeholder
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+            logger.info(
+                f"🤖 LLM routing completed for request {request_id}: "
+                f"worker={response.get('selected_worker')}"
+            )
+            return response
 
         except asyncio.TimeoutError:
-            logger.warning("LLM routing request timed out")
+            logger.warning(
+                f"🤖 LLM routing request {request_id} timed out after "
+                f"{timeout_seconds}s — falling back to programmatic routing"
+            )
             return None
+        except Exception as e:
+            logger.error(f"🤖 LLM routing request {request_id} failed: {e}")
+            return None
+        finally:
+            self._pending_routing.pop(request_id, None)
 
     async def get_status(self) -> Dict[str, Any]:
         """Get current socket infrastructure status"""

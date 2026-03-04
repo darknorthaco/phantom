@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getIdentity, getTrustLedger, approvePeer, rejectPeer } from '../utils/tauri';
+import { getIdentity, getTrustLedger, approvePeer, rejectPeer, generateCertificate } from '../utils/tauri';
 
 interface TrustedPeer {
   peer_id: string;
@@ -23,6 +23,9 @@ export default function ExperimentalAOL() {
   const [loadingIdentity, setLoadingIdentity] = useState(false);
   const [loadingLedger, setLoadingLedger] = useState(false);
   const [identityError, setIdentityError] = useState<string | null>(null);
+  const [certPaths, setCertPaths] = useState<Record<string, unknown> | null>(null);
+  const [generatingCert, setGeneratingCert] = useState(false);
+  const [certError, setCertError] = useState<string | null>(null);
 
   const loadIdentity = async () => {
     setLoadingIdentity(true);
@@ -64,6 +67,19 @@ export default function ExperimentalAOL() {
       await loadLedger();
     } catch (e) {
       console.error('Failed to reject peer:', e);
+    }
+  };
+
+  const handleGenerateCert = async () => {
+    setGeneratingCert(true);
+    setCertError(null);
+    try {
+      const paths = await generateCertificate();
+      setCertPaths(paths);
+    } catch (e) {
+      setCertError(String(e));
+    } finally {
+      setGeneratingCert(false);
     }
   };
 
@@ -194,11 +210,44 @@ export default function ExperimentalAOL() {
       {/* TLS Section */}
       <div className="card">
         <div className="card-title">TLS / Secure Transport</div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
-          WAN communication requires QUIC/TLS. Certificates are generated locally.
-          The routing engine receives a trusted peer list as input but does not manage
-          TLS, certificates, or WAN negotiation.
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>
+          WAN communication requires QUIC/TLS. Certificates are generated locally and
+          never leave your controller. Each peer must explicitly approve the other's
+          certificate before a secure channel is established.
         </p>
+
+        {certPaths ? (
+          <div>
+            <span className="status-badge active" style={{ marginBottom: 8, display: 'inline-block' }}>
+              Certificate Generated
+            </span>
+            <pre style={{
+              color: 'var(--text-secondary)',
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              marginTop: 8,
+            }}>
+              {JSON.stringify(certPaths, null, 2)}
+            </pre>
+          </div>
+        ) : (
+          <>
+            {certError && (
+              <div style={{ color: 'var(--accent-crimson)', fontSize: 11, marginBottom: 8 }}>
+                {certError}
+              </div>
+            )}
+            <button
+              className="console-send-btn"
+              onClick={handleGenerateCert}
+              disabled={generatingCert}
+            >
+              {generatingCert ? 'Generating…' : 'Generate Certificate'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

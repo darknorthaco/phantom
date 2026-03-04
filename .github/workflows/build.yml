@@ -1,0 +1,149 @@
+name: Build Phantom
+
+# Trigger on version tags (v1.0.0, v1.2.3, etc.) OR manual dispatch.
+# Push to master only runs lint + test, not the full native build.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Create as draft release?'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write   # needed to create GitHub releases and upload assets
+
+jobs:
+
+  # ── Python controller tests ──────────────────────────────────────
+  test-controller:
+    name: Test controller
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: phantom_core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install fastapi 'uvicorn[standard]' pydantic httpx requests websockets psutil numpy pyyaml cryptography pyjwt pytest pytest-asyncio black flake8
+
+      - name: Lint
+        run: |
+          python -m black --check phantom_core/ security_framework/ socket_infrastructure/ llm_taskmaster/
+          python -m flake8 --max-line-length=88 --extend-ignore=E203,W503 phantom_core/phantom_core/
+
+      - name: Test
+        run: PHANTOM_STATE_DIR=/tmp/phantom/state python -m pytest tests/ -v --tb=short
+
+  # ── Native desktop builds ────────────────────────────────────────
+  build-desktop:
+    name: Build ${{ matrix.label }}
+    needs: test-controller
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+
+          # Linux — produces .deb and .AppImage
+          - label: Linux (x86_64)
+            os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+
+          # Windows — produces NSIS .exe installer
+          - label: Windows (x86_64)
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            bundles: nsis
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Node ──────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: phantom_app/package-lock.json
+
+      # ── Rust ──────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: phantom_app/src-tauri -> target
+
+      # ── Linux system dependencies ─────────────────────────────────
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            patchelf \
+            squashfs-tools \
+            file
+
+      # ── Frontend dependencies ──────────────────────────────────────
+      - name: Install frontend deps
+        run: npm install
+        working-directory: phantom_app
+
+      # ── Build via tauri-action ─────────────────────────────────────
+      # tauri-action runs beforeBuildCommand automatically, which calls
+      # prepare-resources.mjs to bundle phantom_core before compiling.
+      - name: Build Phantom desktop app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: phantom_app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Phantom ${{ github.ref_name }}'
+          releaseBody: |
+            ## Phantom ${{ github.ref_name }}
+
+            Sovereign distributed compute fabric — native desktop application.
+
+            ### Downloads
+            | Platform | File | Notes |
+            |---|---|---|
+            | Windows | `Phantom_*_x64-setup.exe` | NSIS installer — double-click to install |
+            | Linux | `phantom_*_amd64.deb` | Debian/Ubuntu package |
+            | Linux | `Phantom_*_amd64.AppImage` | Portable — chmod +x, then run |
+
+            ### First launch
+            On first run, Phantom shows the wizard and deploys the controller engine
+            to `~/.phantom/`. No developer tools required.
+          releaseDraft: ${{ github.event.inputs.draft != 'false' }}
+          prerelease: false
+          args: --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundles }}
+
+      # ── Upload individual artifacts (useful for workflow_dispatch) ──
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phantom-${{ matrix.rust_target }}
+          path: |
+            phantom_app/src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*.deb
+            phantom_app/src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*.AppImage
+            phantom_app/src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*-setup.exe
+          if-no-files-found: warn
+          retention-days: 30

@@ -101,11 +101,29 @@ impl PhantomDeployer {
 
     async fn install_phantom_core(&self) -> Result<(), String> {
         let dest = self.phantom_root.join("engine");
-        if !dest.exists() {
-            tokio::fs::create_dir_all(&dest)
-                .await
-                .map_err(|e| format!("mkdir failed: {e}"))?;
+
+        // If engine is already deployed and run.py is present, skip the copy.
+        if dest.join("run.py").exists() {
+            log::info!("Phantom engine already present at {:?} — skipping copy", dest);
+            return Ok(());
         }
+
+        // If engine_source is the same path as the destination, nothing to do.
+        if self.engine_source == dest {
+            return Ok(());
+        }
+
+        log::info!(
+            "Copying Phantom engine from {:?} → {:?}",
+            self.engine_source,
+            dest
+        );
+
+        copy_dir_all(&self.engine_source, &dest)
+            .await
+            .map_err(|e| format!("Failed to install Phantom engine: {e}"))?;
+
+        log::info!("Phantom engine installed successfully");
         Ok(())
     }
 
@@ -206,7 +224,18 @@ impl PhantomDeployer {
 
     async fn start_controller(&self) -> Result<(), String> {
         let python = self.phantom_root.join("venv/bin/python3");
-        let run_py = self.engine_source.join("run.py");
+        // Prefer the deployed copy; fall back to engine_source (dev mode).
+        let deployed_run_py = self.phantom_root.join("engine/run.py");
+        let run_py = if deployed_run_py.exists() {
+            deployed_run_py
+        } else {
+            self.engine_source.join("run.py")
+        };
+
+        // Read security level from phantom_config.json (written by step 9).
+        // Falls back to "disabled" for first-launch and dev environments.
+        let security_level = read_controller_config(&self.phantom_root, "security_level")
+            .unwrap_or_else(|| "disabled".to_string());
 
         if !run_py.exists() {
             return Err(format!("run.py not found at {:?}", run_py));
@@ -222,7 +251,7 @@ impl PhantomDeployer {
                 run_py.to_string_lossy().as_ref(),
                 "--host", "127.0.0.1",
                 "--port", "8080",
-                "--security", "disabled",
+                "--security", &security_level,
             ])
             .env("PHANTOM_STATE_DIR", state_dir.to_string_lossy().as_ref())
             .spawn()
@@ -352,37 +381,85 @@ impl PhantomDeployer {
     }
 
     async fn load_execution_modes(&self) -> Result<(), String> {
-        let config_path = self.phantom_root.join("llm_config.json");
-        if config_path.exists() {
-            log::info!("llm_config.json already present — skipping default creation");
-            return Ok(());
-        }
-
-        let default = serde_json::json!({
-            "execution_mode": "manual",
-            "allow_per_task_override": false,
-            "model": "phi-3.5-mini",
-            "auto_withdraw_on_human_activity": true,
-            "confidence_threshold": 0.85
-        });
-
-        let data = serde_json::to_string_pretty(&default)
-            .map_err(|e| format!("Failed to serialize default config: {e}"))?;
-
         tokio::fs::create_dir_all(&self.phantom_root)
             .await
             .map_err(|e| format!("Failed to create phantom root: {e}"))?;
 
-        tokio::fs::write(&config_path, data)
+        // LLM config
+        let llm_config_path = self.phantom_root.join("llm_config.json");
+        if !llm_config_path.exists() {
+            let default = serde_json::json!({
+                "execution_mode": "manual",
+                "allow_per_task_override": false,
+                "model": "phi-3.5-mini",
+                "auto_withdraw_on_human_activity": true,
+                "confidence_threshold": 0.85
+            });
+            tokio::fs::write(
+                &llm_config_path,
+                serde_json::to_string_pretty(&default).map_err(|e| e.to_string())?,
+            )
             .await
             .map_err(|e| format!("Failed to write llm_config.json: {e}"))?;
+            log::info!("Default llm_config.json written (execution_mode: manual)");
+        }
 
-        log::info!("Default llm_config.json written (execution_mode: manual)");
+        // Controller config (security level and connection settings)
+        let controller_config_path = self.phantom_root.join("phantom_config.json");
+        if !controller_config_path.exists() {
+            let default = serde_json::json!({
+                "security_level": "disabled",
+                "controller_host": "127.0.0.1",
+                "controller_port": 8080
+            });
+            tokio::fs::write(
+                &controller_config_path,
+                serde_json::to_string_pretty(&default).map_err(|e| e.to_string())?,
+            )
+            .await
+            .map_err(|e| format!("Failed to write phantom_config.json: {e}"))?;
+            log::info!("Default phantom_config.json written (security_level: disabled)");
+        }
+
         Ok(())
     }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// Recursively copy a directory tree from `src` to `dst`.
+/// Skips `__pycache__`, `.git`, `venv`, and `*.pyc` files.
+async fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(dst).await?;
+
+    let mut read_dir = tokio::fs::read_dir(src).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Skip noise
+        if matches!(
+            name_str.as_ref(),
+            "__pycache__" | ".git" | ".github" | "venv" | ".venv" | "node_modules"
+        ) || name_str.ends_with(".pyc")
+            || name_str.ends_with(".egg-info")
+        {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        let file_type = entry.file_type().await?;
+
+        if file_type.is_dir() {
+            // Box the future to avoid infinite-size recursion
+            Box::pin(copy_dir_all(&src_path, &dst_path)).await?;
+        } else {
+            tokio::fs::copy(&src_path, &dst_path).await?;
+        }
+    }
+    Ok(())
+}
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
@@ -396,6 +473,15 @@ fn whoami_or_root() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "root".to_string())
+}
+
+/// Read a string field from `~/.phantom/phantom_config.json`.
+/// Returns `None` if the file doesn't exist or the field is missing.
+fn read_controller_config(phantom_root: &PathBuf, key: &str) -> Option<String> {
+    let path = phantom_root.join("phantom_config.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get(key)?.as_str().map(|s| s.to_string())
 }
 
 fn local_ip_base() -> String {
