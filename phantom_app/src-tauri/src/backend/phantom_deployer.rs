@@ -110,10 +110,97 @@ impl PhantomDeployer {
     }
 
     async fn verify_gpu_plugins(&self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            let gpus = super::linux::gpu_detection::detect_nvidia_gpus().await;
+            if gpus.is_empty() {
+                log::info!("No NVIDIA GPUs detected — GPU plugins inactive (CPU-only mode)");
+            } else {
+                log::info!("Detected {} NVIDIA GPU(s): {}", gpus.len(), gpus[0].name);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let gpus = super::windows::gpu_detection::detect_gpus().await;
+            if gpus.is_empty() {
+                log::info!("No GPUs detected — GPU plugins inactive (CPU-only mode)");
+            } else {
+                log::info!("Detected {} GPU(s): {}", gpus.len(), gpus[0].name);
+            }
+        }
         Ok(())
     }
 
     async fn install_service(&self) -> Result<(), String> {
+        let python = self.phantom_root.join("venv/bin/python3");
+        let run_py = self.engine_source.join("run.py");
+        let state_dir = self.phantom_root.join("state");
+
+        #[cfg(target_os = "linux")]
+        {
+            let unit = super::linux::systemd_installer::generate_unit_file(
+                &whoami_or_root(),
+                &python,
+                &run_py,
+                &self.engine_source,
+                &state_dir,
+            );
+
+            // Try user-level systemd (no root required) first
+            let user_systemd = home_dir().join(".config/systemd/user");
+            tokio::fs::create_dir_all(&user_systemd)
+                .await
+                .map_err(|e| format!("Failed to create systemd user dir: {e}"))?;
+
+            let unit_path = user_systemd.join("phantom.service");
+            tokio::fs::write(&unit_path, &unit)
+                .await
+                .map_err(|e| format!("Failed to write unit file: {e}"))?;
+
+            log::info!("Written systemd unit to {:?}", unit_path);
+
+            // daemon-reload for user session
+            let reload = Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output()
+                .await;
+
+            match reload {
+                Ok(out) if out.status.success() => {
+                    // Enable the user service (don't fail if this errors — not all environments support it)
+                    let _ = Command::new("systemctl")
+                        .args(["--user", "enable", "phantom"])
+                        .output()
+                        .await;
+                    log::info!("Phantom systemd user service enabled");
+                }
+                _ => {
+                    log::warn!("systemctl --user daemon-reload unavailable; service file written but not enabled");
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let python_win = self.phantom_root.join("venv\\Scripts\\python.exe");
+            match super::windows::service_installer::install_service(
+                "phantom",
+                "Phantom Distributed Compute Controller",
+                &python_win,
+                &run_py,
+                &state_dir,
+            ).await {
+                Ok(()) => log::info!("Phantom Windows service installed"),
+                Err(e) => log::warn!("Windows service install failed (may already exist): {e}"),
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            log::info!("Service installation skipped on this platform");
+            let _ = (&python, &run_py, &state_dir); // suppress unused warnings
+        }
+
         Ok(())
     }
 
@@ -146,6 +233,87 @@ impl PhantomDeployer {
     }
 
     async fn open_ports(&self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            // Try ufw first (Ubuntu/Debian)
+            let ufw = Command::new("ufw")
+                .args(["allow", "8080/tcp"])
+                .output()
+                .await;
+
+            match ufw {
+                Ok(out) if out.status.success() => {
+                    log::info!("ufw: allowed port 8080/tcp");
+                    return Ok(());
+                }
+                _ => {
+                    log::info!("ufw not available, trying iptables");
+                }
+            }
+
+            // Fall back to iptables
+            let ipt = Command::new("iptables")
+                .args(["-C", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"])
+                .output()
+                .await;
+
+            let already_open = matches!(ipt, Ok(ref o) if o.status.success());
+
+            if !already_open {
+                let add = Command::new("iptables")
+                    .args(["-A", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"])
+                    .output()
+                    .await;
+
+                match add {
+                    Ok(out) if out.status.success() => {
+                        log::info!("iptables: opened port 8080/tcp");
+                    }
+                    Ok(out) => {
+                        log::warn!(
+                            "iptables failed: {}",
+                            String::from_utf8_lossy(&out.stderr)
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("iptables not available: {e}");
+                    }
+                }
+            } else {
+                log::info!("Port 8080/tcp already open in iptables");
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let result = Command::new("netsh")
+                .args([
+                    "advfirewall", "firewall", "add", "rule",
+                    "name=PhantomController",
+                    "dir=in",
+                    "action=allow",
+                    "protocol=TCP",
+                    "localport=8080",
+                ])
+                .output()
+                .await;
+
+            match result {
+                Ok(out) if out.status.success() => {
+                    log::info!("Windows firewall: allowed port 8080/TCP");
+                }
+                Ok(out) => {
+                    log::warn!(
+                        "netsh firewall rule failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                }
+                Err(e) => {
+                    log::warn!("netsh not available: {e}");
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -158,10 +326,91 @@ impl PhantomDeployer {
     }
 
     async fn scan_lan(&self) -> Result<(), String> {
+        // Determine the local IP to use as the scan base
+        let base_ip = local_ip_base();
+        log::info!("Scanning LAN from base {base_ip} on port 8080…");
+
+        let nodes = tokio::task::spawn_blocking(move || {
+            super::lan_scanner::scan_subnet(&base_ip, 8080)
+        })
+        .await
+        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+
+        log::info!("LAN scan complete: {} Phantom node(s) found", nodes.len());
+
+        if !nodes.is_empty() {
+            let scan_path = self.phantom_root.join("lan_scan.json");
+            let json = serde_json::to_string_pretty(&nodes)
+                .unwrap_or_else(|_| "[]".to_string());
+            tokio::fs::write(&scan_path, json)
+                .await
+                .map_err(|e| format!("Failed to write LAN scan results: {e}"))?;
+            log::info!("LAN scan results written to {:?}", scan_path);
+        }
+
         Ok(())
     }
 
     async fn load_execution_modes(&self) -> Result<(), String> {
+        let config_path = self.phantom_root.join("llm_config.json");
+        if config_path.exists() {
+            log::info!("llm_config.json already present — skipping default creation");
+            return Ok(());
+        }
+
+        let default = serde_json::json!({
+            "execution_mode": "manual",
+            "allow_per_task_override": false,
+            "model": "phi-3.5-mini",
+            "auto_withdraw_on_human_activity": true,
+            "confidence_threshold": 0.85
+        });
+
+        let data = serde_json::to_string_pretty(&default)
+            .map_err(|e| format!("Failed to serialize default config: {e}"))?;
+
+        tokio::fs::create_dir_all(&self.phantom_root)
+            .await
+            .map_err(|e| format!("Failed to create phantom root: {e}"))?;
+
+        tokio::fs::write(&config_path, data)
+            .await
+            .map_err(|e| format!("Failed to write llm_config.json: {e}"))?;
+
+        log::info!("Default llm_config.json written (execution_mode: manual)");
         Ok(())
     }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[allow(dead_code)]
+fn whoami_or_root() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "root".to_string())
+}
+
+fn local_ip_base() -> String {
+    use std::net::UdpSocket;
+    // Probe trick: connect to a public address to discover the local outbound IP
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.connect("8.8.8.8:80");
+        if let Ok(addr) = sock.local_addr() {
+            let ip = addr.ip().to_string();
+            // Return the /24 base (first three octets + ".1")
+            let parts: Vec<&str> = ip.rsplitn(2, '.').collect();
+            if parts.len() == 2 {
+                return format!("{}.1", parts[1]);
+            }
+        }
+    }
+    "192.168.1.1".to_string()
 }
