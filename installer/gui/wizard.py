@@ -435,7 +435,7 @@ class PhantomWizard(tk.Tk):
             launch_script = self.state.install_dir / "environment.ps1"
         if launch_script.exists():
             try:
-                subprocess.Popen([str(launch_script)], shell=True)
+                subprocess.Popen([str(launch_script)])
             except Exception:
                 pass
 

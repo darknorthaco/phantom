@@ -66,7 +66,7 @@ def demo_socket_config():
 
     print("\nEnabling socket infrastructure...")
     socket_mgr.enable()
-    socket_mgr.configure(host="0.0.0.0", port=8081)
+    socket_mgr.configure(host="127.0.0.1", port=8081)
 
     config = socket_mgr.get_config()
     print("\n✅ Socket Configuration:")
@@ -86,7 +86,7 @@ def demo_ui_integration():
 
     print("\nConfiguring RedBlue UI...")
     ui.enable()
-    ui.configure(host="0.0.0.0", port=3000)
+    ui.configure(host="127.0.0.1", port=3000)
     ui.enable_socket_integration()
 
     config = ui.get_config()

@@ -70,7 +70,7 @@ class ConfigGenerator:
         return {
             "socket": {
                 "enabled": socket_config.get("enabled", False),
-                "host": socket_config.get("host", "0.0.0.0"),
+                "host": socket_config.get("host", "127.0.0.1"),
                 "port": socket_config.get("port", 8081),
                 "ssl_enabled": socket_config.get("ssl_enabled", False),
                 "ssl_cert": socket_config.get("ssl_cert"),
@@ -83,7 +83,7 @@ class ConfigGenerator:
         return {
             "ui": {
                 "enabled": ui_config.get("enabled", False),
-                "host": ui_config.get("host", "0.0.0.0"),
+                "host": ui_config.get("host", "127.0.0.1"),
                 "port": ui_config.get("port", 3000),
                 "controller_url": ui_config.get(
                     "controller_url", "http://localhost:8080"

@@ -295,7 +295,7 @@ class FallbackSocketManager:
 async def main():
     """Main entry point for standalone socket server"""
     parser = argparse.ArgumentParser(description="Phantom Hybrid Socket Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8081, help="Port to bind to")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
 
