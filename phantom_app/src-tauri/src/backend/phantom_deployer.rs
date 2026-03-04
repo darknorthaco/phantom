@@ -101,11 +101,29 @@ impl PhantomDeployer {
 
     async fn install_phantom_core(&self) -> Result<(), String> {
         let dest = self.phantom_root.join("engine");
-        if !dest.exists() {
-            tokio::fs::create_dir_all(&dest)
-                .await
-                .map_err(|e| format!("mkdir failed: {e}"))?;
+
+        // If engine is already deployed and run.py is present, skip the copy.
+        if dest.join("run.py").exists() {
+            log::info!("Phantom engine already present at {:?} — skipping copy", dest);
+            return Ok(());
         }
+
+        // If engine_source is the same path as the destination, nothing to do.
+        if self.engine_source == dest {
+            return Ok(());
+        }
+
+        log::info!(
+            "Copying Phantom engine from {:?} → {:?}",
+            self.engine_source,
+            dest
+        );
+
+        copy_dir_all(&self.engine_source, &dest)
+            .await
+            .map_err(|e| format!("Failed to install Phantom engine: {e}"))?;
+
+        log::info!("Phantom engine installed successfully");
         Ok(())
     }
 
@@ -206,7 +224,13 @@ impl PhantomDeployer {
 
     async fn start_controller(&self) -> Result<(), String> {
         let python = self.phantom_root.join("venv/bin/python3");
-        let run_py = self.engine_source.join("run.py");
+        // Prefer the deployed copy; fall back to engine_source (dev mode).
+        let deployed_run_py = self.phantom_root.join("engine/run.py");
+        let run_py = if deployed_run_py.exists() {
+            deployed_run_py
+        } else {
+            self.engine_source.join("run.py")
+        };
 
         if !run_py.exists() {
             return Err(format!("run.py not found at {:?}", run_py));
@@ -383,6 +407,40 @@ impl PhantomDeployer {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// Recursively copy a directory tree from `src` to `dst`.
+/// Skips `__pycache__`, `.git`, `venv`, and `*.pyc` files.
+async fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(dst).await?;
+
+    let mut read_dir = tokio::fs::read_dir(src).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Skip noise
+        if matches!(
+            name_str.as_ref(),
+            "__pycache__" | ".git" | ".github" | "venv" | ".venv" | "node_modules"
+        ) || name_str.ends_with(".pyc")
+            || name_str.ends_with(".egg-info")
+        {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        let file_type = entry.file_type().await?;
+
+        if file_type.is_dir() {
+            // Box the future to avoid infinite-size recursion
+            Box::pin(copy_dir_all(&src_path, &dst_path)).await?;
+        } else {
+            tokio::fs::copy(&src_path, &dst_path).await?;
+        }
+    }
+    Ok(())
+}
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")

@@ -8,7 +8,7 @@ use security::audit_logger::AuditLogger;
 use security::identity_manager::IdentityManager;
 use security::tls_manager::TlsManager;
 use std::path::PathBuf;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as AsyncMutex;
 
 pub struct ManagedState {
@@ -269,7 +269,7 @@ async fn deploy_phantom(
         .await
         .ok();
 
-    let engine_source = find_engine_source();
+    let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
     let deployer = PhantomDeployer::new(&phantom_root, &engine_source);
     let steps = PhantomDeployer::steps();
@@ -387,7 +387,15 @@ fn scan_lan(base_ip: String, port: u16) -> Vec<backend::lan_scanner::DiscoveredN
     backend::lan_scanner::scan_subnet(&base_ip, port)
 }
 
-fn find_engine_source() -> PathBuf {
+fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
+    // 1. Distribution: bundled resources inside the installed app
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let bundled = res_dir.join("phantom_core");
+        if bundled.join("run.py").exists() {
+            return bundled;
+        }
+    }
+    // 2. Dev: workspace layout (Cursor / cargo run)
     for c in &[
         PathBuf::from("/workspace/phantom_core"),
         PathBuf::from("../phantom_core"),
@@ -395,6 +403,15 @@ fn find_engine_source() -> PathBuf {
         if c.join("run.py").exists() {
             return c.clone();
         }
+    }
+    // 3. Already-deployed engine (from a previous install)
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let deployed = home.join(".phantom/engine");
+    if deployed.join("run.py").exists() {
+        return deployed;
     }
     PathBuf::from("/workspace/phantom_core")
 }

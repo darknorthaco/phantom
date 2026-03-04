@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import WizardWelcome from './components/WizardWelcome';
 import FrontPorchDeploy from './components/FrontPorchDeploy';
 import ConsentModal from './components/ConsentModal';
@@ -28,6 +28,19 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => setHealth(d))
       .catch(() => setHealth(null));
+  }, []);
+
+  // Auto-detect deployed controller on mount
+  useEffect(() => {
+    fetch('http://127.0.0.1:8080/health')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.status === 'healthy') {
+          setHealth(d);
+          setPhase('toc');
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleWizardConsent = () => {
