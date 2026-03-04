@@ -11,7 +11,7 @@ class UIIntegration:
     """RedBlue UI integration manager"""
 
     DEFAULT_UI_PORT = 3000
-    DEFAULT_UI_HOST = "0.0.0.0"
+    DEFAULT_UI_HOST = "127.0.0.1"
 
     def __init__(self):
         self.enabled = False

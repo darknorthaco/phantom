@@ -5,8 +5,9 @@ Enhanced version with socket integration support
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from typing import Dict, Any, Optional, List
+from collections import deque
 from enum import Enum
 from phantom_core.orchestrator import (
     Orchestrator,
@@ -19,6 +20,7 @@ import httpx
 import logging
 import os
 from datetime import datetime
+import json
 import uuid
 
 # Configure logging early so the except blocks below can use logger
@@ -131,7 +133,7 @@ orchestrator = None
 security_manager = None
 state_manager: StateManager | None = None
 queue_paused = False
-mode_audit_log: List[Dict[str, Any]] = []
+mode_audit_log: deque = deque(maxlen=1000)
 
 
 class ExecutionMode(str, Enum):
@@ -225,20 +227,35 @@ async def shutdown_event():
 
 
 # Pydantic models
+_MAX_PAYLOAD_BYTES = 65_536  # 64 KB max for dict payloads
+
+
 class WorkerInfo(BaseModel):
-    worker_id: str
-    host: str
-    port: int
+    worker_id: str = Field(..., max_length=128)
+    host: str = Field(..., max_length=253)
+    port: int = Field(..., ge=1, le=65535)
     gpu_info: Dict[str, Any]
-    status: str = "active"
+    status: str = Field("active", max_length=32)
     last_heartbeat: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def validate_gpu_info_size(self) -> "WorkerInfo":
+        if len(json.dumps(self.gpu_info)) > _MAX_PAYLOAD_BYTES:
+            raise ValueError("gpu_info payload exceeds maximum allowed size")
+        return self
 
 
 class TaskRequest(BaseModel):
-    task_type: str
-    parameters: Dict[str, Any]
-    priority: int = 1
-    target_worker: Optional[str] = None
+    task_type: str = Field(..., max_length=128)
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(1, ge=1, le=10)
+    target_worker: Optional[str] = Field(None, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_parameters_size(self) -> "TaskRequest":
+        if len(json.dumps(self.parameters)) > _MAX_PAYLOAD_BYTES:
+            raise ValueError("parameters payload exceeds maximum allowed size")
+        return self
 
 
 class TaskResponse(BaseModel):
