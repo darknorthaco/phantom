@@ -1,5 +1,9 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+use super::lan_scanner::DiscoveredNode;
+use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DeployStep {
@@ -363,13 +367,24 @@ impl PhantomDeployer {
     async fn scan_lan(&self) -> Result<(), String> {
         // Determine the local IP to use as the scan base
         let base_ip = local_ip_base();
-        log::info!("Scanning LAN from base {base_ip} on port 8080…");
+        log::info!("Scanning LAN from base {base_ip} on ports 8090 and 8080…");
 
-        let nodes = tokio::task::spawn_blocking(move || {
-            super::lan_scanner::scan_subnet(&base_ip, 8080)
-        })
-        .await
-        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+        // Scan likely worker ports first. Some legacy environments may still expose
+        // worker-like services on 8080, so keep both for compatibility.
+        let mut nodes: Vec<DiscoveredNode> = Vec::new();
+        for port in [8090_u16, 8080_u16] {
+            let scan_base = base_ip.clone();
+            let mut port_nodes = tokio::task::spawn_blocking(move || {
+                super::lan_scanner::scan_subnet(&scan_base, port)
+            })
+            .await
+            .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+            nodes.append(&mut port_nodes);
+        }
+
+        // De-dupe in case the same endpoint was discovered multiple times.
+        let mut seen = HashSet::new();
+        nodes.retain(|n| seen.insert(format!("{}:{}", n.ip, n.port)));
 
         log::info!("LAN scan complete: {} Phantom node(s) found", nodes.len());
 
@@ -382,6 +397,24 @@ impl PhantomDeployer {
                 .map_err(|e| format!("Failed to write LAN scan results: {e}"))?;
             log::info!("LAN scan results written to {:?}", scan_path);
         }
+
+        // Best effort: auto-register discovered workers in the local controller.
+        // This makes the TOC Workers panel reflect scan results immediately.
+        let controller = PhantomApiClient::new("http://127.0.0.1:8080");
+        let mut registered = 0usize;
+        for node in nodes {
+            if let Some(worker) = discover_worker(node).await {
+                match controller.register_worker(&worker).await {
+                    Ok(()) => {
+                        registered += 1;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to register discovered worker {}: {e}", worker.host);
+                    }
+                }
+            }
+        }
+        log::info!("LAN worker auto-registration complete: {registered} worker(s) registered");
 
         Ok(())
     }
@@ -429,6 +462,56 @@ impl PhantomDeployer {
 
         Ok(())
     }
+}
+
+async fn discover_worker(node: DiscoveredNode) -> Option<RegisterWorkerRequest> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    // Prefer the worker root endpoint because it includes gpu_info.
+    let root_url = format!("http://{}:{}/", node.ip, node.port);
+    if let Ok(resp) = client.get(&root_url).send().await {
+        if let Ok(payload) = resp.json::<serde_json::Value>().await {
+            let worker_id = payload
+                .get("worker_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("lan-worker-{}-{}", node.ip.replace('.', "-"), node.port));
+
+            if let Some(gpu_info) = payload.get("gpu_info") {
+                return Some(RegisterWorkerRequest {
+                    worker_id,
+                    host: node.ip,
+                    port: node.port,
+                    gpu_info: gpu_info.clone(),
+                    status: "active".to_string(),
+                });
+            }
+        }
+    }
+
+    // Fallback to /health if root is unavailable; only accept responses that
+    // look like worker health payloads (must include worker_id).
+    let health_url = format!("http://{}:{}/health", node.ip, node.port);
+    let resp = client.get(&health_url).send().await.ok()?;
+    let payload = resp.json::<serde_json::Value>().await.ok()?;
+    let worker_id = payload
+        .get("worker_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())?;
+
+    Some(RegisterWorkerRequest {
+        worker_id,
+        host: node.ip,
+        port: node.port,
+        gpu_info: serde_json::json!({
+            "source": "lan_scan",
+            "health": payload
+        }),
+        status: "active".to_string(),
+    })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

@@ -20,6 +20,15 @@ pub struct WorkerEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterWorkerRequest {
+    pub worker_id: String,
+    pub host: String,
+    pub port: u16,
+    pub gpu_info: serde_json::Value,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkersResponse {
     pub workers: Vec<WorkerEntry>,
 }
@@ -79,6 +88,18 @@ impl PhantomApiClient {
             .json::<WorkersResponse>()
             .await
             .map_err(|e| format!("Parse error: {e}"))
+    }
+
+    pub async fn register_worker(&self, worker: &RegisterWorkerRequest) -> Result<(), String> {
+        self.client
+            .post(format!("{}/workers/register", self.base_url))
+            .json(worker)
+            .send()
+            .await
+            .map_err(|e| format!("Connection failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("Register failed: {e}"))?;
+        Ok(())
     }
 
     pub async fn get_stats(&self) -> Result<StatsResponse, String> {

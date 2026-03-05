@@ -1,6 +1,6 @@
 [package]
 name = "phantom_app"
-version = "0.1.0"
+version = "1.1.0"
 description = "Phantom Distributed Compute Fabric — Sovereign Desktop Application"
 authors = ["Dark North Co."]
 edition = "2021"
