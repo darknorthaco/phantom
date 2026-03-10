@@ -35,7 +35,5 @@ export const getWorkers = () => invoke<Record<string, unknown>>('get_workers');
 export const getStats = () => invoke<Record<string, unknown>>('get_stats');
 export const submitTask = (taskType: string, parameters: Record<string, unknown>, priority: number) =>
   invoke<Record<string, unknown>>('submit_task', { taskType, parameters, priority });
-export const scanLan = (baseIp: string, port: number) =>
-  invoke<Array<Record<string, unknown>>>('scan_lan', { baseIp, port });
 export const scanAndRegisterWorkers = () =>
   invoke<{ scanned: number; registered: number; nodes: Array<[string, number]> }>('scan_and_register_workers');

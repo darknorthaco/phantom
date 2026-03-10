@@ -400,11 +400,6 @@ async fn submit_task(
 }
 
 #[tauri::command]
-fn scan_lan(base_ip: String, port: u16) -> Vec<backend::lan_scanner::DiscoveredNode> {
-    backend::lan_scanner::scan_subnet(&base_ip, port)
-}
-
-#[tauri::command]
 async fn scan_and_register_workers(
     app: tauri::AppHandle,
     state: tauri::State<'_, ManagedState>,
@@ -480,7 +475,7 @@ pub fn run() {
             check_integrity,
             get_deployment_status, deploy_phantom,
             get_phantom_health, get_workers, get_stats,
-            submit_task, scan_lan, scan_and_register_workers,
+            submit_task, scan_and_register_workers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Phantom application");

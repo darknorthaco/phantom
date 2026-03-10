@@ -19,6 +19,8 @@ import time
 from gpu.gpu_info_linux import GPUDetector
 from plugins.plugin_manager import PluginManager
 
+from .discovery_listener import run_discovery_listener
+
 # Import socket client if available
 try:
     import sys
@@ -248,6 +250,12 @@ class PhantomLinuxWorker:
 
     async def start_background_tasks(self):
         """Start background monitoring and heartbeat tasks"""
+        run_discovery_listener(
+            self.worker_id,
+            "0.0.0.0",
+            self.worker_port,
+            self.gpu_info or {},
+        )
         self.heartbeat_task = asyncio.create_task(self.heartbeat_loop())
         self.monitoring_task = asyncio.create_task(self.monitoring_loop())
         logger.info("🔄 Background tasks started")

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use super::lan_scanner::DiscoveredNode;
+use super::discovery::{self, base_to_broadcast, WorkerManifest};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -465,76 +465,65 @@ impl PhantomDeployer {
 
     async fn scan_lan(&self) -> Result<(), String> {
         let base_ips = local_ip_bases();
-        self.emit_scan_log(&format!("Subnets to scan: {:?}", base_ips));
-        self.emit_scan_log("Scanning localhost (127.0.0.1, ::1) on port 8090…");
+        let broadcast_addrs: Vec<String> = base_ips
+            .iter()
+            .filter_map(|b| base_to_broadcast(b))
+            .collect();
 
-        let worker_port = 8090_u16;
-        let mut nodes: Vec<DiscoveredNode> = Vec::new();
-
-        let local_nodes = tokio::task::spawn_blocking(move || {
-            super::lan_scanner::scan_localhost(worker_port)
-        })
-        .await
-        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
-        if !local_nodes.is_empty() {
-            self.emit_scan_log(&format!("Found {} node(s) on localhost", local_nodes.len()));
+        self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
+        self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
+        for addr in &broadcast_addrs {
+            self.emit_scan_log(&format!("Broadcasting DISCOVER_WORKERS on {addr}/24…"));
         }
-        nodes.extend(local_nodes);
+        self.emit_scan_log("Waiting for worker manifests…");
 
-        for base_ip in &base_ips {
-            let prefix = base_ip.trim_end_matches(".1");
-            self.emit_scan_log(&format!("Scanning {prefix}.x:8090…"));
-            let scan_base = base_ip.clone();
-            let mut port_nodes = tokio::task::spawn_blocking(move || {
-                super::lan_scanner::scan_subnet(&scan_base, worker_port)
-            })
+        let addrs = broadcast_addrs.clone();
+        let manifests = tokio::task::spawn_blocking(move || discovery::discover_workers(&addrs))
             .await
-            .map_err(|e| format!("LAN scan task panicked: {e}"))?;
-            if !port_nodes.is_empty() {
-                self.emit_scan_log(&format!("Found {} node(s) on {prefix}.x", port_nodes.len()));
-            }
-            nodes.append(&mut port_nodes);
-        }
+            .map_err(|e| format!("Discovery task panicked: {e}"))?;
 
-        let mut seen = HashSet::new();
-        nodes.retain(|n| seen.insert(format!("{}:{}", n.ip, n.port)));
-
-        self.emit_scan_log(&format!("Total: {} reachable node(s)", nodes.len()));
-
-        if !nodes.is_empty() {
-            let scan_path = self.phantom_root.join("lan_scan.json");
-            let json = serde_json::to_string_pretty(&nodes)
-                .unwrap_or_else(|_| "[]".to_string());
-            tokio::fs::write(&scan_path, json)
-                .await
-                .map_err(|e| format!("Failed to write LAN scan results: {e}"))?;
-        }
+        self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
 
         let controller = PhantomApiClient::new("http://127.0.0.1:8080");
         let mut registered = 0usize;
-        for node in &nodes {
-            self.emit_scan_log(&format!("Validating {}:{}…", node.ip, node.port));
-            if let Some(worker) = discover_worker(node.clone()).await {
-                match controller.register_worker(&worker).await {
-                    Ok(()) => {
-                        registered += 1;
-                        self.emit_scan_log(&format!("Registered worker {}", worker.worker_id));
-                    }
-                    Err(e) => {
-                        self.emit_scan_log(&format!("Registration failed: {e}"));
-                        log::warn!("Failed to register discovered worker {}: {e}", worker.host);
-                    }
+
+        for m in manifests {
+            let host = m.registration_host();
+            self.emit_scan_log(&format!("Received worker manifest from {}:{}", host, m.port));
+            self.emit_scan_log("Validating manifest…");
+            let req = RegisterWorkerRequest {
+                worker_id: m.worker_id.clone(),
+                host,
+                port: m.port,
+                gpu_info: m.gpu_info,
+                status: "active".to_string(),
+            };
+            match controller.register_worker(&req).await {
+                Ok(()) => {
+                    registered += 1;
+                    self.emit_scan_log(&format!("Registering worker {}…", req.worker_id));
                 }
-            } else {
-                self.emit_scan_log(&format!(
-                    "{}:{} did not respond with worker_id (skipped)",
-                    node.ip, node.port
-                ));
+                Err(e) => {
+                    self.emit_scan_log(&format!("Registration failed: {e}"));
+                    log::warn!("Failed to register worker {}: {e}", req.worker_id);
+                }
             }
         }
-        self.emit_scan_log(&format!("Done: {registered} worker(s) registered"));
-        log::info!("LAN worker auto-registration complete: {registered} worker(s) registered");
 
+        if !manifests.is_empty() {
+            let scan_path = self.phantom_root.join("lan_scan.json");
+            let json_manifests: Vec<_> = manifests
+                .iter()
+                .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id}))
+                .collect();
+            let json = serde_json::to_string_pretty(&json_manifests).unwrap_or_else(|_| "[]".to_string());
+            tokio::fs::write(&scan_path, json)
+                .await
+                .map_err(|e| format!("Failed to write discovery results: {e}"))?;
+        }
+
+        self.emit_scan_log(&format!("Done: {registered} worker(s) registered"));
+        log::info!("Discovery complete: {registered} worker(s) registered");
         Ok(())
     }
 }
@@ -546,88 +535,71 @@ fn emit_scan_log_opt(app: &Option<tauri::AppHandle>, line: &str) {
     }
 }
 
-/// Run a full LAN scan and register discovered workers with the controller.
-/// Used by both deployment step 9 and the manual "Scan LAN" action from the UI.
+/// Run broadcast discovery and register workers. Used by deployment step 9 and manual "Scan LAN".
 pub async fn scan_and_register_workers(
     phantom_root: &std::path::Path,
     controller_url: &str,
     scan_log_emitter: Option<tauri::AppHandle>,
 ) -> Result<ScanResult, String> {
-    use std::collections::HashSet;
-
     let base_ips = local_ip_bases();
-    emit_scan_log_opt(&scan_log_emitter, &format!("Subnets: {:?}", base_ips));
-    emit_scan_log_opt(&scan_log_emitter, "Scanning localhost:8090…");
+    let broadcast_addrs: Vec<String> = base_ips
+        .iter()
+        .filter_map(|b| base_to_broadcast(b))
+        .collect();
 
-    let worker_port = 8090_u16;
-    let mut nodes: Vec<DiscoveredNode> = Vec::new();
+    emit_scan_log_opt(&scan_log_emitter, &format!("Subnets: {:?}", broadcast_addrs));
+    emit_scan_log_opt(&scan_log_emitter, "Broadcasting DISCOVER_WORKERS…");
+    emit_scan_log_opt(&scan_log_emitter, "Waiting for worker manifests…");
 
-    let local_nodes = tokio::task::spawn_blocking(move || {
-        super::lan_scanner::scan_localhost(worker_port)
-    })
-    .await
-    .map_err(|e| format!("LAN scan task panicked: {e}"))?;
-    if !local_nodes.is_empty() {
-        emit_scan_log_opt(&scan_log_emitter, &format!("Localhost: {} node(s)", local_nodes.len()));
-    }
-    nodes.extend(local_nodes);
-
-    for base_ip in &base_ips {
-        let prefix = base_ip.trim_end_matches(".1");
-        emit_scan_log_opt(&scan_log_emitter, &format!("Scanning {prefix}.x:8090…"));
-        let scan_base = base_ip.clone();
-        let mut port_nodes = tokio::task::spawn_blocking(move || {
-            super::lan_scanner::scan_subnet(&scan_base, worker_port)
-        })
+    let addrs = broadcast_addrs.clone();
+    let manifests = tokio::task::spawn_blocking(move || discovery::discover_workers(&addrs))
         .await
-        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
-        if !port_nodes.is_empty() {
-            emit_scan_log_opt(&scan_log_emitter, &format!("{prefix}.x: {} node(s)", port_nodes.len()));
-        }
-        nodes.append(&mut port_nodes);
-    }
+        .map_err(|e| format!("Discovery task panicked: {e}"))?;
 
-    let mut seen = HashSet::new();
-    nodes.retain(|n| seen.insert(format!("{}:{}", n.ip, n.port)));
-
-    emit_scan_log_opt(&scan_log_emitter, &format!("Total: {} reachable node(s)", nodes.len()));
+    emit_scan_log_opt(&scan_log_emitter, &format!("Received {} manifest(s)", manifests.len()));
 
     let controller = PhantomApiClient::new(controller_url);
     let mut registered = 0usize;
-    for node in &nodes {
-        emit_scan_log_opt(&scan_log_emitter, &format!("Validating {}:{}…", node.ip, node.port));
-        if let Some(worker) = discover_worker(node.clone()).await {
-            match controller.register_worker(&worker).await {
-                Ok(()) => {
-                    registered += 1;
-                    emit_scan_log_opt(&scan_log_emitter, &format!("Registered {}", worker.worker_id));
-                }
-                Err(e) => {
-                    emit_scan_log_opt(&scan_log_emitter, &format!("Registration failed: {e}"));
-                    log::warn!("Failed to register {}:{}: {e}", node.ip, node.port);
-                }
+    for m in &manifests {
+        let host = m.registration_host();
+        emit_scan_log_opt(&scan_log_emitter, &format!("Received worker manifest from {}:{}", host, m.port));
+        emit_scan_log_opt(&scan_log_emitter, "Validating manifest…");
+        let req = RegisterWorkerRequest {
+            worker_id: m.worker_id.clone(),
+            host,
+            port: m.port,
+            gpu_info: m.gpu_info.clone(),
+            status: "active".to_string(),
+        };
+        match controller.register_worker(&req).await {
+            Ok(()) => {
+                registered += 1;
+                emit_scan_log_opt(&scan_log_emitter, &format!("Registering worker {}…", req.worker_id));
             }
-        } else {
-            emit_scan_log_opt(
-                &scan_log_emitter,
-                &format!("{}:{} — not a worker (no worker_id)", node.ip, node.port),
-            );
+            Err(e) => {
+                emit_scan_log_opt(&scan_log_emitter, &format!("Registration failed: {e}"));
+                log::warn!("Failed to register {}: {e}", m.worker_id);
+            }
         }
     }
     emit_scan_log_opt(&scan_log_emitter, &format!("Done: {registered} worker(s) registered"));
 
-    if !nodes.is_empty() {
+    if !manifests.is_empty() {
         let scan_path = phantom_root.join("lan_scan.json");
-        let json = serde_json::to_string_pretty(&nodes).unwrap_or_else(|_| "[]".to_string());
+        let json_manifests: Vec<_> = manifests
+            .iter()
+            .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id}))
+            .collect();
+        let json = serde_json::to_string_pretty(&json_manifests).unwrap_or_else(|_| "[]".to_string());
         let _ = tokio::fs::write(&scan_path, json).await;
     }
 
     Ok(ScanResult {
-        scanned: nodes.len(),
+        scanned: manifests.len(),
         registered,
-        nodes: nodes
+        nodes: manifests
             .into_iter()
-            .map(|n| (n.ip.clone(), n.port))
+            .map(|m| (m.registration_host(), m.port))
             .collect(),
     })
 }
@@ -683,56 +655,6 @@ impl PhantomDeployer {
 
         Ok(())
     }
-}
-
-async fn discover_worker(node: DiscoveredNode) -> Option<RegisterWorkerRequest> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .ok()?;
-
-    // Prefer the worker root endpoint because it includes gpu_info.
-    let root_url = format!("http://{}:{}/", node.ip, node.port);
-    if let Ok(resp) = client.get(&root_url).send().await {
-        if let Ok(payload) = resp.json::<serde_json::Value>().await {
-            let worker_id = payload
-                .get("worker_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("lan-worker-{}-{}", node.ip.replace('.', "-"), node.port));
-
-            if let Some(gpu_info) = payload.get("gpu_info") {
-                return Some(RegisterWorkerRequest {
-                    worker_id,
-                    host: node.ip,
-                    port: node.port,
-                    gpu_info: gpu_info.clone(),
-                    status: "active".to_string(),
-                });
-            }
-        }
-    }
-
-    // Fallback to /health if root is unavailable; only accept responses that
-    // look like worker health payloads (must include worker_id).
-    let health_url = format!("http://{}:{}/health", node.ip, node.port);
-    let resp = client.get(&health_url).send().await.ok()?;
-    let payload = resp.json::<serde_json::Value>().await.ok()?;
-    let worker_id = payload
-        .get("worker_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())?;
-
-    Some(RegisterWorkerRequest {
-        worker_id,
-        host: node.ip,
-        port: node.port,
-        gpu_info: serde_json::json!({
-            "source": "lan_scan",
-            "health": payload
-        }),
-        status: "active".to_string(),
-    })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
