@@ -288,7 +288,7 @@ async fn deploy_phantom(
 
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source);
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
     let steps = PhantomDeployer::steps();
     let total = steps.len();
 
@@ -406,6 +406,7 @@ fn scan_lan(base_ip: String, port: u16) -> Vec<backend::lan_scanner::DiscoveredN
 
 #[tauri::command]
 async fn scan_and_register_workers(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ManagedState>,
 ) -> Result<backend::phantom_deployer::ScanResult, String> {
     let phantom_root = state.app.phantom_root.clone();
@@ -415,7 +416,12 @@ async fn scan_and_register_workers(
         .lock()
         .map_err(|e| e.to_string())?
         .clone();
-    backend::phantom_deployer::scan_and_register_workers(&phantom_root, &url).await
+    backend::phantom_deployer::scan_and_register_workers(
+        &phantom_root,
+        &url,
+        Some(app),
+    )
+    .await
 }
 
 fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {

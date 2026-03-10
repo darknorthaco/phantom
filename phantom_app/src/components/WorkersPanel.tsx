@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { scanAndRegisterWorkers } from '../utils/tauri';
 
 interface Worker {
@@ -14,6 +15,8 @@ export default function WorkersPanel() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [scanLog, setScanLog] = useState<string[]>([]);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   const fetchWorkers = () => {
     setLoading(true);
@@ -27,6 +30,7 @@ export default function WorkersPanel() {
   const runScan = () => {
     setScanning(true);
     setScanResult(null);
+    setScanLog([]);
     scanAndRegisterWorkers()
       .then((r) => {
         setScanning(false);
@@ -40,6 +44,20 @@ export default function WorkersPanel() {
         setScanResult(`Scan failed: ${e}`);
       });
   };
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<string>('scan-log', (event) => {
+      setScanLog((prev) => [...prev, event.payload]);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [scanLog]);
 
   useEffect(() => { fetchWorkers(); }, []);
 
@@ -60,6 +78,33 @@ export default function WorkersPanel() {
       {scanResult && (
         <div className="scan-result" style={{ fontSize: '0.85em', marginBottom: 8 }}>
           {scanResult}
+        </div>
+      )}
+      {scanning && (
+        <div
+          className="scan-log"
+          style={{
+            marginBottom: 12,
+            maxHeight: 180,
+            overflow: 'auto',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            padding: 8,
+            background: 'rgba(0,0,0,0.2)',
+            borderRadius: 4,
+            textAlign: 'left',
+          }}
+        >
+          {scanLog.length > 0 ? (
+            scanLog.map((line, i) => (
+              <div key={i} style={{ marginBottom: 2 }}>
+                {line}
+              </div>
+            ))
+          ) : (
+            <div style={{ opacity: 0.7 }}>Scanning…</div>
+          )}
+          <div ref={logEndRef} />
         </div>
       )}
 

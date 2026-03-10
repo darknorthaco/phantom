@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { deployPhantom } from '../utils/tauri';
 import '../styles/deploy.css';
@@ -17,24 +17,44 @@ interface Props {
 export default function FrontPorchDeploy({ onDeployComplete }: Props) {
   const [deploying, setDeploying] = useState(false);
   const [progress, setProgress] = useState<DeployProgress | null>(null);
+  const [scanLog, setScanLog] = useState<string[]>([]);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
+    let unlistenProgress: UnlistenFn | undefined;
+    let unlistenScan: UnlistenFn | undefined;
 
     listen<DeployProgress>('deploy-progress', (event) => {
       setProgress(event.payload);
       if (event.payload.fraction >= 1.0) {
         setTimeout(onDeployComplete, 1200);
       }
+      if (event.payload.label !== 'Scanning LAN' && event.payload.label !== 'Starting local worker') {
+        setScanLog([]);
+      }
     }).then((fn) => {
-      unlisten = fn;
+      unlistenProgress = fn;
     });
 
-    return () => { unlisten?.(); };
+    listen<string>('scan-log', (event) => {
+      setScanLog((prev) => [...prev, event.payload]);
+    }).then((fn) => {
+      unlistenScan = fn;
+    });
+
+    return () => {
+      unlistenProgress?.();
+      unlistenScan?.();
+    };
   }, [onDeployComplete]);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [scanLog]);
 
   const handleDeploy = async () => {
     setDeploying(true);
+    setScanLog([]);
     try {
       await deployPhantom();
     } catch (err) {
@@ -44,6 +64,8 @@ export default function FrontPorchDeploy({ onDeployComplete }: Props) {
   };
 
   const pct = progress ? Math.round(progress.fraction * 100) : 0;
+  const showScanLog =
+    deploying && (progress?.label === 'Scanning LAN' || progress?.label === 'Starting local worker');
 
   return (
     <div className="deploy-screen">
@@ -63,6 +85,29 @@ export default function FrontPorchDeploy({ onDeployComplete }: Props) {
           <div className="micro-status">
             {progress?.label || 'Initializing…'}
           </div>
+          {showScanLog && scanLog.length > 0 && (
+            <div
+              className="scan-log"
+              style={{
+                marginTop: 12,
+                maxHeight: 160,
+                overflow: 'auto',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                padding: 8,
+                background: 'rgba(0,0,0,0.25)',
+                borderRadius: 4,
+                textAlign: 'left',
+              }}
+            >
+              {scanLog.map((line, i) => (
+                <div key={i} style={{ marginBottom: 2 }}>
+                  {line}
+                </div>
+              ))}
+              <div ref={logEndRef} />
+            </div>
+          )}
         </div>
       ) : (
         <button className="deploy-btn" onClick={handleDeploy} disabled={deploying}>

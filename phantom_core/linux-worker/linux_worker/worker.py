@@ -142,14 +142,23 @@ class PhantomLinuxWorker:
         try:
             logger.info(f"🚀 Initializing worker {self.worker_id}")
 
-            # Detect GPU
+            # Detect GPU; fall back to CPU if none found
             self.gpu_info = await self.gpu_detector.detect_gpu()
             if not self.gpu_info:
-                raise Exception("No compatible GPU detected")
-
-            logger.info(
-                f"🎮 Detected GPU: {self.gpu_info['name']} ({self.gpu_info['memory_total']}MB)"
-            )
+                self.gpu_info = {
+                    "name": "CPU",
+                    "memory_total": 0,
+                    "memory_free": 0,
+                    "memory_used": 0,
+                    "utilization": 0.0,
+                    "driver_version": "",
+                    "compute_capability": "",
+                }
+                logger.info("📋 No GPU detected — running in CPU mode")
+            else:
+                logger.info(
+                    f"🎮 Detected GPU: {self.gpu_info['name']} ({self.gpu_info['memory_total']}MB)"
+                )
 
             # Initialize plugins
             await self.plugin_manager.initialize(self.gpu_info)
