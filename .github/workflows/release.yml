@@ -1,0 +1,55 @@
+name: Build Phantom.exe Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Phantom.exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Phantom.exe (release mode)
+        run: cargo build --release
+
+      - name: Upload Phantom.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantom-exe
+          path: target/release/phantom.exe
+
+  publish:
+    name: Publish Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built Phantom.exe
+        uses: actions/download-artifact@v4
+        with:
+          name: phantom-exe
+          path: ./dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./dist/phantom.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
