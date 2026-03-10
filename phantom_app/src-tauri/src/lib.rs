@@ -404,6 +404,20 @@ fn scan_lan(base_ip: String, port: u16) -> Vec<backend::lan_scanner::DiscoveredN
     backend::lan_scanner::scan_subnet(&base_ip, port)
 }
 
+#[tauri::command]
+async fn scan_and_register_workers(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<backend::phantom_deployer::ScanResult, String> {
+    let phantom_root = state.app.phantom_root.clone();
+    let url = state
+        .app
+        .controller_url
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    backend::phantom_deployer::scan_and_register_workers(&phantom_root, &url).await
+}
+
 fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
     // 1. Distribution: bundled resources inside the installed app
     if let Ok(res_dir) = app.path().resource_dir() {
@@ -460,7 +474,7 @@ pub fn run() {
             check_integrity,
             get_deployment_status, deploy_phantom,
             get_phantom_health, get_workers, get_stats,
-            submit_task, scan_lan,
+            submit_task, scan_lan, scan_and_register_workers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Phantom application");

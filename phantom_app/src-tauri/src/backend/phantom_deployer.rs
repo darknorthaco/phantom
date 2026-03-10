@@ -365,17 +365,30 @@ impl PhantomDeployer {
     }
 
     async fn scan_lan(&self) -> Result<(), String> {
-        // Determine the local IP to use as the scan base
-        let base_ip = local_ip_base();
-        log::info!("Scanning LAN from base {base_ip} on ports 8090 and 8080…");
+        // Determine the local IP to use as the scan base; try fallback subnets if primary fails.
+        let base_ips = local_ip_bases();
+        log::info!(
+            "Scanning LAN from base(s) {:?} on worker port 8090",
+            base_ips
+        );
 
-        // Scan likely worker ports first. Some legacy environments may still expose
-        // worker-like services on 8080, so keep both for compatibility.
+        // Scan only worker port 8090 — controllers use 8080 and do not expose worker_id.
+        let worker_port = 8090_u16;
         let mut nodes: Vec<DiscoveredNode> = Vec::new();
-        for port in [8090_u16, 8080_u16] {
+
+        // Always check localhost for same-machine worker+controller setups.
+        let local_nodes = tokio::task::spawn_blocking(move || {
+            super::lan_scanner::scan_localhost(worker_port)
+        })
+        .await
+        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+        nodes.extend(local_nodes);
+
+        // Scan each candidate subnet (primary from UDP trick + fallbacks).
+        for base_ip in &base_ips {
             let scan_base = base_ip.clone();
             let mut port_nodes = tokio::task::spawn_blocking(move || {
-                super::lan_scanner::scan_subnet(&scan_base, port)
+                super::lan_scanner::scan_subnet(&scan_base, worker_port)
             })
             .await
             .map_err(|e| format!("LAN scan task panicked: {e}"))?;
@@ -418,7 +431,79 @@ impl PhantomDeployer {
 
         Ok(())
     }
+}
 
+/// Run a full LAN scan and register discovered workers with the controller.
+/// Used by both deployment step 8 and the manual "Scan LAN" action from the UI.
+pub async fn scan_and_register_workers(
+    phantom_root: &std::path::Path,
+    controller_url: &str,
+) -> Result<ScanResult, String> {
+    use std::collections::HashSet;
+
+    let base_ips = local_ip_bases();
+    let worker_port = 8090_u16;
+
+    let mut nodes: Vec<DiscoveredNode> = Vec::new();
+
+    // Scan localhost for same-machine workers.
+    let local_nodes = tokio::task::spawn_blocking(move || {
+        super::lan_scanner::scan_localhost(worker_port)
+    })
+    .await
+    .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+    nodes.extend(local_nodes);
+
+    // Scan each candidate subnet.
+    for base_ip in &base_ips {
+        let scan_base = base_ip.clone();
+        let mut port_nodes = tokio::task::spawn_blocking(move || {
+            super::lan_scanner::scan_subnet(&scan_base, worker_port)
+        })
+        .await
+        .map_err(|e| format!("LAN scan task panicked: {e}"))?;
+        nodes.append(&mut port_nodes);
+    }
+
+    let mut seen = HashSet::new();
+    nodes.retain(|n| seen.insert(format!("{}:{}", n.ip, n.port)));
+
+    let controller = PhantomApiClient::new(controller_url);
+    let mut registered = 0usize;
+    for node in &nodes {
+        if let Some(worker) = discover_worker(node.clone()).await {
+            match controller.register_worker(&worker).await {
+                Ok(()) => registered += 1,
+                Err(e) => log::warn!("Failed to register {}:{}: {e}", node.ip, node.port),
+            }
+        }
+    }
+
+    // Optionally persist scan results.
+    if !nodes.is_empty() {
+        let scan_path = phantom_root.join("lan_scan.json");
+        let json = serde_json::to_string_pretty(&nodes).unwrap_or_else(|_| "[]".to_string());
+        let _ = tokio::fs::write(&scan_path, json).await;
+    }
+
+    Ok(ScanResult {
+        scanned: nodes.len(),
+        registered,
+        nodes: nodes
+            .into_iter()
+            .map(|n| (n.ip.clone(), n.port))
+            .collect(),
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScanResult {
+    pub scanned: usize,
+    pub registered: usize,
+    pub nodes: Vec<(String, u16)>,
+}
+
+impl PhantomDeployer {
     async fn load_execution_modes(&self) -> Result<(), String> {
         tokio::fs::create_dir_all(&self.phantom_root)
             .await
@@ -593,19 +678,33 @@ fn read_controller_config(phantom_root: &PathBuf, key: &str) -> Option<String> {
     json.get(key)?.as_str().map(|s| s.to_string())
 }
 
-fn local_ip_base() -> String {
+/// Return candidate /24 base IPs for LAN scanning. Uses UDP probe to 8.8.8.8 for
+/// the primary; on failure (no internet, VPN, multi-NIC) uses common fallbacks so
+/// at least one subnet is scanned.
+fn local_ip_bases() -> Vec<String> {
     use std::net::UdpSocket;
-    // Probe trick: connect to a public address to discover the local outbound IP
+    let mut bases = Vec::new();
+
+    // Primary: probe trick — connect to public IP to discover local outbound interface.
     if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
         let _ = sock.connect("8.8.8.8:80");
         if let Ok(addr) = sock.local_addr() {
             let ip = addr.ip().to_string();
-            // Return the /24 base (first three octets + ".1")
             let parts: Vec<&str> = ip.rsplitn(2, '.').collect();
             if parts.len() == 2 {
-                return format!("{}.1", parts[1]);
+                bases.push(format!("{}.1", parts[1]));
             }
         }
     }
-    "192.168.1.1".to_string()
+
+    // Fallbacks only when primary fails (offline, VPN, or wrong interface).
+    if bases.is_empty() {
+        log::info!("Primary subnet detection failed; using fallback subnets");
+        bases.extend([
+            "192.168.1.1".to_string(),
+            "192.168.0.1".to_string(),
+            "10.0.0.1".to_string(),
+        ]);
+    }
+    bases
 }
