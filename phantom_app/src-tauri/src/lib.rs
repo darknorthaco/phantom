@@ -56,6 +56,48 @@ fn verify_signature(
     IdentityManager::verify_signature(&public_key_b64, message.as_bytes(), &signature_b64)
 }
 
+/// §1 Pre-0 — persist ControllerPlacementParams so Step 4.5 can read them.
+#[tauri::command]
+async fn confirm_controller_placement(
+    state: tauri::State<'_, ManagedState>,
+    host: String,
+    port: u16,
+    device_label: String,
+    identity_fingerprint: String,
+) -> Result<(), String> {
+    let phantom_root = state.app.phantom_root.clone();
+    let path = phantom_root.join("controller_placement.json");
+    tokio::fs::create_dir_all(&phantom_root)
+        .await
+        .map_err(|e| format!("Failed to create phantom root: {e}"))?;
+    let params = serde_json::json!({
+        "host": host,
+        "port": port,
+        "device_label": device_label,
+        "identity_fingerprint": identity_fingerprint,
+        "confirmed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    let tmp = phantom_root.join("controller_placement.json.tmp");
+    tokio::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&params).map_err(|e| e.to_string())?,
+    )
+    .await
+    .map_err(|e| format!("Failed to write controller_placement.json: {e}"))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|e| format!("Failed to persist controller_placement.json: {e}"))?;
+    state
+        .audit
+        .log_event(
+            "controller_placement_confirmed",
+            serde_json::json!({"host": host, "port": port}),
+        )
+        .await
+        .ok();
+    Ok(())
+}
+
 // ── Phase 2: TLS ───────────────────────────────────────────────────
 
 #[tauri::command]
@@ -542,7 +584,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(managed)
         .invoke_handler(tauri::generate_handler![
-            get_identity, sign_message, verify_signature,
+            get_identity, sign_message, verify_signature, confirm_controller_placement,
             generate_certificate,
             get_trust_ledger, approve_peer, reject_peer,
             get_audit_log,

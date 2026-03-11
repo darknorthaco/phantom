@@ -15,6 +15,8 @@ export interface DiscoveredWorker {
   sourceIp: string;
   signatureVerified: boolean;
   fingerprint: string;
+  /** Base64 Ed25519 public key — for §5 TrustRecord(approved). */
+  publicKeyB64?: string;
 }
 
 export interface DiscoveryLog {
@@ -50,6 +52,8 @@ export interface WorkerSelectionForRegistration {
   host: string;
   port: number;
   gpuInfo: Record<string, unknown>;
+  /** Base64 Ed25519 public key — for §5 TrustRecord(approved). */
+  publicKeyB64?: string;
 }
 
 // ── Ceremony State ─────────────────────────────────────────────────────
@@ -79,6 +83,7 @@ export function toWorkerSelection(w: DiscoveredWorker): WorkerSelectionForRegist
     host: w.host,
     port: w.port,
     gpuInfo: w.gpuInfo ?? {},
+    publicKeyB64: w.publicKeyB64,
   };
 }
 

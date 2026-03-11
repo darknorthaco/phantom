@@ -90,6 +90,23 @@ impl PhantomApiClient {
             .map_err(|e| format!("Parse error: {e}"))
     }
 
+    /// §5 — Record user approval before registration. Must be called first.
+    pub async fn approve_worker(&self, worker_id: &str, public_key_b64: &str) -> Result<(), String> {
+        let body = serde_json::json!({
+            "worker_id": worker_id,
+            "public_key": public_key_b64,
+        });
+        self.client
+            .post(format!("{}/workers/approve", self.base_url))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Connection failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("Approve failed: {e}"))?;
+        Ok(())
+    }
+
     pub async fn register_worker(&self, worker: &RegisterWorkerRequest) -> Result<(), String> {
         self.client
             .post(format!("{}/workers/register", self.base_url))

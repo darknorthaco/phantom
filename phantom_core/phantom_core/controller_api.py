@@ -16,6 +16,7 @@ from phantom_core.orchestrator import (
     WorkerStatus as OrchestratorWorkerStatus,
 )
 from phantom_core.state import StateManager
+from phantom_core.trust_store import TrustStore, TrustLevel
 from phantom_core.config_schema import ConfigSchema, locate_phantom_config
 import httpx
 import logging
@@ -133,6 +134,7 @@ socket_manager = None
 orchestrator = None
 security_manager = None
 state_manager: StateManager | None = None
+trust_store: TrustStore | None = None
 queue_paused = False
 mode_audit_log: deque = deque(maxlen=1000)
 
@@ -183,11 +185,12 @@ MODE_SOCKET_SCHEMAS: Dict[ExecutionMode, Dict[str, Any]] = {
 # Initialize integrated components
 @app.on_event("startup")
 async def startup_event():
-    global socket_manager, security_manager, orchestrator, state_manager
+    global socket_manager, security_manager, orchestrator, state_manager, trust_store
 
     # Restore persisted state
     state_dir = os.getenv("PHANTOM_STATE_DIR")
     state_manager = StateManager(state_dir) if state_dir else StateManager()
+    trust_store = TrustStore(str(state_manager.state_dir))
     workers.update(state_manager.load_workers())
     tasks.update(state_manager.load_tasks())
     logger.info("💾 State restored (%d workers, %d tasks)", len(workers), len(tasks))
@@ -257,6 +260,13 @@ async def shutdown_event():
 
 # Pydantic models
 _MAX_PAYLOAD_BYTES = 65_536  # 64 KB max for dict payloads
+
+
+class ApproveWorkerRequest(BaseModel):
+    """§5 — Request to record user approval for a worker (pre-registration)."""
+
+    worker_id: str = Field(..., max_length=128)
+    public_key: str = Field("", max_length=512)
 
 
 class WorkerInfo(BaseModel):
@@ -503,9 +513,27 @@ async def set_mode(mode_request: ModeRequest):
     return response
 
 
+@app.post("/workers/approve")
+async def approve_worker(req: ApproveWorkerRequest):
+    """§5 — Record user approval for a worker. Required before registration."""
+    if not trust_store:
+        raise HTTPException(status_code=503, detail="Trust store not initialized")
+    trust_store.approve_worker_with_key(req.worker_id, req.public_key)
+    logger.info("Worker %s approved for registration", req.worker_id)
+    return {"status": "approved", "worker_id": req.worker_id}
+
+
 @app.post("/workers/register")
 async def register_worker(worker: WorkerInfo):
-    """Register a new worker with the controller"""
+    """Register a new worker with the controller. §5: requires TrustRecord(approved)."""
+    if trust_store:
+        level = trust_store.get_current_level(worker.worker_id)
+        if level not in (TrustLevel.APPROVED.value, TrustLevel.REGISTERED.value):
+            logger.warning("Registration rejected: worker %s not approved (level=%s)", worker.worker_id, level)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Worker {worker.worker_id} must be approved before registration",
+            )
     worker.last_heartbeat = datetime.now()
     workers[worker.worker_id] = worker.dict()
 
@@ -542,6 +570,8 @@ async def register_worker(worker: WorkerInfo):
 
         orchestrator.register_worker(worker_info)
 
+    if trust_store:
+        trust_store.record_registration(worker.worker_id)
     logger.info(f"Worker registered: {worker.worker_id} at {worker.host}:{worker.port}")
     if state_manager:
         state_manager.save_workers(workers)

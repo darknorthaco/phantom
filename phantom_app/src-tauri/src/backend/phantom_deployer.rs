@@ -24,6 +24,8 @@ pub struct DiscoveredWorkerForCeremony {
     pub source_ip: String,
     pub signature_verified: bool,
     pub fingerprint: String,
+    /// Base64 Ed25519 public key — required for §5 TrustRecord(approved).
+    pub public_key_b64: String,
 }
 
 /// Result of pre-scan deployment (steps 0–9 + discovery, no registration).
@@ -44,6 +46,9 @@ pub struct WorkerSelectionForRegistration {
     pub host: String,
     pub port: u16,
     pub gpu_info: serde_json::Value,
+    /// Base64 Ed25519 public key — required for §5 TrustRecord(approved).
+    #[serde(default)]
+    pub public_key_b64: String,
 }
 
 /// Request payload for complete_deployment_with_selection (camelCase for frontend).
@@ -309,14 +314,40 @@ impl PhantomDeployer {
 
     /// §8 Step 4.5 — write phantom_config.json atomically before the controller starts.
     ///
-    /// Writes the full corrected schema (controller, ports, worker readiness,
-    /// execution_modes) to `<phantom_root>/phantom_config.json` using an atomic
-    /// tmp → rename pattern.  A timestamped backup of any pre-existing file is
-    /// preserved.
+    /// Reads ControllerPlacementParams from §1 Pre-0 ceremony (controller_placement.json).
+    /// Writes the full corrected schema to phantom_config.json using an atomic tmp → rename.
+    /// A timestamped backup of any pre-existing phantom_config.json is preserved.
     ///
     /// This step MUST succeed before `start_controller` (Step 6) runs.
     async fn bootstrap_config(&self) -> Result<(), String> {
         let config_path = self.phantom_root.join("phantom_config.json");
+        let placement_path = self.phantom_root.join("controller_placement.json");
+
+        // §1 — ControllerPlacementParams must exist (Pre-0 ceremony completed).
+        if !placement_path.exists() {
+            return Err(
+                "Pre-0 Controller Selection Ceremony required. \
+                 Complete the controller placement screen before deploying."
+                    .to_string(),
+            );
+        }
+
+        let placement_raw = tokio::fs::read_to_string(&placement_path)
+            .await
+            .map_err(|e| format!("Failed to read controller_placement.json: {e}"))?;
+        let placement: serde_json::Value =
+            serde_json::from_str(&placement_raw).map_err(|e| format!("Invalid controller_placement.json: {e}"))?;
+        let host = placement
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("127.0.0.1")
+            .to_string();
+        let port = placement.get("port").and_then(|v| v.as_u64()).unwrap_or(8080) as u16;
+        let identity_fingerprint = placement
+            .get("identity_fingerprint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // Preserve any existing config as a timestamped backup.
         if config_path.exists() {
@@ -331,10 +362,10 @@ impl PhantomDeployer {
         let now = chrono::Utc::now().to_rfc3339();
         let config = serde_json::json!({
             "controller": {
-                "host":                 "127.0.0.1",
-                "port":                 8080,
+                "host":                 host,
+                "port":                 port,
                 "security":             "disabled",
-                "identity_fingerprint": ""
+                "identity_fingerprint": identity_fingerprint
             },
             "ports": {
                 "controller_api": { "port": 8080, "protocol": "tcp", "required": true  },
@@ -828,6 +859,7 @@ impl PhantomDeployer {
                 source_ip: m.source_ip.clone(),
                 signature_verified: m.signature_verified,
                 fingerprint: m.fingerprint.clone(),
+                public_key_b64: m.manifest.public_key_b64.clone(),
             })
             .collect();
 
@@ -867,6 +899,14 @@ impl PhantomDeployer {
         let controller = PhantomApiClient::new("http://127.0.0.1:8080");
 
         for w in &worker_pool {
+            // §5 — Record TrustRecord(approved) before registration.
+            if let Err(e) = controller
+                .approve_worker(&w.worker_id, &w.public_key_b64)
+                .await
+            {
+                log::warn!("Failed to approve worker {}: {e}", w.worker_id);
+                continue;
+            }
             let req = RegisterWorkerRequest {
                 worker_id: w.worker_id.clone(),
                 host: w.host.clone(),

@@ -246,6 +246,41 @@ class TrustStore:
         self.write_record(rec)
         return rec
 
+    def approve_worker_with_key(
+        self, worker_id: str, public_key: str
+    ) -> TrustRecord:
+        """§5 — Record user approval for a worker (possibly first contact).
+
+        Used when the deployment ceremony approves a worker. Creates TrustRecord(approved)
+        so the registration endpoint will accept the worker. For new workers (no prior
+        record), this establishes the approved trust level.
+        """
+        key = public_key or ""
+        rec = TrustRecord(
+            worker_id=worker_id,
+            public_key=key,
+            event_type="user_approved",
+            trust_level=TrustLevel.APPROVED.value,
+            timestamp=time.time(),
+            reason="user_approved_via_ceremony",
+        )
+        self.write_record(rec)
+        return rec
+
+    def record_registration(self, worker_id: str) -> TrustRecord:
+        """§5 — Record that a worker was successfully registered."""
+        key = self.get_current_key(worker_id) or ""
+        rec = TrustRecord(
+            worker_id=worker_id,
+            public_key=key,
+            event_type="worker_registered",
+            trust_level=TrustLevel.REGISTERED.value,
+            timestamp=time.time(),
+            reason="registration_complete",
+        )
+        self.write_record(rec)
+        return rec
+
     def revoke_worker(self, worker_id: str) -> Optional[TrustRecord]:
         """Revoke trust for a worker."""
         key = self.get_current_key(worker_id) or ""

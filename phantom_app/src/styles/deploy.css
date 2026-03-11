@@ -122,6 +122,16 @@
   outline-offset: 2px;
 }
 
+.deploy-btn.secondary {
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.deploy-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
 /* ── Screen 4: Deployment Ceremony ───────────────────────────────────── */
 
 .ceremony-screen {

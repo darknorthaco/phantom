@@ -41,12 +41,16 @@ export function DeploymentCeremonyProvider({ children }: { children: ReactNode }
   );
 
   const applyPreScanResult = useCallback((result: DeploymentPreScanResult) => {
+    // §2 — Only pre-select workers with verified signatures. Unverified default unchecked.
+    const preSelected = result.discoveryFailed
+      ? []
+      : result.discoveredWorkers.filter((w) => w.signatureVerified);
     setState({
       discoveredWorkers: result.discoveredWorkers,
       discoveryLog: result.discoveryLog,
       discoveryFailed: result.discoveryFailed,
       controllerConfig: null,
-      workerPool: result.discoveryFailed ? [] : result.discoveredWorkers,
+      workerPool: preSelected,
     });
   }, []);
 

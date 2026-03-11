@@ -3,6 +3,20 @@ import type { DeploymentPreScanResult, WorkerSelectionForRegistration } from '..
 
 // Identity (Phase 1)
 export const getIdentity = () => invoke<Record<string, unknown>>('get_identity');
+
+// §1 Controller Selection Ceremony — persist placement params before deploy
+export const confirmControllerPlacement = (
+  host: string,
+  port: number,
+  deviceLabel: string,
+  identityFingerprint: string
+) =>
+  invoke<void>('confirm_controller_placement', {
+    host,
+    port,
+    deviceLabel,
+    identityFingerprint,
+  });
 export const signMessage = (message: string) => invoke<string>('sign_message', { message });
 export const verifySignature = (publicKeyB64: string, message: string, signatureB64: string) =>
   invoke<boolean>('verify_signature', { publicKeyB64, message, signatureB64 });

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import WizardWelcome from './components/WizardWelcome';
+import ControllerSelectionScreen from './components/ControllerSelectionScreen';
 import FrontPorchDeploy from './components/FrontPorchDeploy';
 import DeploymentCeremony from './components/DeploymentCeremony';
 import { DeploymentCeremonyProvider } from './state/DeploymentCeremonyContext';
@@ -20,7 +21,7 @@ import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
 
-type Phase = 'wizard' | 'front_porch' | 'deploying' | 'deployment_ceremony' | 'consent_toc' | 'toc';
+type Phase = 'wizard' | 'controller_selection' | 'front_porch' | 'deploying' | 'deployment_ceremony' | 'consent_toc' | 'toc';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('wizard');
@@ -56,7 +57,15 @@ export default function App() {
   }, [phase, checkHealth]);
 
   const handleWizardConsent = () => {
+    setPhase('controller_selection');
+  };
+
+  const handleControllerConfirm = () => {
     setPhase('front_porch');
+  };
+
+  const handleControllerCancel = () => {
+    setPhase('wizard');
   };
 
   const handlePreScanComplete = (result: DeploymentPreScanResult) => {
@@ -82,6 +91,16 @@ export default function App() {
   // Wizard Step 1: Welcome + Consent
   if (phase === 'wizard') {
     return <WizardWelcome onConsent={handleWizardConsent} />;
+  }
+
+  // §1 Pre-0: Controller Selection Ceremony (placement + identity)
+  if (phase === 'controller_selection') {
+    return (
+      <ControllerSelectionScreen
+        onConfirm={handleControllerConfirm}
+        onCancel={handleControllerCancel}
+      />
+    );
   }
 
   // Wizard Step 2: Deploy Phantom (pre-scan)

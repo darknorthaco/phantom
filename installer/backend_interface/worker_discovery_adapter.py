@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Worker Discovery Adapter
-Wraps installer/modules/worker_discovery.WorkerDiscovery for GUI use.
+Worker Discovery Adapter — §9 Canonical Discovery.
 
-The wizard MUST NOT implement its own scanning logic.
-This adapter delegates entirely to the existing WorkerDiscovery backend.
+Uses InstallerDiscoveryClient (UDP 8095, PHANTOM_DISCOVER_WORKERS,
+SignedManifest) for worker discovery. Converts results to the display format
+expected by the wizard GUI.
 """
 from __future__ import annotations
 
@@ -17,47 +17,43 @@ _installer_dir = Path(__file__).parent.parent
 if str(_installer_dir) not in sys.path:
     sys.path.insert(0, str(_installer_dir))
 
+from backend_interface.discovery_client import InstallerDiscoveryClient  # noqa: E402
 from modules.worker_discovery import WorkerDiscovery  # noqa: E402
 
 
 class WorkerDiscoveryAdapter:
-    """GUI adapter for the existing WorkerDiscovery backend.
-
-    All discovery calls are forwarded verbatim to WorkerDiscovery.
-    This class only adds display-friendly enrichment and Task Master
-    suitability checks on top of the raw backend results.
-    """
+    """§9 — GUI adapter using canonical UDP discovery (port 8095)."""
 
     # Minimum recommended VRAM (MB) for Task Master role.
-    # A value of 0 means VRAM is unknown — allowed with a warning.
     TASK_MASTER_MIN_VRAM_MB = 6_000
 
     def __init__(self):
-        self._backend = WorkerDiscovery()
+        self._udp_client = InstallerDiscoveryClient()
+        self._legacy = WorkerDiscovery()
 
     # ------------------------------------------------------------------ #
-    # Direct backend delegation
+    # Network helpers (from legacy for GUI compatibility)
     # ------------------------------------------------------------------ #
 
     def get_local_network(self):
-        """Delegate to backend get_local_network()."""
-        return self._backend.get_local_network()
+        """Delegate to legacy backend for network info."""
+        return self._legacy.get_local_network()
 
     def check_worker_port(self, ip: str, port: int = None) -> bool:
-        """Delegate to backend check_worker_port()."""
-        return self._backend.check_worker_port(ip, port)
+        """Delegate to legacy backend for port checks."""
+        return self._legacy.check_worker_port(ip, port)
 
     # ------------------------------------------------------------------ #
-    # Discovery modes (delegate to backend, then enrich)
+    # Discovery — §9 canonical UDP protocol
     # ------------------------------------------------------------------ #
 
     def discover_comprehensive(
         self, progress_cb: Callable[[str], None] = None
     ) -> List[Dict]:
-        """Run comprehensive discovery via backend.discover_workers_comprehensive()."""
+        """Run discovery via UDP 8095 (canonical §9 protocol)."""
         if progress_cb:
-            progress_cb("Starting comprehensive worker scan…")
-        workers = self._backend.discover_workers_comprehensive()
+            progress_cb("Discovering workers via UDP broadcast…")
+        workers = self._discover_udp(progress_cb)
         if progress_cb:
             progress_cb(f"Scan complete — {len(workers)} worker(s) found.")
         return self._enrich(workers)
@@ -65,24 +61,58 @@ class WorkerDiscoveryAdapter:
     def discover_manual(
         self, progress_cb: Callable[[str], None] = None
     ) -> List[Dict]:
-        """Run manual discovery via backend.discover_workers_manual()."""
+        """Run discovery via UDP 8095 (same protocol as comprehensive)."""
         if progress_cb:
-            progress_cb("Starting manual network scan (ping sweep)…")
-        workers = self._backend.discover_workers_manual()
+            progress_cb("Discovering workers via UDP broadcast…")
+        workers = self._discover_udp(progress_cb)
         if progress_cb:
             progress_cb(f"Scan complete — {len(workers)} worker(s) found.")
         return self._enrich(workers)
+
+    def _discover_udp(
+        self, progress_cb: Callable[[str], None] = None
+    ) -> List[Dict]:
+        """Run InstallerDiscoveryClient and convert to dict format."""
+        broadcast_addrs: List[str] = []
+        network = self._legacy.get_local_network()
+        if network is not None:
+            broadcast_addrs.append(str(network.broadcast_address))
+
+        udp_workers = self._udp_client.discover(
+            broadcast_addrs=broadcast_addrs or None,
+            include_localhost=True,
+        )
+
+        # Convert to dict format expected by _enrich
+        result: List[Dict] = []
+        for w in udp_workers:
+            gpu = w.gpu_info or {}
+            vram = gpu.get("memory_total") or gpu.get("vram") or gpu.get("vram_total_mb") or 0
+            result.append({
+                "worker_id": w.worker_id,
+                "ip": w.registration_host(),
+                "host": w.registration_host(),
+                "hostname": w.worker_id,
+                "port": w.port,
+                "available": True,  # We received a response
+                "gpu": gpu.get("name") or gpu.get("gpu") or "Unknown",
+                "gpu_info": gpu,
+                "vram_total_mb": vram,
+                "memory_total": vram,
+                "signature_verified": w.signature_verified,
+                "public_key_b64": w.public_key_b64,
+            })
+        return result
 
     # ------------------------------------------------------------------ #
     # Enrichment helpers
     # ------------------------------------------------------------------ #
 
     def _enrich(self, workers: List[Dict]) -> List[Dict]:
-        """Add display-friendly fields to raw backend worker dicts."""
+        """Add display-friendly fields to raw worker dicts."""
         enriched = []
         for raw in workers:
             w = dict(raw)
-            # Normalise VRAM field — backend may use different key names.
             vram_mb = (
                 raw.get("vram_total_mb")
                 or raw.get("memory_total")
@@ -102,10 +132,7 @@ class WorkerDiscoveryAdapter:
     # ------------------------------------------------------------------ #
 
     def is_suitable_task_master(self, worker: Dict) -> bool:
-        """Return True if the worker meets Task Master VRAM requirements.
-
-        Workers with unknown VRAM (0) are allowed with a warning.
-        """
+        """Return True if the worker meets Task Master VRAM requirements."""
         vram_mb = worker.get("vram_total_mb", 0)
         return vram_mb == 0 or vram_mb >= self.TASK_MASTER_MIN_VRAM_MB
 
