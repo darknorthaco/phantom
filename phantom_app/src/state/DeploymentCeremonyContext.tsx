@@ -16,7 +16,6 @@ import {
 import type {
   ControllerConfig,
   DeploymentCeremonyState,
-  DiscoveryLog,
   DiscoveredWorker,
 } from './deploymentState';
 import {

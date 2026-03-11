@@ -6,7 +6,7 @@
  */
 
 import { useDeploymentCeremony } from '../state/DeploymentCeremonyContext';
-import type { ControllerConfig, DiscoveredWorker } from '../state/deploymentState';
+import type { DiscoveredWorker } from '../state/deploymentState';
 
 function formatHardware(w: DiscoveredWorker): string {
   const g = w.gpuInfo as Record<string, unknown>;

@@ -30,20 +30,16 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
     applyPreScanResult(preScanResult);
   }, [preScanResult, applyPreScanResult]);
 
-  const {
-    discoveredWorkers,
-    discoveryFailed,
-    controllerConfig,
-    workerPool,
-  } = state;
+  const { discoveryFailed, controllerConfig, workerPool } = state;
 
   const showDiagnostics = discoveryFailed;
 
-  const tabs: { id: TabId; label: string; visible: boolean }[] = [
+  const allTabs: { id: TabId; label: string; visible: boolean }[] = [
     { id: 'controller', label: 'Controller', visible: !discoveryFailed },
     { id: 'workers', label: 'Workers', visible: !discoveryFailed },
     { id: 'diagnostics', label: 'Diagnostics', visible: showDiagnostics },
-  ].filter((t) => t.visible);
+  ];
+  const tabs = allTabs.filter((t) => t.visible) as { id: TabId; label: string; visible: boolean }[];
 
   const [activeTab, setActiveTab] = useState<TabId>(
     discoveryFailed ? 'diagnostics' : 'controller'
