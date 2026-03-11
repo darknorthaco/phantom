@@ -2,6 +2,8 @@ pub mod discovery;
 pub mod phantom_api;
 pub mod phantom_deployer;
 pub mod phantom_state;
+pub mod trust_store;
+pub mod worker_info;
 pub mod ws_client;
 pub mod transport;
 

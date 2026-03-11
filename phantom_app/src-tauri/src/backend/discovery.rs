@@ -1,7 +1,10 @@
 //! Phantom discovery: broadcast DISCOVER_WORKERS, workers self-identify with signed manifests.
 //! No host probing, ARP, or port scanning. Subnets from NIC enumeration only.
+//!
+//! §3 integration: incoming manifests are parsed as SignedManifest, signature is
+//! verified, and the `signature_verified` flag is set before returning results.
 
-use serde::Deserialize;
+use super::worker_info::{RawWireManifest, SignedManifest};
 use std::collections::HashSet;
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -12,25 +15,46 @@ pub const DISCOVERY_PORT: u16 = 8095;
 /// Discovery request sent via UDP broadcast.
 const DISCOVER_PAYLOAD: &[u8] = b"PHANTOM_DISCOVER_WORKERS";
 
-/// Worker manifest (self-identification response). Host may be 0.0.0.0; use
-/// source_ip (UDP response origin) for registration when so.
+/// Discovered worker manifest with source IP and verification status.
 #[derive(Debug, Clone)]
-pub struct WorkerManifest {
-    pub worker_id: String,
-    pub host: String,
+pub struct DiscoveredManifest {
+    pub manifest: SignedManifest,
+    /// Port from legacy manifests (kept for backward compat).
     pub port: u16,
-    pub gpu_info: serde_json::Value,
     /// IP the manifest was received from (UDP source).
     pub source_ip: String,
+    /// Whether the Ed25519 signature was verified.
+    pub signature_verified: bool,
+    /// Short hex fingerprint of the public key.
+    pub fingerprint: String,
 }
 
-impl WorkerManifest {
+impl DiscoveredManifest {
+    /// The host to use for registration — prefer manifest address, fall back to source IP.
     pub fn registration_host(&self) -> String {
-        if self.host == "0.0.0.0" || self.host.is_empty() {
+        if self.manifest.address == "0.0.0.0" || self.manifest.address.is_empty() {
             self.source_ip.clone()
         } else {
-            self.host.clone()
+            self.manifest.address.clone()
         }
+    }
+
+    /// Convenience accessor — worker_id.
+    pub fn worker_id(&self) -> &str {
+        &self.manifest.worker_id
+    }
+}
+
+// Backward-compat type alias used by phantom_deployer.
+pub type WorkerManifest = DiscoveredManifest;
+
+impl WorkerManifest {
+    // Legacy field accessors for backward compatibility with phantom_deployer.
+    pub fn host(&self) -> &str {
+        &self.manifest.address
+    }
+    pub fn gpu_info(&self) -> &serde_json::Value {
+        &self.manifest.capabilities
     }
 }
 
@@ -43,27 +67,40 @@ pub fn base_to_broadcast(base_ip: &str) -> Option<String> {
     Some(format!("{}.{}.{}.255", parts[0], parts[1], parts[2]))
 }
 
-#[derive(Deserialize)]
-struct RawManifest {
-    #[serde(rename = "type")]
-    msg_type: String,
-    worker_id: String,
-    host: String,
-    port: u16,
-    gpu_info: serde_json::Value,
+/// Parse a raw UDP payload into a DiscoveredManifest. Handles both legacy
+/// unsigned manifests and new SignedManifest format.
+fn parse_manifest(raw: &str, source_ip: String) -> Option<DiscoveredManifest> {
+    let wire: RawWireManifest = serde_json::from_str(raw).ok()?;
+    if wire.effective_msg_type() != "WORKER_MANIFEST" || wire.worker_id.is_empty() {
+        return None;
+    }
+    let port = wire.port;
+    let signed = wire.into_signed_manifest();
+    let signature_verified = signed.verify_signature();
+    let fingerprint = signed.fingerprint();
+
+    Some(DiscoveredManifest {
+        manifest: signed,
+        port,
+        source_ip,
+        signature_verified,
+        fingerprint,
+    })
 }
 
-/// Broadcast DISCOVER_WORKERS and collect manifests. Returns (manifest, source_ip) for each.
+/// Broadcast DISCOVER_WORKERS and collect manifests.
 fn broadcast_and_collect(
     broadcast_addr: &str,
     listen_timeout_ms: u64,
-) -> Vec<WorkerManifest> {
+) -> Vec<DiscoveredManifest> {
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
         Err(_) => return vec![],
     };
     socket.set_broadcast(true).ok();
-    socket.set_read_timeout(Some(Duration::from_millis(listen_timeout_ms))).ok();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
+        .ok();
 
     let target = format!("{}:{}", broadcast_addr, DISCOVERY_PORT);
     if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
@@ -71,22 +108,14 @@ fn broadcast_and_collect(
     }
 
     let mut manifests = Vec::new();
-    let mut buf = [0u8; 2048];
+    let mut buf = [0u8; 4096];
     loop {
         match socket.recv_from(&mut buf) {
             Ok((n, src)) => {
                 let source_ip = src.ip().to_string();
                 if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Ok(r) = serde_json::from_str::<RawManifest>(s) {
-                        if r.msg_type == "WORKER_MANIFEST" && !r.worker_id.is_empty() {
-                            manifests.push(WorkerManifest {
-                                worker_id: r.worker_id,
-                                host: r.host,
-                                port: r.port,
-                                gpu_info: r.gpu_info,
-                                source_ip,
-                            });
-                        }
+                    if let Some(dm) = parse_manifest(s, source_ip) {
+                        manifests.push(dm);
                     }
                 }
             }
@@ -97,12 +126,14 @@ fn broadcast_and_collect(
 }
 
 /// Send DISCOVER_WORKERS to unicast (e.g. 127.0.0.1 for local worker).
-fn unicast_and_collect(addr: &str, listen_timeout_ms: u64) -> Vec<WorkerManifest> {
+fn unicast_and_collect(addr: &str, listen_timeout_ms: u64) -> Vec<DiscoveredManifest> {
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    socket.set_read_timeout(Some(Duration::from_millis(listen_timeout_ms))).ok();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
+        .ok();
 
     let target = format!("{}:{}", addr, DISCOVERY_PORT);
     if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
@@ -110,22 +141,14 @@ fn unicast_and_collect(addr: &str, listen_timeout_ms: u64) -> Vec<WorkerManifest
     }
 
     let mut manifests = Vec::new();
-    let mut buf = [0u8; 2048];
+    let mut buf = [0u8; 4096];
     loop {
         match socket.recv_from(&mut buf) {
             Ok((n, src)) => {
                 let source_ip = src.ip().to_string();
                 if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Ok(r) = serde_json::from_str::<RawManifest>(s) {
-                        if r.msg_type == "WORKER_MANIFEST" && !r.worker_id.is_empty() {
-                            manifests.push(WorkerManifest {
-                                worker_id: r.worker_id,
-                                host: r.host,
-                                port: r.port,
-                                gpu_info: r.gpu_info,
-                                source_ip,
-                            });
-                        }
+                    if let Some(dm) = parse_manifest(s, source_ip) {
+                        manifests.push(dm);
                     }
                 }
             }
@@ -136,21 +159,21 @@ fn unicast_and_collect(addr: &str, listen_timeout_ms: u64) -> Vec<WorkerManifest
 }
 
 /// Run discovery: unicast to localhost, then broadcast on each subnet.
-/// Deduplicate by worker_id.
-pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<WorkerManifest> {
+/// Deduplicate by worker_id.  Each manifest has `signature_verified` set.
+pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<DiscoveredManifest> {
     const TIMEOUT_MS: u64 = 1500;
     let mut seen = HashSet::new();
     let mut all = Vec::new();
 
     for m in unicast_and_collect("127.0.0.1", TIMEOUT_MS) {
-        if seen.insert(m.worker_id.clone()) {
+        if seen.insert(m.manifest.worker_id.clone()) {
             all.push(m);
         }
     }
 
     for addr in broadcast_addrs {
         for m in broadcast_and_collect(addr, TIMEOUT_MS) {
-            if seen.insert(m.worker_id.clone()) {
+            if seen.insert(m.manifest.worker_id.clone()) {
                 all.push(m);
             }
         }
