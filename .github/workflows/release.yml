@@ -34,19 +34,22 @@ jobs:
         run: npm install
         working-directory: phantom_app
 
-      - name: Build frontend
-        run: npm run build && node scripts/prepare-resources.mjs
-        working-directory: phantom_app
+      - name: Build Phantom NSIS installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: phantom_app
+          args: --bundles nsis
 
-      - name: Build Phantom.exe (release mode)
-        run: cargo build --release
-        working-directory: phantom_app/src-tauri
-
-      - name: Upload Phantom.exe artifact
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: phantom-exe
-          path: phantom_app/src-tauri/target/release/phantom_app.exe
+          path: |
+            phantom_app/src-tauri/target/release/bundle/**/*-setup.exe
+          if-no-files-found: warn
 
   publish:
     name: Publish Release
@@ -57,7 +60,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download built Phantom.exe
+      - name: Download built installer
         uses: actions/download-artifact@v4
         with:
           name: phantom-exe
@@ -66,6 +69,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ./dist/phantom_app.exe
+          files: ./dist/**/*-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

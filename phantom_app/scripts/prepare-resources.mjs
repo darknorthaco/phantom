@@ -27,6 +27,7 @@ const INCLUDE_DIRS = [
   'phantom_protocol',
   'phantom_protocol_schemas',
   'linux-worker',
+  'windows-worker',
 ];
 
 // Top-level files to include

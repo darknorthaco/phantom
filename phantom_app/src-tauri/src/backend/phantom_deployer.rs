@@ -424,81 +424,107 @@ impl PhantomDeployer {
     async fn open_ports(&self) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
-            // Try ufw first (Ubuntu/Debian)
-            let ufw = Command::new("ufw")
-                .args(["allow", "8080/tcp"])
-                .output()
-                .await;
+            // Ports: 8080/tcp (controller), 8090/tcp (worker), 8095/udp (discovery)
+            let port_rules: &[(&str, &str)] = &[
+                ("8080", "tcp"),
+                ("8090", "tcp"),
+                ("8095", "udp"),
+            ];
 
-            match ufw {
-                Ok(out) if out.status.success() => {
-                    log::info!("ufw: allowed port 8080/tcp");
-                    return Ok(());
+            // Try ufw first (Ubuntu/Debian)
+            let ufw_available = {
+                let ufw = Command::new("ufw")
+                    .args(["allow", "8080/tcp"])
+                    .output()
+                    .await;
+                matches!(ufw, Ok(ref o) if o.status.success())
+            };
+
+            if ufw_available {
+                // ufw worked for 8080/tcp; open the remaining ports
+                for &(port, proto) in &port_rules[1..] {
+                    let rule = format!("{port}/{proto}");
+                    let _ = Command::new("ufw")
+                        .args(["allow", &rule])
+                        .output()
+                        .await;
                 }
-                _ => {
-                    log::info!("ufw not available, trying iptables");
-                }
+                log::info!("ufw: allowed ports 8080/tcp, 8090/tcp, 8095/udp");
+                return Ok(());
             }
 
+            log::info!("ufw not available, trying iptables");
+
             // Fall back to iptables
-            let ipt = Command::new("iptables")
-                .args(["-C", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"])
-                .output()
-                .await;
-
-            let already_open = matches!(ipt, Ok(ref o) if o.status.success());
-
-            if !already_open {
-                let add = Command::new("iptables")
-                    .args(["-A", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"])
+            for &(port, proto) in port_rules {
+                let ipt = Command::new("iptables")
+                    .args(["-C", "INPUT", "-p", proto, "--dport", port, "-j", "ACCEPT"])
                     .output()
                     .await;
 
-                match add {
-                    Ok(out) if out.status.success() => {
-                        log::info!("iptables: opened port 8080/tcp");
+                let already_open = matches!(ipt, Ok(ref o) if o.status.success());
+
+                if !already_open {
+                    let add = Command::new("iptables")
+                        .args(["-A", "INPUT", "-p", proto, "--dport", port, "-j", "ACCEPT"])
+                        .output()
+                        .await;
+
+                    match add {
+                        Ok(out) if out.status.success() => {
+                            log::info!("iptables: opened port {port}/{proto}");
+                        }
+                        Ok(out) => {
+                            log::warn!(
+                                "iptables failed for {port}/{proto}: {}",
+                                String::from_utf8_lossy(&out.stderr)
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("iptables not available: {e}");
+                        }
                     }
-                    Ok(out) => {
-                        log::warn!(
-                            "iptables failed: {}",
-                            String::from_utf8_lossy(&out.stderr)
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!("iptables not available: {e}");
-                    }
+                } else {
+                    log::info!("Port {port}/{proto} already open in iptables");
                 }
-            } else {
-                log::info!("Port 8080/tcp already open in iptables");
             }
         }
 
         #[cfg(target_os = "windows")]
         {
-            let result = Command::new("netsh")
-                .args([
-                    "advfirewall", "firewall", "add", "rule",
-                    "name=PhantomController",
-                    "dir=in",
-                    "action=allow",
-                    "protocol=TCP",
-                    "localport=8080",
-                ])
-                .output()
-                .await;
+            // Ports: 8080/tcp (controller), 8090/tcp (worker), 8095/udp (discovery)
+            let rules: &[(&str, &str, &str)] = &[
+                ("PhantomController", "TCP", "8080"),
+                ("PhantomWorker",     "TCP", "8090"),
+                ("PhantomDiscovery",  "UDP", "8095"),
+            ];
 
-            match result {
-                Ok(out) if out.status.success() => {
-                    log::info!("Windows firewall: allowed port 8080/TCP");
-                }
-                Ok(out) => {
-                    log::warn!(
-                        "netsh firewall rule failed: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    );
-                }
-                Err(e) => {
-                    log::warn!("netsh not available: {e}");
+            for &(name, proto, port) in rules {
+                let result = Command::new("netsh")
+                    .args([
+                        "advfirewall", "firewall", "add", "rule",
+                        &format!("name={name}"),
+                        "dir=in",
+                        "action=allow",
+                        &format!("protocol={proto}"),
+                        &format!("localport={port}"),
+                    ])
+                    .output()
+                    .await;
+
+                match result {
+                    Ok(out) if out.status.success() => {
+                        log::info!("Windows firewall: allowed port {port}/{proto} ({name})");
+                    }
+                    Ok(out) => {
+                        log::warn!(
+                            "netsh firewall rule failed for {name}: {}",
+                            String::from_utf8_lossy(&out.stderr)
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("netsh not available: {e}");
+                    }
                 }
             }
         }
