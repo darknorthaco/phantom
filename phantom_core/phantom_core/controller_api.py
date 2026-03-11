@@ -16,6 +16,7 @@ from phantom_core.orchestrator import (
     WorkerStatus as OrchestratorWorkerStatus,
 )
 from phantom_core.state import StateManager
+from phantom_core.config_schema import ConfigSchema, locate_phantom_config
 import httpx
 import logging
 import os
@@ -200,7 +201,35 @@ async def startup_event():
 
     # Initialize security manager
     if SECURITY_AVAILABLE:
-        security_level = os.getenv("PHANTOM_SECURITY", "basic")
+        # Prefer phantom_config.json (written at deploy Step 4.5).
+        # Fall back to PHANTOM_SECURITY env var for dev / legacy environments,
+        # but log a deprecation warning so operators know to migrate.
+        _config_path = locate_phantom_config()
+        if _config_path and _config_path.exists():
+            try:
+                _phantom_cfg = ConfigSchema.load(_config_path)
+                security_level = _phantom_cfg.controller.security
+                logger.info(
+                    "🔒 Security level read from phantom_config.json: %s",
+                    security_level,
+                )
+            except Exception as _cfg_err:
+                logger.warning(
+                    "⚠️  Failed to read security level from phantom_config.json "
+                    "(%s); falling back to PHANTOM_SECURITY env var.",
+                    _cfg_err,
+                )
+                security_level = os.getenv("PHANTOM_SECURITY", "basic")
+        else:
+            security_level = os.getenv("PHANTOM_SECURITY", "basic")
+            if security_level != "basic":
+                logger.warning(
+                    "⚠️  phantom_config.json not found at %s; "
+                    "using PHANTOM_SECURITY env var ('%s'). "
+                    "Run deploy Step 4.5 (ConfigBootstrap) to create the config file.",
+                    _config_path,
+                    security_level,
+                )
         if security_level != "disabled":
             security_manager = SecurityManager(security_level)
             await security_manager.initialize()
