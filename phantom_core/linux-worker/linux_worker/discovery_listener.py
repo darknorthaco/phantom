@@ -29,13 +29,17 @@ _signer = None  # type: Optional[object]
 def _init_signer(identity_dir: Optional[str] = None) -> Optional[object]:
     """Load or generate a per-worker Ed25519 keypair.
 
-    Returns a ManifestSigner or None if the cryptography library is unavailable.
+    Returns a ManifestSigner, or None if the cryptography library is absent.
+    A missing cryptography library is logged at WARNING level since it means
+    manifests will be unsigned and unverifiable by receivers.
     """
     try:
         from phantom_core.discovery import ManifestSigner
     except ImportError:
-        # Graceful degradation: worker can still respond unsigned
-        logger.info("cryptography not available — manifests will be unsigned")
+        logger.warning(
+            "cryptography library not available — manifests will be unsigned. "
+            "Install with: pip install 'cryptography>=41.0.0'"
+        )
         return None
 
     key_dir = (

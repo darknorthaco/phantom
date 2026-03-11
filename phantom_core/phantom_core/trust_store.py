@@ -84,7 +84,9 @@ class TrustStore:
     """
 
     def __init__(self, state_dir: str):
-        self._dir = Path(state_dir)
+        self._dir = Path(state_dir).resolve()
+        if not self._dir.is_absolute():
+            raise ValueError(f"state_dir must resolve to an absolute path: {state_dir}")
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "trust_store.jsonl"
         self._lock = threading.Lock()
@@ -99,14 +101,21 @@ class TrustStore:
             return
         try:
             with open(self._path, "r", encoding="utf-8") as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
-                    rec = TrustRecord.from_dict(json.loads(line))
-                    self._records.setdefault(rec.worker_id, []).append(rec)
-        except Exception as exc:
-            logger.warning("TrustStore load error: %s", exc)
+                    try:
+                        rec = TrustRecord.from_dict(json.loads(line))
+                        self._records.setdefault(rec.worker_id, []).append(rec)
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        logger.warning(
+                            "TrustStore: skipping corrupt record on line %d: %s",
+                            line_num,
+                            type(exc).__name__,
+                        )
+        except OSError as exc:
+            logger.warning("TrustStore load error: %s", type(exc).__name__)
 
     def _append_to_file(self, record: TrustRecord) -> None:
         try:
@@ -118,7 +127,7 @@ class TrustStore:
                     os.fsync(f.fileno())
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except Exception as exc:
+        except OSError as exc:
             logger.error("TrustStore write error: %s", type(exc).__name__)
 
     # ---- public API --------------------------------------------------

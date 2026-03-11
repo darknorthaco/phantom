@@ -12,6 +12,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
@@ -22,6 +23,13 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Maximum age (seconds) for a signed manifest before it is considered stale.
+# Receivers reject manifests older than this to limit replay window.
+MAX_MANIFEST_AGE_SECONDS: float = 300.0
+
+# Clock-skew tolerance: manifests may be this many seconds into the future.
+MAX_CLOCK_SKEW_SECONDS: float = 60.0
 
 # ---------------------------------------------------------------------------
 # Canonical Payload
@@ -193,9 +201,13 @@ class ManifestVerifier:
         try:
             pub_bytes = base64.b64decode(manifest.public_key_b64)
             sig_bytes = base64.b64decode(manifest.signature_b64)
-        except Exception:
+        except (ValueError, TypeError) as exc:
             manifest.signature_verified = False
-            logger.warning("Manifest from %s: base64 decode failed", manifest.worker_id)
+            logger.warning(
+                "Manifest from %s: base64 decode failed: %s",
+                manifest.worker_id,
+                type(exc).__name__,
+            )
             return False
 
         try:
@@ -204,10 +216,16 @@ class ManifestVerifier:
             pub_key.verify(sig_bytes, payload)
             manifest.signature_verified = True
             return True
-        except Exception:
+        except InvalidSignature:
+            manifest.signature_verified = False
+            logger.warning("Manifest from %s: invalid signature", manifest.worker_id)
+            return False
+        except (ValueError, TypeError) as exc:
             manifest.signature_verified = False
             logger.warning(
-                "Manifest from %s: signature verification failed", manifest.worker_id
+                "Manifest from %s: bad key or signature format: %s",
+                manifest.worker_id,
+                type(exc).__name__,
             )
             return False
 
@@ -217,6 +235,10 @@ def parse_and_verify(raw_json: str) -> Optional[SignedManifest]:
 
     Returns the manifest with signature_verified set (True/False/None).
     Returns None if JSON is unparseable or not a WORKER_MANIFEST.
+
+    Timestamp freshness is enforced for signed manifests: manifests older
+    than ``MAX_MANIFEST_AGE_SECONDS`` or more than ``MAX_CLOCK_SKEW_SECONDS``
+    in the future are rejected.
     """
     try:
         data = json.loads(raw_json)
@@ -232,5 +254,23 @@ def parse_and_verify(raw_json: str) -> Optional[SignedManifest]:
         return None
 
     manifest = SignedManifest.from_dict(data)
+
+    # Timestamp freshness (only enforced when a signed_at value is present)
+    if manifest.signed_at > 0:
+        now = time.time()
+        age = now - manifest.signed_at
+        if age > MAX_MANIFEST_AGE_SECONDS:
+            logger.warning("Manifest from %s rejected: too old (%.0fs)", worker_id, age)
+            manifest.signature_verified = False
+            return manifest
+        if age < -MAX_CLOCK_SKEW_SECONDS:
+            logger.warning(
+                "Manifest from %s rejected: timestamp in future (%.0fs)",
+                worker_id,
+                abs(age),
+            )
+            manifest.signature_verified = False
+            return manifest
+
     ManifestVerifier.verify(manifest)
     return manifest
