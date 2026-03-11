@@ -16,7 +16,10 @@ import threading
 import time
 
 # Import GPU detection and plugins
-from gpu.gpu_info_linux import GPUDetector
+from .gpu.gpu_info_linux import GPUDetector
+
+# plugins/ lives at the linux-worker/ root (one level above this package),
+# so it is reachable as a top-level package via PYTHONPATH / sys.path.
 from plugins.plugin_manager import PluginManager
 
 from .discovery_listener import run_discovery_listener
