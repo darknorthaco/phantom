@@ -4,6 +4,7 @@
 //! §3 integration: incoming manifests are parsed as SignedManifest, signature is
 //! verified, and the `signature_verified` flag is set before returning results.
 
+use super::discovery_log::DiscoveryLogBuilder;
 use super::worker_info::{RawWireManifest, SignedManifest};
 use std::collections::HashSet;
 use std::net::UdpSocket;
@@ -179,4 +180,158 @@ pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<DiscoveredManifest> {
         }
     }
     all
+}
+
+/// Unicast discovery with log building.
+fn unicast_and_collect_with_log(
+    addr: &str,
+    listen_timeout_ms: u64,
+    log: &mut DiscoveryLogBuilder,
+) -> Vec<DiscoveredManifest> {
+    let socket = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(e) => {
+            log.push_raw(&format!("unicast bind error: {e}"));
+            return vec![];
+        }
+    };
+    socket
+        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
+        .ok();
+
+    let target = format!("{}:{}", addr, DISCOVERY_PORT);
+    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
+        log.push_raw(&format!("unicast send failed to {target}"));
+        return vec![];
+    }
+    log.inc_packets_sent();
+    log.push_raw(&format!("Sent DISCOVER_WORKERS to {target}"));
+
+    let mut manifests = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((n, src)) => {
+                let source_ip = src.ip().to_string();
+                let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
+                log.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
+                if let Ok(s) = std::str::from_utf8(&buf[..n]) {
+                    if let Some(dm) = parse_manifest(s, source_ip) {
+                        log.inc_responses_received(dm.signature_verified);
+                        log.push_raw(&format!(
+                            "  worker {} {}:{} sig={}",
+                            dm.manifest.worker_id,
+                            dm.registration_host(),
+                            dm.port,
+                            dm.signature_verified
+                        ));
+                        manifests.push(dm);
+                    } else {
+                        log.inc_manifest_error();
+                        log.push_raw(&format!("  parse failed: {}", raw.chars().take(80).collect::<String>()));
+                    }
+                } else {
+                    log.inc_manifest_error();
+                    log.push_raw("  invalid UTF-8");
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    manifests
+}
+
+/// Broadcast discovery with log building.
+fn broadcast_and_collect_with_log(
+    broadcast_addr: &str,
+    listen_timeout_ms: u64,
+    log: &mut DiscoveryLogBuilder,
+) -> Vec<DiscoveredManifest> {
+    let socket = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(e) => {
+            log.push_raw(&format!("broadcast bind error: {e}"));
+            return vec![];
+        }
+    };
+    socket.set_broadcast(true).ok();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
+        .ok();
+
+    let target = format!("{}:{}", broadcast_addr, DISCOVERY_PORT);
+    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
+        log.push_raw(&format!("broadcast send failed to {target}"));
+        return vec![];
+    }
+    log.inc_packets_sent();
+    log.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
+
+    let mut manifests = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((n, src)) => {
+                let source_ip = src.ip().to_string();
+                let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
+                log.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
+                if let Ok(s) = std::str::from_utf8(&buf[..n]) {
+                    if let Some(dm) = parse_manifest(s, source_ip) {
+                        log.inc_responses_received(dm.signature_verified);
+                        log.push_raw(&format!(
+                            "  worker {} {}:{} sig={}",
+                            dm.manifest.worker_id,
+                            dm.registration_host(),
+                            dm.port,
+                            dm.signature_verified
+                        ));
+                        manifests.push(dm);
+                    } else {
+                        log.inc_manifest_error();
+                        log.push_raw(&format!("  parse failed: {}", raw.chars().take(80).collect::<String>()));
+                    }
+                } else {
+                    log.inc_manifest_error();
+                    log.push_raw("  invalid UTF-8");
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    manifests
+}
+
+/// Run discovery with structured log. Returns (manifests, log).
+/// Use for deployment ceremony when diagnostics may be needed.
+pub fn discover_workers_with_log(
+    broadcast_addrs: &[String],
+) -> (Vec<DiscoveredManifest>, super::discovery_log::DiscoveryLog) {
+    const TIMEOUT_MS: u64 = 1500;
+
+    let mut interfaces: Vec<String> = vec!["127.0.0.1".to_string()];
+    interfaces.extend(broadcast_addrs.iter().cloned());
+
+    let mut log = DiscoveryLogBuilder::new(interfaces, DISCOVERY_PORT);
+    let mut seen = HashSet::new();
+    let mut all = Vec::new();
+
+    log.push_raw("Unicast to 127.0.0.1…");
+    for m in unicast_and_collect_with_log("127.0.0.1", TIMEOUT_MS, &mut log) {
+        if seen.insert(m.manifest.worker_id.clone()) {
+            all.push(m);
+        }
+    }
+
+    for addr in broadcast_addrs {
+        log.push_raw(&format!("Broadcast to {addr}…"));
+        for m in broadcast_and_collect_with_log(addr, TIMEOUT_MS, &mut log) {
+            if seen.insert(m.manifest.worker_id.clone()) {
+                all.push(m);
+            }
+        }
+    }
+
+    log.push_raw(&format!("Done: {} worker(s) discovered", all.len()));
+    let discovery_log = log.build(all.len());
+    (all, discovery_log)
 }

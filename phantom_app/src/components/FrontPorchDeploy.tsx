@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { deployPhantom } from '../utils/tauri';
+import { runDeploymentPreScan } from '../utils/tauri';
+import type { DeploymentPreScanResult } from '../state/deploymentState';
 import '../styles/deploy.css';
 
 interface DeployProgress {
@@ -11,10 +12,11 @@ interface DeployProgress {
 }
 
 interface Props {
-  onDeployComplete: () => void;
+  /** Called when pre-scan completes; transitions to deployment ceremony. */
+  onPreScanComplete: (result: DeploymentPreScanResult) => void;
 }
 
-export default function FrontPorchDeploy({ onDeployComplete }: Props) {
+export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
   const [deploying, setDeploying] = useState(false);
   const [progress, setProgress] = useState<DeployProgress | null>(null);
   const [scanLog, setScanLog] = useState<string[]>([]);
@@ -26,9 +28,6 @@ export default function FrontPorchDeploy({ onDeployComplete }: Props) {
 
     listen<DeployProgress>('deploy-progress', (event) => {
       setProgress(event.payload);
-      if (event.payload.fraction >= 1.0) {
-        setTimeout(onDeployComplete, 1200);
-      }
       if (event.payload.label !== 'Scanning LAN' && event.payload.label !== 'Starting local worker') {
         setScanLog([]);
       }
@@ -46,7 +45,7 @@ export default function FrontPorchDeploy({ onDeployComplete }: Props) {
       unlistenProgress?.();
       unlistenScan?.();
     };
-  }, [onDeployComplete]);
+  }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -56,9 +55,10 @@ export default function FrontPorchDeploy({ onDeployComplete }: Props) {
     setDeploying(true);
     setScanLog([]);
     try {
-      await deployPhantom();
+      const result = await runDeploymentPreScan();
+      onPreScanComplete(result);
     } catch (err) {
-      console.error('Deploy failed:', err);
+      console.error('Pre-scan failed:', err);
       setDeploying(false);
     }
   };

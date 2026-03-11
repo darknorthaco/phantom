@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { DeploymentPreScanResult, WorkerSelectionForRegistration } from '../state/deploymentState';
 
 // Identity (Phase 1)
 export const getIdentity = () => invoke<Record<string, unknown>>('get_identity');
@@ -26,6 +27,19 @@ export const getSystemMetrics = () => invoke<Record<string, unknown>>('get_syste
 
 // Integrity (Phase 7)
 export const checkIntegrity = () => invoke<Record<string, unknown>>('check_integrity');
+
+// Deployment ceremony (Phase 2 — phased deploy flow)
+export const runDeploymentPreScan = () =>
+  invoke<DeploymentPreScanResult>('run_deployment_pre_scan');
+
+export const completeDeploymentWithSelection = (
+  workerPool: WorkerSelectionForRegistration[],
+  runControllerLlm: boolean
+) =>
+  invoke<void>('complete_deployment_with_selection', {
+    workerPool,
+    runControllerLlm,
+  });
 
 // Original commands
 export const getDeploymentStatus = () => invoke<string>('get_deployment_status');

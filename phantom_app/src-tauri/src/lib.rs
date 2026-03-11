@@ -2,7 +2,11 @@ mod backend;
 mod security;
 
 use backend::phantom_api::PhantomApiClient;
-use backend::phantom_deployer::PhantomDeployer;
+use backend::phantom_deployer::{
+    PhantomDeployer,
+    DeploymentPreScanResult,
+    CompleteDeploymentRequest,
+};
 use backend::phantom_state::{AppPhase, AppState, DeploymentProgress, PhantomMetrics};
 use security::audit_logger::AuditLogger;
 use security::identity_manager::IdentityManager;
@@ -270,6 +274,78 @@ async fn get_deployment_status(
     }
 }
 
+/// Run steps 0–9 + discovery (no registration). Returns result for deployment ceremony.
+#[tauri::command]
+async fn run_deployment_pre_scan(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<DeploymentPreScanResult, String> {
+    {
+        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
+        *phase = AppPhase::Deploying;
+    }
+
+    state
+        .audit
+        .log_event("deployment_pre_scan_started", serde_json::json!({}))
+        .await
+        .ok();
+
+    let engine_source = find_engine_source(&app);
+    let phantom_root = state.app.phantom_root.clone();
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+
+    let result = deployer.run_pre_scan_deployment().await?;
+
+    let _ = app.emit("deploy-discovery-result", &result);
+
+    Ok(result)
+}
+
+/// Register selected workers and complete deployment (step 11). Call after ceremony.
+#[tauri::command]
+async fn complete_deployment_with_selection(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    request: CompleteDeploymentRequest,
+) -> Result<(), String> {
+    let engine_source = find_engine_source(&app);
+    let phantom_root = state.app.phantom_root.clone();
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+
+    deployer
+        .complete_deployment_with_selection(
+            request.worker_pool,
+            request.run_controller_llm,
+        )
+        .await?;
+
+    let steps = PhantomDeployer::steps();
+    let total = steps.len();
+    let _ = app.emit(
+        "deploy-progress",
+        &DeploymentProgress {
+            step: total,
+            total_steps: total,
+            label: "Deployment complete".to_string(),
+            fraction: 1.0,
+        },
+    );
+
+    state
+        .audit
+        .log_event("deployment_complete", serde_json::json!({}))
+        .await
+        .ok();
+
+    {
+        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
+        *phase = AppPhase::Deployed;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn deploy_phantom(
     app: tauri::AppHandle,
@@ -473,7 +549,9 @@ pub fn run() {
             set_execution_mode, load_llm_config,
             get_system_metrics,
             check_integrity,
-            get_deployment_status, deploy_phantom,
+            get_deployment_status,
+            run_deployment_pre_scan, complete_deployment_with_selection,
+            deploy_phantom,
             get_phantom_health, get_workers, get_stats,
             submit_task, scan_and_register_workers,
         ])

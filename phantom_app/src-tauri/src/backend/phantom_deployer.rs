@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use super::discovery::{self, base_to_broadcast};
+use super::discovery::{self, base_to_broadcast, discover_workers_with_log};
+use super::discovery_log::DiscoveryLog;
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -10,6 +11,47 @@ pub struct DeployStep {
     pub index: usize,
     pub label: String,
     pub status: String,
+}
+
+/// Worker representation for deployment ceremony (frontend display).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredWorkerForCeremony {
+    pub worker_id: String,
+    pub host: String,
+    pub port: u16,
+    pub gpu_info: serde_json::Value,
+    pub source_ip: String,
+    pub signature_verified: bool,
+    pub fingerprint: String,
+}
+
+/// Result of pre-scan deployment (steps 0–9 + discovery, no registration).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentPreScanResult {
+    pub discovered_workers: Vec<DiscoveredWorkerForCeremony>,
+    pub discovery_log: DiscoveryLog,
+    /// True when worker_count == 0; blocks progression to TOC.
+    pub discovery_failed: bool,
+}
+
+/// Worker selection for registration (from frontend).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerSelectionForRegistration {
+    pub worker_id: String,
+    pub host: String,
+    pub port: u16,
+    pub gpu_info: serde_json::Value,
+}
+
+/// Request payload for complete_deployment_with_selection (camelCase for frontend).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompleteDeploymentRequest {
+    pub worker_pool: Vec<WorkerSelectionForRegistration>,
+    pub run_controller_llm: bool,
 }
 
 pub struct PhantomDeployer {
@@ -35,6 +77,18 @@ impl PhantomDeployer {
     fn emit_scan_log(&self, line: &str) {
         if let Some(ref app) = self.scan_log_emitter {
             let _ = app.emit("scan-log", line);
+        }
+    }
+
+    fn emit_deploy_progress(&self, step: usize, total: usize, label: &str, fraction: f64) {
+        if let Some(ref app) = self.scan_log_emitter {
+            let progress = super::phantom_state::DeploymentProgress {
+                step,
+                total_steps: total,
+                label: label.to_string(),
+                fraction,
+            };
+            let _ = app.emit("deploy-progress", &progress);
         }
     }
 
@@ -605,6 +659,114 @@ impl PhantomDeployer {
 
         self.emit_scan_log(&format!("Done: {registered} worker(s) registered"));
         log::info!("Discovery complete: {registered} worker(s) registered");
+        Ok(())
+    }
+
+    /// Run steps 0–9 plus discovery (no registration). For deployment ceremony.
+    /// Returns discovered workers and structured log; discovery_failed when worker_count == 0.
+    pub async fn run_pre_scan_deployment(&self) -> Result<DeploymentPreScanResult, String> {
+        const TOTAL_STEPS: usize = 12;
+
+        for i in 0..=9 {
+            let label = Self::steps().get(i).copied().unwrap_or("…");
+            self.emit_deploy_progress(i, TOTAL_STEPS, label, (i as f64) / (TOTAL_STEPS as f64));
+            self.run_step(i).await?;
+        }
+
+        self.emit_deploy_progress(10, TOTAL_STEPS, "Scanning LAN", 10_f64 / TOTAL_STEPS as f64);
+
+        let base_ips = local_ip_bases();
+        let broadcast_addrs: Vec<String> = base_ips
+            .iter()
+            .filter_map(|b| base_to_broadcast(b))
+            .collect();
+
+        self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
+        self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
+        for addr in &broadcast_addrs {
+            self.emit_scan_log(&format!("Broadcasting DISCOVER_WORKERS on {addr}/24…"));
+        }
+        self.emit_scan_log("Waiting for worker manifests…");
+
+        let addrs = broadcast_addrs.clone();
+        let (manifests, discovery_log) = tokio::task::spawn_blocking(move || discover_workers_with_log(&addrs))
+            .await
+            .map_err(|e| format!("Discovery task panicked: {e}"))?;
+
+        self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
+
+        let discovered_workers: Vec<DiscoveredWorkerForCeremony> = manifests
+            .iter()
+            .map(|m| DiscoveredWorkerForCeremony {
+                worker_id: m.manifest.worker_id.clone(),
+                host: m.registration_host(),
+                port: m.port,
+                gpu_info: m.manifest.capabilities.clone(),
+                source_ip: m.source_ip.clone(),
+                signature_verified: m.signature_verified,
+                fingerprint: m.fingerprint.clone(),
+            })
+            .collect();
+
+        let discovery_failed = discovery_log.worker_count == 0;
+
+        Ok(DeploymentPreScanResult {
+            discovered_workers,
+            discovery_log,
+            discovery_failed,
+        })
+    }
+
+    /// Register selected workers and run step 11 (load execution modes).
+    /// Persists controller and LLM config from ceremony choices.
+    pub async fn complete_deployment_with_selection(
+        &self,
+        worker_pool: Vec<WorkerSelectionForRegistration>,
+        run_controller_llm: bool,
+    ) -> Result<(), String> {
+        let controller = PhantomApiClient::new("http://127.0.0.1:8080");
+
+        for w in &worker_pool {
+            let req = RegisterWorkerRequest {
+                worker_id: w.worker_id.clone(),
+                host: w.host.clone(),
+                port: w.port,
+                gpu_info: w.gpu_info.clone(),
+                status: "active".to_string(),
+            };
+            if let Err(e) = controller.register_worker(&req).await {
+                log::warn!("Failed to register worker {}: {e}", w.worker_id);
+            }
+        }
+
+        // Ensure llm_config exists (load_execution_modes creates it), then persist run_controller_llm
+        self.load_execution_modes().await?;
+
+        let llm_config_path = self.phantom_root.join("llm_config.json");
+        if llm_config_path.exists() {
+            let content = tokio::fs::read_to_string(&llm_config_path)
+                .await
+                .map_err(|e| format!("Failed to read llm_config.json: {e}"))?;
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = cfg.as_object_mut() {
+                    obj.insert(
+                        "run_controller_llm".to_string(),
+                        serde_json::Value::Bool(run_controller_llm),
+                    );
+                }
+                let tmp = self.phantom_root.join("llm_config.json.tmp");
+                tokio::fs::write(
+                    &tmp,
+                    serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?,
+                )
+                .await
+                .map_err(|e| format!("Failed to write llm_config.json.tmp: {e}"))?;
+                tokio::fs::rename(&tmp, &llm_config_path)
+                    .await
+                    .map_err(|e| format!("Failed to update llm_config.json: {e}"))?;
+            }
+        }
+
         Ok(())
     }
 }

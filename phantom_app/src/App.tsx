@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import WizardWelcome from './components/WizardWelcome';
 import FrontPorchDeploy from './components/FrontPorchDeploy';
+import DeploymentCeremony from './components/DeploymentCeremony';
+import { DeploymentCeremonyProvider } from './state/DeploymentCeremonyContext';
+import type { DeploymentPreScanResult } from './state/deploymentState';
 import ConsentModal from './components/ConsentModal';
 import MetricsBar from './components/MetricsBar';
 import SidebarNavigator from './components/SidebarNavigator';
@@ -17,10 +20,11 @@ import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
 
-type Phase = 'wizard' | 'front_porch' | 'deploying' | 'consent_toc' | 'toc';
+type Phase = 'wizard' | 'front_porch' | 'deploying' | 'deployment_ceremony' | 'consent_toc' | 'toc';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('wizard');
+  const [preScanResult, setPreScanResult] = useState<DeploymentPreScanResult | null>(null);
   const [activeView, setActiveView] = useState('console');
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
 
@@ -55,9 +59,19 @@ export default function App() {
     setPhase('front_porch');
   };
 
-  const handleDeployComplete = () => {
+  const handlePreScanComplete = (result: DeploymentPreScanResult) => {
+    setPreScanResult(result);
+    setPhase('deployment_ceremony');
+  };
+
+  const handleCeremonyComplete = () => {
     setPhase('consent_toc');
     checkHealth();
+  };
+
+  const handleCeremonyBack = () => {
+    setPreScanResult(null);
+    setPhase('front_porch');
   };
 
   const handleEnterToc = () => {
@@ -70,9 +84,22 @@ export default function App() {
     return <WizardWelcome onConsent={handleWizardConsent} />;
   }
 
-  // Wizard Step 2: Deploy Phantom
+  // Wizard Step 2: Deploy Phantom (pre-scan)
   if (phase === 'front_porch' || phase === 'deploying') {
-    return <FrontPorchDeploy onDeployComplete={handleDeployComplete} />;
+    return <FrontPorchDeploy onPreScanComplete={handlePreScanComplete} />;
+  }
+
+  // Screen 4: Deployment Ceremony (controller + worker selection)
+  if (phase === 'deployment_ceremony' && preScanResult) {
+    return (
+      <DeploymentCeremonyProvider>
+        <DeploymentCeremony
+          preScanResult={preScanResult}
+          onComplete={handleCeremonyComplete}
+          onBack={handleCeremonyBack}
+        />
+      </DeploymentCeremonyProvider>
+    );
   }
 
   // Consent gate before entering TOC
