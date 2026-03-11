@@ -27,6 +27,9 @@ export interface DiscoveryLog {
   manifestErrors: number;
   workerCount: number;
   rawEntries: string[];
+  readinessProbeAttempts: number;
+  readinessProbeSuccess: boolean;
+  diagnosticHints: string[];
 }
 
 export interface DeploymentPreScanResult {
@@ -90,8 +93,16 @@ export function discoveryLogToSanitizedString(log: DiscoveryLog): string {
     `Signature failures: ${log.signatureFailures}`,
     `Manifest parse errors: ${log.manifestErrors}`,
     `Worker count: ${log.workerCount}`,
-    '--- Raw entries ---',
-    ...log.rawEntries,
   ];
+  if (log.readinessProbeAttempts > 0) {
+    lines.push(
+      `Readiness probe: ${log.readinessProbeSuccess ? 'succeeded' : `timed out after ${log.readinessProbeAttempts} attempt(s)`}`,
+    );
+  }
+  lines.push('--- Raw entries ---', ...log.rawEntries);
+  if (log.workerCount === 0 && log.diagnosticHints.length > 0) {
+    lines.push('--- Possible causes ---');
+    log.diagnosticHints.forEach((h) => lines.push(`  • ${h}`));
+  }
   return lines.join('\n');
 }

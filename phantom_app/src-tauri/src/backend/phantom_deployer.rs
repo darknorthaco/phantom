@@ -59,6 +59,9 @@ pub struct PhantomDeployer {
     engine_source: PathBuf,
     /// When set, scan_lan emits "scan-log" events for in-app display.
     scan_log_emitter: Option<tauri::AppHandle>,
+    /// Result of the local worker readiness probe: (attempts, success).
+    /// Written by start_local_worker(), read by run_pre_scan_deployment().
+    readiness_result: std::sync::Mutex<(u32, bool)>,
 }
 
 impl PhantomDeployer {
@@ -71,6 +74,7 @@ impl PhantomDeployer {
             phantom_root: phantom_root.to_path_buf(),
             engine_source: engine_source.to_path_buf(),
             scan_log_emitter,
+            readiness_result: std::sync::Mutex::new((0, false)),
         }
     }
 
@@ -573,9 +577,10 @@ impl PhantomDeployer {
 
         match cmd.spawn() {
             Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
-            Err(e) => log::warn!("Failed to start local worker (GPU required): {e}"),
+            Err(e) => log::warn!("Failed to start local worker: {e}"),
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        self.run_readiness_probe().await;
         Ok(())
     }
 
@@ -614,7 +619,8 @@ impl PhantomDeployer {
             Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
             Err(e) => log::warn!("Failed to start local worker: {e}"),
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        self.run_readiness_probe().await;
         Ok(())
     }
 
@@ -622,6 +628,83 @@ impl PhantomDeployer {
     async fn start_local_worker(&self) -> Result<(), String> {
         log::info!("Local worker step skipped on this platform");
         Ok(())
+    }
+
+    /// Poll port 8095 with `PHANTOM_DISCOVER_WORKERS` UDP probes until the local
+    /// worker responds or the maximum attempts (from `phantom_config.json`) are
+    /// exhausted.  Stores the probe outcome in `self.readiness_result` so
+    /// `run_pre_scan_deployment()` can include it in the discovery log.
+    ///
+    /// This is non-blocking to the deploy flow — if the probe times out the
+    /// worker may still respond during the broadcast scan.
+    async fn run_readiness_probe(&self) {
+        let config_path = self.phantom_root.join("phantom_config.json");
+        let probe_interval_ms =
+            read_nested_config(&config_path, &["worker", "readiness_probe_interval_ms"])
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(500);
+        let max_attempts =
+            read_nested_config(&config_path, &["worker", "readiness_max_attempts"])
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(20);
+        let attempt_timeout_ms =
+            read_nested_config(&config_path, &["worker", "readiness_attempt_timeout_ms"])
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(1000);
+
+        self.emit_scan_log(&format!(
+            "Waiting for local worker (up to {} probe attempt(s))…",
+            max_attempts
+        ));
+
+        let mut probe_success = false;
+        let mut attempts = 0u32;
+
+        for i in 0..max_attempts {
+            attempts = i + 1;
+            self.emit_scan_log(&format!(
+                "Readiness probe {}/{}…",
+                attempts, max_attempts
+            ));
+
+            let ready = tokio::task::spawn_blocking(move || {
+                discovery::probe_worker_readiness(attempt_timeout_ms)
+            })
+            .await
+            .unwrap_or(false);
+
+            if ready {
+                probe_success = true;
+                self.emit_scan_log(&format!(
+                    "Local worker ready after {} attempt(s)",
+                    attempts
+                ));
+                log::info!(
+                    "Local worker readiness probe succeeded on attempt {}",
+                    attempts
+                );
+                break;
+            }
+
+            if i + 1 < max_attempts {
+                tokio::time::sleep(std::time::Duration::from_millis(probe_interval_ms)).await;
+            }
+        }
+
+        if !probe_success {
+            log::warn!(
+                "Local worker readiness probe timed out after {} attempt(s); proceeding",
+                attempts
+            );
+            self.emit_scan_log(&format!(
+                "Readiness probe timed out after {} attempt(s); proceeding to discovery",
+                attempts
+            ));
+        }
+
+        if let Ok(mut r) = self.readiness_result.lock() {
+            *r = (attempts, probe_success);
+        }
     }
 
     async fn scan_lan(&self) -> Result<(), String> {
@@ -684,6 +767,12 @@ impl PhantomDeployer {
         }
 
         self.emit_scan_log(&format!("Done: {registered} worker(s) registered"));
+        if registered == 0 {
+            self.emit_scan_log("No workers found. Possible causes:");
+            self.emit_scan_log("  • Worker not running or still initializing");
+            self.emit_scan_log("  • Port 8095/udp may be blocked by firewall");
+            self.emit_scan_log("  • Worker process failed to start (check worker logs)");
+        }
         log::info!("Discovery complete: {registered} worker(s) registered");
         Ok(())
     }
@@ -715,9 +804,17 @@ impl PhantomDeployer {
         self.emit_scan_log("Waiting for worker manifests…");
 
         let addrs = broadcast_addrs.clone();
-        let (manifests, discovery_log) = tokio::task::spawn_blocking(move || discover_workers_with_log(&addrs))
+        let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || discover_workers_with_log(&addrs))
             .await
             .map_err(|e| format!("Discovery task panicked: {e}"))?;
+
+        // Enrich the discovery log with readiness probe results (set by step 9).
+        let (probe_attempts, probe_success) = self
+            .readiness_result
+            .lock()
+            .map(|r| *r)
+            .unwrap_or((0, false));
+        discovery_log.set_readiness_result(probe_attempts, probe_success);
 
         self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
 
@@ -735,6 +832,23 @@ impl PhantomDeployer {
             .collect();
 
         let discovery_failed = discovery_log.worker_count == 0;
+
+        // Add actionable hints when no workers were found.
+        if discovery_failed {
+            if probe_attempts > 0 && !probe_success {
+                discovery_log.add_diagnostic_hint(&format!(
+                    "Worker not ready: readiness probe timed out after {} attempt(s)",
+                    probe_attempts
+                ));
+            }
+            discovery_log.add_diagnostic_hint("Port 8095/udp may be blocked by firewall");
+            discovery_log.add_diagnostic_hint(
+                "Worker process may have failed to start (check worker logs)",
+            );
+            discovery_log.add_diagnostic_hint(
+                "Worker still initializing — try running discovery again",
+            );
+        }
 
         Ok(DeploymentPreScanResult {
             discovered_workers,
