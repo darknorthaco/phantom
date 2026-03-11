@@ -667,9 +667,8 @@ impl PhantomDeployer {
                 attempts, max_attempts
             ));
 
-            let timeout = attempt_timeout_ms;
             let ready = tokio::task::spawn_blocking(move || {
-                discovery::probe_worker_readiness(timeout)
+                discovery::probe_worker_readiness(attempt_timeout_ms)
             })
             .await
             .unwrap_or(false);

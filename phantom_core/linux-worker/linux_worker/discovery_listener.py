@@ -84,7 +84,7 @@ def run_discovery_listener(
 
     def listen() -> None:
         sock = None
-        last_error: Exception = OSError("unknown")
+        last_error: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
