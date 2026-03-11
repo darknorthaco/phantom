@@ -529,7 +529,11 @@ async def register_worker(worker: WorkerInfo):
     if trust_store:
         level = trust_store.get_current_level(worker.worker_id)
         if level not in (TrustLevel.APPROVED.value, TrustLevel.REGISTERED.value):
-            logger.warning("Registration rejected: worker %s not approved (level=%s)", worker.worker_id, level)
+            logger.warning(
+                "Registration rejected: worker %s not approved (level=%s)",
+                worker.worker_id,
+                level,
+            )
             raise HTTPException(
                 status_code=403,
                 detail=f"Worker {worker.worker_id} must be approved before registration",

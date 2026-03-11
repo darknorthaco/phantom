@@ -500,7 +500,9 @@ class TestUninstallManager(unittest.TestCase):
         # Create a realistic layout: install dir with a config subdir and manifest
         config_dir = Path(self.temp_dir) / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "phantom_config.yaml").write_text("controller:\n  host: localhost\n")
+        (config_dir / "phantom_config.yaml").write_text(
+            "controller:\n  host: localhost\n"
+        )
 
         self.manifest.save_manifest()
         manifest_path = Path(self.temp_dir) / ".phantom_install_manifest.json"
@@ -509,7 +511,9 @@ class TestUninstallManager(unittest.TestCase):
         # Step 1: remove manifest explicitly (mirrors full_uninstall order after fix)
         result = self.uninstaller.remove_manifest()
         self.assertTrue(result)
-        self.assertFalse(manifest_path.exists(), "Manifest should be gone after explicit removal")
+        self.assertFalse(
+            manifest_path.exists(), "Manifest should be gone after explicit removal"
+        )
 
         # Step 2: install dir still exists; remove_directories can now clean it up
         self.assertTrue(

@@ -24,6 +24,7 @@ def _is_controller_running() -> bool:
 
 # ── System integration (requires live controller) ─────────────────────────────
 
+
 class TestSystemIntegration(unittest.TestCase):
     """End-to-end tests — skipped when the controller is not running."""
 
@@ -80,6 +81,7 @@ class TestSystemIntegration(unittest.TestCase):
 
 # ── Socket / WebSocket integration (mock-based) ───────────────────────────────
 
+
 class TestSocketIntegration(unittest.TestCase):
     """Unit tests for SocketManager using mock WebSocket objects."""
 
@@ -88,6 +90,7 @@ class TestSocketIntegration(unittest.TestCase):
 
     def _make_socket_manager(self):
         from phantom_core.socket_integration import SocketManager
+
         return SocketManager(port=18081)
 
     def test_websocket_connection(self):
@@ -98,7 +101,9 @@ class TestSocketIntegration(unittest.TestCase):
         messages_sent = []
 
         mock_ws = AsyncMock()
-        mock_ws.send = AsyncMock(side_effect=lambda m: messages_sent.append(json.loads(m)))
+        mock_ws.send = AsyncMock(
+            side_effect=lambda m: messages_sent.append(json.loads(m))
+        )
 
         async def run():
             # Simulate one message then close
@@ -161,6 +166,7 @@ class TestSocketIntegration(unittest.TestCase):
 
 # ── Security integration ───────────────────────────────────────────────────────
 
+
 class TestSecurityIntegration(unittest.TestCase):
     """Tests for security framework logic (mock-based + live skip)."""
 
@@ -186,7 +192,9 @@ class TestSecurityIntegration(unittest.TestCase):
         def is_allowed(client_ip: str) -> bool:
             now = time.time()
             window_start = now - window_seconds
-            request_log[client_ip] = [t for t in request_log[client_ip] if t > window_start]
+            request_log[client_ip] = [
+                t for t in request_log[client_ip] if t > window_start
+            ]
             if len(request_log[client_ip]) >= max_requests:
                 return False
             request_log[client_ip].append(now)
@@ -220,6 +228,7 @@ class TestSecurityIntegration(unittest.TestCase):
 
 # ── LLM Task Master (mock-based) ──────────────────────────────────────────────
 
+
 class TestLLMTaskMaster(unittest.TestCase):
     """Verify LLM routing pipeline stages using mocked models."""
 
@@ -237,7 +246,8 @@ class TestLLMTaskMaster(unittest.TestCase):
             if mode == "MANUAL":
                 return None  # human must select
             candidates = [
-                w for w in available_workers.values()
+                w
+                for w in available_workers.values()
                 if w["status"] == "idle" and w["vram_mb"] >= task["vram_required"]
             ]
             return max(candidates, key=lambda w: w["vram_mb"]) if candidates else None
@@ -298,17 +308,33 @@ class TestLLMTaskMaster(unittest.TestCase):
 
 # ── Multi-GPU integration (mock-based) ────────────────────────────────────────
 
+
 class TestMultiGPUIntegration(unittest.TestCase):
     """Tests for multi-GPU scheduling — mock-based, no hardware needed."""
 
     def _workers(self):
         return [
-            {"worker_id": "rtx4090", "gpu": "RTX 4090", "vram_mb": 24576,
-             "status": "idle",   "active_tasks": 0},
-            {"worker_id": "rtx3080", "gpu": "RTX 3080", "vram_mb": 10240,
-             "status": "idle",   "active_tasks": 1},
-            {"worker_id": "gtx1080", "gpu": "GTX 1080", "vram_mb": 8192,
-             "status": "busy",   "active_tasks": 3},
+            {
+                "worker_id": "rtx4090",
+                "gpu": "RTX 4090",
+                "vram_mb": 24576,
+                "status": "idle",
+                "active_tasks": 0,
+            },
+            {
+                "worker_id": "rtx3080",
+                "gpu": "RTX 3080",
+                "vram_mb": 10240,
+                "status": "idle",
+                "active_tasks": 1,
+            },
+            {
+                "worker_id": "gtx1080",
+                "gpu": "GTX 1080",
+                "vram_mb": 8192,
+                "status": "busy",
+                "active_tasks": 3,
+            },
         ]
 
     def test_gpu_detection_across_workers(self):
@@ -337,18 +363,24 @@ class TestMultiGPUIntegration(unittest.TestCase):
             target["active_tasks"] += 1
 
         # Task 1 → w1 (0 tasks), Task 2 → w3 (1 task, w1 now also at 1 but w3 < w1 alpha)
-        self.assertEqual(assignments[0], "rtx4090",
-                         "First task should go to the worker with fewest tasks")
+        self.assertEqual(
+            assignments[0],
+            "rtx4090",
+            "First task should go to the worker with fewest tasks",
+        )
         # After first assignment both workers have 1 task; w3 (rtx3080) wins on worker_id sort
-        self.assertNotEqual(assignments[0], assignments[1],
-                            "Second task should go to a different worker")
+        self.assertNotEqual(
+            assignments[0],
+            assignments[1],
+            "Second task should go to a different worker",
+        )
 
     def test_memory_aware_scheduling(self):
         """Large model tasks skip workers with insufficient VRAM."""
         workers = self._workers()
 
         large_model_vram = 20_000  # MB
-        small_model_vram = 4_000   # MB
+        small_model_vram = 4_000  # MB
 
         large_eligible = [w for w in workers if w["vram_mb"] >= large_model_vram]
         small_eligible = [w for w in workers if w["vram_mb"] >= small_model_vram]
@@ -361,6 +393,7 @@ class TestMultiGPUIntegration(unittest.TestCase):
 
 # ── Network topology (resilience logic, mock-based) ───────────────────────────
 
+
 class TestNetworkTopology(unittest.TestCase):
     """Tests for network resilience logic — no cross-machine hardware required."""
 
@@ -368,12 +401,12 @@ class TestNetworkTopology(unittest.TestCase):
         """Worker registration normalises host/port from different OS-reported formats."""
         # Workers may report their endpoint differently on Linux vs Windows
         linux_worker = {"worker_id": "fedora-w1", "host": "192.168.1.10", "port": 7000}
-        windows_worker = {"worker_id": "win-w1",  "host": "192.168.1.20", "port": 7000}
+        windows_worker = {"worker_id": "win-w1", "host": "192.168.1.20", "port": 7000}
 
         def endpoint(w):
             return f"http://{w['host']}:{w['port']}"
 
-        self.assertEqual(endpoint(linux_worker),   "http://192.168.1.10:7000")
+        self.assertEqual(endpoint(linux_worker), "http://192.168.1.10:7000")
         self.assertEqual(endpoint(windows_worker), "http://192.168.1.20:7000")
 
         # Both should produce valid HTTP URLs
@@ -387,8 +420,8 @@ class TestNetworkTopology(unittest.TestCase):
         TIMEOUT_MS = 500
 
         latencies = {"w1": 120, "w2": 480, "w3": 620, "w4": 50}
-        responsive  = {k: v for k, v in latencies.items() if v <= TIMEOUT_MS}
-        timed_out   = {k: v for k, v in latencies.items() if v >  TIMEOUT_MS}
+        responsive = {k: v for k, v in latencies.items() if v <= TIMEOUT_MS}
+        timed_out = {k: v for k, v in latencies.items() if v > TIMEOUT_MS}
 
         self.assertIn("w1", responsive)
         self.assertIn("w2", responsive)
@@ -399,9 +432,9 @@ class TestNetworkTopology(unittest.TestCase):
     def test_failover_scenarios(self):
         """When the primary worker fails, routing falls back to the secondary."""
         workers = [
-            {"worker_id": "primary",   "status": "online",  "priority": 1},
-            {"worker_id": "secondary", "status": "online",  "priority": 2},
-            {"worker_id": "tertiary",  "status": "online",  "priority": 3},
+            {"worker_id": "primary", "status": "online", "priority": 1},
+            {"worker_id": "secondary", "status": "online", "priority": 2},
+            {"worker_id": "tertiary", "status": "online", "priority": 3},
         ]
 
         def select_worker(pool):

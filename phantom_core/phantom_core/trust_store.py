@@ -246,9 +246,7 @@ class TrustStore:
         self.write_record(rec)
         return rec
 
-    def approve_worker_with_key(
-        self, worker_id: str, public_key: str
-    ) -> TrustRecord:
+    def approve_worker_with_key(self, worker_id: str, public_key: str) -> TrustRecord:
         """§5 — Record user approval for a worker (possibly first contact).
 
         Used when the deployment ceremony approves a worker. Creates TrustRecord(approved)

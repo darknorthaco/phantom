@@ -33,7 +33,9 @@ def load_config(config_path: str) -> dict:
 async def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Phantom Linux Worker")
-    parser.add_argument("--config", required=True, help="Path to worker configuration file")
+    parser.add_argument(
+        "--config", required=True, help="Path to worker configuration file"
+    )
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     args = parser.parse_args()
 
@@ -66,7 +68,9 @@ async def main():
             log_level=args.log_level.lower(),
         )
         server = uvicorn.Server(uvicorn_config)
-        logger.info("Starting worker %s on port %s", worker.worker_id, worker.worker_port)
+        logger.info(
+            "Starting worker %s on port %s", worker.worker_id, worker.worker_port
+        )
         await server.serve()
     except Exception as e:
         logger.error("Worker failed: %s", e)

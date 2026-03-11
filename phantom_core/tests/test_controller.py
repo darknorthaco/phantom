@@ -142,8 +142,7 @@ class TestControllerLogic(unittest.TestCase):
         task_vram_requirement = 16_000  # MB
 
         eligible = [
-            w for w in workers
-            if w["gpu_info"]["vram_mb"] >= task_vram_requirement
+            w for w in workers if w["gpu_info"]["vram_mb"] >= task_vram_requirement
         ]
 
         self.assertEqual(len(eligible), 1)
@@ -152,8 +151,7 @@ class TestControllerLogic(unittest.TestCase):
         # Low-VRAM task (512 MB) should be eligible on both
         small_task_req = 512
         all_eligible = [
-            w for w in workers
-            if w["gpu_info"]["vram_mb"] >= small_task_req
+            w for w in workers if w["gpu_info"]["vram_mb"] >= small_task_req
         ]
         self.assertEqual(len(all_eligible), 2)
 
@@ -184,9 +182,9 @@ class TestControllerLogic(unittest.TestCase):
     def test_gpu_capability_matching(self):
         """Tasks requiring specific GPU capabilities route only to compatible workers."""
         workers = [
-            {"worker_id": "nvidia", "caps": {"cuda": True,  "rocm": False}},
-            {"worker_id": "amd",    "caps": {"cuda": False, "rocm": True}},
-            {"worker_id": "cpu",    "caps": {"cuda": False, "rocm": False}},
+            {"worker_id": "nvidia", "caps": {"cuda": True, "rocm": False}},
+            {"worker_id": "amd", "caps": {"cuda": False, "rocm": True}},
+            {"worker_id": "cpu", "caps": {"cuda": False, "rocm": False}},
         ]
 
         def can_handle(worker, required_cap):

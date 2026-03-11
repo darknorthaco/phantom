@@ -254,9 +254,7 @@ class TestModeRestEndpoints:
 
     def test_post_mode_with_session_id(self):
         """POST /mode accepts an optional session_id and echoes it back."""
-        resp = self.client.post(
-            "/mode", json={"mode": "MANUAL", "session_id": "s-123"}
-        )
+        resp = self.client.post("/mode", json={"mode": "MANUAL", "session_id": "s-123"})
         assert resp.json()["session_id"] == "s-123"
 
     def test_post_mode_invalid_returns_422(self):
