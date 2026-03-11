@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 DISCOVERY_PORT = 8095
 DISCOVER_PAYLOAD = b"PHANTOM_DISCOVER_WORKERS"
 DEFAULT_TIMEOUT_MS = 1500
+MAX_RESPONSE_SIZE = 4096
 
 
 @dataclass
@@ -91,10 +92,9 @@ class InstallerDiscoveryClient:
             return []
 
         workers: List[DiscoveredWorker] = []
-        buf_size = 4096
         while True:
             try:
-                data, remote = sock.recvfrom(buf_size)
+                data, remote = sock.recvfrom(MAX_RESPONSE_SIZE)
                 source_ip = remote[0]
                 w = self._parse_response(data, source_ip)
                 if w is not None:

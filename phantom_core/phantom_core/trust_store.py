@@ -6,8 +6,10 @@ Implements TOFU (Trust On First Use) key management and
 key-change detection per the Corrected Architecture Design.
 """
 
+import fcntl
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -109,9 +111,15 @@ class TrustStore:
     def _append_to_file(self, record: TrustRecord) -> None:
         try:
             with open(self._path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except Exception as exc:
-            logger.error("TrustStore write error: %s", exc)
+            logger.error("TrustStore write error: %s", type(exc).__name__)
 
     # ---- public API --------------------------------------------------
 

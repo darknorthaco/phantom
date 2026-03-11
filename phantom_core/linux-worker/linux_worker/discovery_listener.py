@@ -8,6 +8,7 @@ public_key, signature, and signed_at timestamp.
 
 import json
 import logging
+import os
 import socket
 import threading
 from pathlib import Path
@@ -50,11 +51,13 @@ def _init_signer(identity_dir: Optional[str] = None) -> Optional[object]:
         return ManifestSigner.from_raw_bytes(raw)
 
     signer = ManifestSigner.generate()
-    # Persist private key (base64-encoded raw 32 bytes)
+    # Persist private key (base64-encoded raw 32 bytes) with restricted permissions
     import base64
 
     raw = signer.export_private_key_bytes()
-    priv_path.write_bytes(base64.b64encode(raw))
+    fd = os.open(str(priv_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(base64.b64encode(raw))
     logger.info("Generated new worker identity in %s", key_dir)
     return signer
 
