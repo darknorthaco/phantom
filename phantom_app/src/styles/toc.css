@@ -10,6 +10,13 @@
 }
 
 /* ── Metrics Bar ── */
+.toc-header-logo {
+  height: 24px;
+  width: auto;
+  flex-shrink: 0;
+  margin-right: 16px;
+}
+
 .metrics-bar {
   grid-area: metrics;
   display: flex;

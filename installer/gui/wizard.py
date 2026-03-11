@@ -127,7 +127,9 @@ class PhantomWizard(tk.Tk):
         self.resizable(False, False)
         self.configure(bg=self.theme.BG)
         try:
-            self.iconbitmap(default="")
+            icon_path = _installer_dir / "assets" / "phantom.ico"
+            if icon_path.exists():
+                self.iconbitmap(default=str(icon_path))
         except Exception:
             pass
 

@@ -561,8 +561,10 @@ class PhantomInstaller(QWizard):
 
         # Set window icon if available
         try:
-            self.setWindowIcon(QIcon("phantom_icon.ico"))
-        except:
+            icon_path = Path(__file__).resolve().parent / "assets" / "phantom_icon.ico"
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
+        except Exception:
             pass
 
         # Add pages

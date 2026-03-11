@@ -70,7 +70,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
   return (
     <div className="deploy-screen">
       <div className="phantom-mask-container">
-        <img src="/phantom.svg" alt="Phantom" className="phantom-mask-svg" />
+        <img src="/phantom.png" alt="Phantom" className="phantom-mask-svg" />
       </div>
 
       <div className="deploy-title">

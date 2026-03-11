@@ -73,7 +73,7 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
   return (
     <div className="deploy-screen ceremony-screen">
       <div className="phantom-mask-container">
-        <img src="/phantom.svg" alt="Phantom" className="phantom-mask-svg" />
+        <img src="/phantom.png" alt="Phantom" className="phantom-mask-svg" />
       </div>
 
       <div className="deploy-title">Deployment Ceremony</div>

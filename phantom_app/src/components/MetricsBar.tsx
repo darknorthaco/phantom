@@ -48,6 +48,7 @@ export default function MetricsBar({ health, onRefresh }: Props) {
 
   return (
     <div className="metrics-bar">
+      <img src="/phantom.png" alt="Phantom" className="toc-header-logo" />
       <div className="metric-item">
         <span className={`metric-dot ${status === 'healthy' ? '' : 'error'}`} />
         <span className="metric-label">Status</span>
