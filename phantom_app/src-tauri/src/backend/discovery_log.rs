@@ -5,6 +5,16 @@
 
 use serde::Serialize;
 
+/// Single entry in the Dependency Initialization Log (Phase 3).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyInitEntry {
+    pub timestamp: String,
+    pub item: String,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
 /// Structured discovery log emitted on every scan.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +34,18 @@ pub struct DiscoveryLog {
     pub readiness_probe_success: bool,
     /// Actionable hints shown when worker_count == 0.
     pub diagnostic_hints: Vec<String>,
+    /// Discovery window start timestamp (RFC3339). For Phase 3 "Discovery Timing Breakdown".
+    pub discovery_start_timestamp: String,
+    /// Discovery window end timestamp (RFC3339). Dependency Initialization Log.
+    pub discovery_end_timestamp: String,
+    /// Total discovery duration in milliseconds.
+    pub discovery_duration_ms: u64,
+    /// Dependency Initialization Log — each dependency load before discovery.
+    pub dependency_init_log: Vec<DependencyInitEntry>,
+    /// Total timeout (ms) configured for the discovery window.
+    pub discovery_total_timeout_ms: u64,
+    /// Number of recv poll cycles in the discovery loop.
+    pub discovery_poll_cycles: u32,
 }
 
 impl DiscoveryLog {
@@ -47,6 +69,23 @@ impl DiscoveryLog {
                     "timed out"
                 },
                 self.readiness_probe_attempts,
+            ));
+        }
+        lines.push("--- Discovery Timing Breakdown ---".to_string());
+        lines.push(format!("Start: {}", self.discovery_start_timestamp));
+        lines.push(format!("End: {}", self.discovery_end_timestamp));
+        lines.push(format!("Duration: {} ms", self.discovery_duration_ms));
+        lines.push(format!("Total timeout used: {} ms", self.discovery_total_timeout_ms));
+        lines.push(format!("Responses received: {}", self.responses_received));
+        lines.push(format!("Poll cycles: {}", self.discovery_poll_cycles));
+        lines.push("--- Dependency Initialization Log ---".to_string());
+        for entry in &self.dependency_init_log {
+            lines.push(format!(
+                "{} | {} | {} | {} ms",
+                entry.timestamp,
+                entry.item,
+                if entry.success { "ok" } else { "FAIL" },
+                entry.duration_ms
             ));
         }
         lines.push("--- Raw entries ---".to_string());
@@ -87,6 +126,12 @@ pub struct DiscoveryLogBuilder {
     readiness_probe_attempts: u32,
     readiness_probe_success: bool,
     diagnostic_hints: Vec<String>,
+    discovery_start_timestamp: String,
+    discovery_end_timestamp: String,
+    discovery_duration_ms: u64,
+    dependency_init_log: Vec<DependencyInitEntry>,
+    discovery_total_timeout_ms: u64,
+    discovery_poll_cycles: u32,
 }
 
 impl DiscoveryLogBuilder {
@@ -103,7 +148,39 @@ impl DiscoveryLogBuilder {
             readiness_probe_attempts: 0,
             readiness_probe_success: false,
             diagnostic_hints: Vec::new(),
+            discovery_start_timestamp: String::new(),
+            discovery_end_timestamp: String::new(),
+            discovery_duration_ms: 0,
+            dependency_init_log: Vec::new(),
+            discovery_total_timeout_ms: 0,
+            discovery_poll_cycles: 0,
         }
+    }
+
+    /// Record discovery window timing (for Phase 3 "Discovery Timing Breakdown").
+    pub fn set_discovery_timing(
+        &mut self,
+        start: &str,
+        end: &str,
+        duration_ms: u64,
+        total_timeout_ms: u64,
+        poll_cycles: u32,
+    ) {
+        self.discovery_start_timestamp = start.to_string();
+        self.discovery_end_timestamp = end.to_string();
+        self.discovery_duration_ms = duration_ms;
+        self.discovery_total_timeout_ms = total_timeout_ms;
+        self.discovery_poll_cycles = poll_cycles;
+    }
+
+    /// Add a Dependency Initialization Log entry.
+    pub fn add_dependency_init_entry(&mut self, entry: DependencyInitEntry) {
+        self.dependency_init_log.push(entry);
+    }
+
+    /// Add multiple Dependency Initialization Log entries.
+    pub fn add_dependency_init_entries(&mut self, entries: Vec<DependencyInitEntry>) {
+        self.dependency_init_log.extend(entries);
     }
 
     pub fn push_raw(&mut self, entry: impl AsRef<str>) {
@@ -151,6 +228,12 @@ impl DiscoveryLogBuilder {
             readiness_probe_attempts: self.readiness_probe_attempts,
             readiness_probe_success: self.readiness_probe_success,
             diagnostic_hints: self.diagnostic_hints,
+            discovery_start_timestamp: self.discovery_start_timestamp,
+            discovery_end_timestamp: self.discovery_end_timestamp,
+            discovery_duration_ms: self.discovery_duration_ms,
+            dependency_init_log: self.dependency_init_log,
+            discovery_total_timeout_ms: self.discovery_total_timeout_ms,
+            discovery_poll_cycles: self.discovery_poll_cycles,
         }
     }
 }

@@ -3,8 +3,12 @@
 //!
 //! §3 integration: incoming manifests are parsed as SignedManifest, signature is
 //! verified, and the `signature_verified` flag is set before returning results.
+//!
+//! Discovery uses a single UDP socket and a configurable total window
+//! (discovery_total_timeout_ms). All targets are probed up front; responses
+//! are collected in one listen loop until the window expires or early exit.
 
-use super::discovery_log::DiscoveryLogBuilder;
+use super::discovery_log::{DependencyInitEntry, DiscoveryLogBuilder};
 use super::worker_info::{RawWireManifest, SignedManifest};
 use std::collections::HashSet;
 use std::net::UdpSocket;
@@ -15,6 +19,9 @@ pub const DISCOVERY_PORT: u16 = 8095;
 
 /// Discovery request sent via UDP broadcast.
 const DISCOVER_PAYLOAD: &[u8] = b"PHANTOM_DISCOVER_WORKERS";
+
+/// Default total discovery window when config is unavailable.
+pub const DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS: u64 = 10000;
 
 /// Discovered worker manifest with source IP and verification status.
 #[derive(Debug, Clone)]
@@ -89,215 +96,158 @@ fn parse_manifest(raw: &str, source_ip: String) -> Option<DiscoveredManifest> {
     })
 }
 
-/// Broadcast DISCOVER_WORKERS and collect manifests.
-fn broadcast_and_collect(
-    broadcast_addr: &str,
-    listen_timeout_ms: u64,
+/// Single-window discovery: one socket, send to 127.0.0.1 and all broadcast
+/// addresses, then listen for up to `total_timeout_ms` collecting responses.
+/// When `early_exit_on_first_worker` is true, exits as soon as at least one
+/// valid manifest is received.
+pub(crate) fn discover_single_window(
+    broadcast_addrs: &[String],
+    total_timeout_ms: u64,
+    early_exit_on_first_worker: bool,
+    log: Option<&mut DiscoveryLogBuilder>,
 ) -> Vec<DiscoveredManifest> {
+    let start = std::time::Instant::now();
+    let start_rfc3339 = chrono::Utc::now().to_rfc3339();
+
+    let bind_start = std::time::Instant::now();
     let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(_) => return vec![],
+        Ok(s) => {
+            if let Some(l) = log {
+                l.add_dependency_init_entry(DependencyInitEntry {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    item: "socket_bind (UDP 0.0.0.0:0)".to_string(),
+                    success: true,
+                    duration_ms: bind_start.elapsed().as_millis() as u64,
+                });
+            }
+            s
+        }
+        Err(e) => {
+            if let Some(l) = log {
+                l.push_raw(&format!("bind error: {e}"));
+                l.add_dependency_init_entry(DependencyInitEntry {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    item: "socket_bind (UDP 0.0.0.0:0)".to_string(),
+                    success: false,
+                    duration_ms: bind_start.elapsed().as_millis() as u64,
+                });
+            }
+            return vec![];
+        }
     };
     socket.set_broadcast(true).ok();
-    socket
-        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
-        .ok();
 
-    let target = format!("{}:{}", broadcast_addr, DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
-        return vec![];
-    }
+    let mut packets_sent = 0u32;
 
-    let mut manifests = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        match socket.recv_from(&mut buf) {
-            Ok((n, src)) => {
-                let source_ip = src.ip().to_string();
-                if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Some(dm) = parse_manifest(s, source_ip) {
-                        manifests.push(dm);
-                    }
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    manifests
-}
-
-/// Send DISCOVER_WORKERS to unicast (e.g. 127.0.0.1 for local worker).
-fn unicast_and_collect(addr: &str, listen_timeout_ms: u64) -> Vec<DiscoveredManifest> {
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-    socket
-        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
-        .ok();
-
-    let target = format!("{}:{}", addr, DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
-        return vec![];
-    }
-
-    let mut manifests = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        match socket.recv_from(&mut buf) {
-            Ok((n, src)) => {
-                let source_ip = src.ip().to_string();
-                if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Some(dm) = parse_manifest(s, source_ip) {
-                        manifests.push(dm);
-                    }
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    manifests
-}
-
-/// Run discovery: unicast to localhost, then broadcast on each subnet.
-/// Deduplicate by worker_id.  Each manifest has `signature_verified` set.
-pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<DiscoveredManifest> {
-    const TIMEOUT_MS: u64 = 1500;
-    let mut seen = HashSet::new();
-    let mut all = Vec::new();
-
-    for m in unicast_and_collect("127.0.0.1", TIMEOUT_MS) {
-        if seen.insert(m.manifest.worker_id.clone()) {
-            all.push(m);
+    // Send to 127.0.0.1
+    let target_loopback = format!("127.0.0.1:{}", DISCOVERY_PORT);
+    if socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok() {
+        packets_sent += 1;
+        if let Some(l) = log {
+            l.inc_packets_sent();
+            l.push_raw(&format!("Sent DISCOVER_WORKERS to {target_loopback}"));
         }
     }
 
+    // Send to each broadcast address
     for addr in broadcast_addrs {
-        for m in broadcast_and_collect(addr, TIMEOUT_MS) {
-            if seen.insert(m.manifest.worker_id.clone()) {
-                all.push(m);
+        let target = format!("{}:{}", addr, DISCOVERY_PORT);
+        if socket.send_to(DISCOVER_PAYLOAD, &target).is_ok() {
+            packets_sent += 1;
+            if let Some(l) = log {
+                l.inc_packets_sent();
+                l.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
             }
         }
     }
-    all
-}
 
-/// Unicast discovery with log building.
-fn unicast_and_collect_with_log(
-    addr: &str,
-    listen_timeout_ms: u64,
-    log: &mut DiscoveryLogBuilder,
-) -> Vec<DiscoveredManifest> {
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(e) => {
-            log.push_raw(&format!("unicast bind error: {e}"));
-            return vec![];
-        }
-    };
-    socket
-        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
-        .ok();
-
-    let target = format!("{}:{}", addr, DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
-        log.push_raw(&format!("unicast send failed to {target}"));
-        return vec![];
+    if let Some(l) = log {
+        l.push_raw(&format!(
+            "Listening for up to {} ms (early_exit={})",
+            total_timeout_ms, early_exit_on_first_worker
+        ));
     }
-    log.inc_packets_sent();
-    log.push_raw(&format!("Sent DISCOVER_WORKERS to {target}"));
 
+    let mut seen = HashSet::new();
     let mut manifests = Vec::new();
     let mut buf = [0u8; 4096];
+    let mut poll_cycles = 0u32;
+
     loop {
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let remaining_ms = total_timeout_ms.saturating_sub(elapsed_ms);
+        if remaining_ms == 0 {
+            break;
+        }
+
+        if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(remaining_ms))) {
+            if let Some(l) = log {
+                l.push_raw(&format!("set_read_timeout error: {e}"));
+            }
+            break;
+        }
+
+        poll_cycles += 1;
         match socket.recv_from(&mut buf) {
             Ok((n, src)) => {
                 let source_ip = src.ip().to_string();
                 let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
-                log.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
+                if let Some(l) = log {
+                    l.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
+                }
                 if let Ok(s) = std::str::from_utf8(&buf[..n]) {
                     if let Some(dm) = parse_manifest(s, source_ip) {
-                        log.inc_responses_received(dm.signature_verified);
-                        log.push_raw(&format!(
-                            "  worker {} {}:{} sig={}",
-                            dm.manifest.worker_id,
-                            dm.registration_host(),
-                            dm.port,
-                            dm.signature_verified
+                        if let Some(l) = log {
+                            l.inc_responses_received(dm.signature_verified);
+                            l.push_raw(&format!(
+                                "  worker {} {}:{} sig={}",
+                                dm.manifest.worker_id,
+                                dm.registration_host(),
+                                dm.port,
+                                dm.signature_verified
+                            ));
+                        }
+                        if seen.insert(dm.manifest.worker_id.clone()) {
+                            manifests.push(dm);
+                        }
+                    } else if let Some(l) = log {
+                        l.inc_manifest_error();
+                        l.push_raw(&format!(
+                            "  parse failed: {}",
+                            raw.chars().take(80).collect::<String>()
                         ));
-                        manifests.push(dm);
-                    } else {
-                        log.inc_manifest_error();
-                        log.push_raw(&format!("  parse failed: {}", raw.chars().take(80).collect::<String>()));
                     }
-                } else {
-                    log.inc_manifest_error();
-                    log.push_raw("  invalid UTF-8");
+                } else if let Some(l) = log {
+                    l.inc_manifest_error();
+                    l.push_raw("  invalid UTF-8");
+                }
+
+                if early_exit_on_first_worker && !manifests.is_empty() {
+                    if let Some(l) = log {
+                        l.push_raw(&format!(
+                            "Early exit: {} worker(s) discovered",
+                            manifests.len()
+                        ));
+                    }
+                    break;
                 }
             }
             Err(_) => break,
         }
     }
-    manifests
-}
 
-/// Broadcast discovery with log building.
-fn broadcast_and_collect_with_log(
-    broadcast_addr: &str,
-    listen_timeout_ms: u64,
-    log: &mut DiscoveryLogBuilder,
-) -> Vec<DiscoveredManifest> {
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(e) => {
-            log.push_raw(&format!("broadcast bind error: {e}"));
-            return vec![];
-        }
-    };
-    socket.set_broadcast(true).ok();
-    socket
-        .set_read_timeout(Some(Duration::from_millis(listen_timeout_ms)))
-        .ok();
-
-    let target = format!("{}:{}", broadcast_addr, DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
-        log.push_raw(&format!("broadcast send failed to {target}"));
-        return vec![];
+    let end_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let duration_ms = start.elapsed().as_millis() as u64;
+    if let Some(l) = log {
+        l.set_discovery_timing(
+            &start_rfc3339,
+            &end_rfc3339,
+            duration_ms,
+            total_timeout_ms,
+            poll_cycles,
+        );
     }
-    log.inc_packets_sent();
-    log.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
 
-    let mut manifests = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        match socket.recv_from(&mut buf) {
-            Ok((n, src)) => {
-                let source_ip = src.ip().to_string();
-                let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
-                log.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
-                if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Some(dm) = parse_manifest(s, source_ip) {
-                        log.inc_responses_received(dm.signature_verified);
-                        log.push_raw(&format!(
-                            "  worker {} {}:{} sig={}",
-                            dm.manifest.worker_id,
-                            dm.registration_host(),
-                            dm.port,
-                            dm.signature_verified
-                        ));
-                        manifests.push(dm);
-                    } else {
-                        log.inc_manifest_error();
-                        log.push_raw(&format!("  parse failed: {}", raw.chars().take(80).collect::<String>()));
-                    }
-                } else {
-                    log.inc_manifest_error();
-                    log.push_raw("  invalid UTF-8");
-                }
-            }
-            Err(_) => break,
-        }
-    }
     manifests
 }
 
@@ -320,37 +270,46 @@ pub fn probe_worker_readiness(timeout_ms: u64) -> bool {
     socket.recv_from(&mut buf).is_ok()
 }
 
+/// Run discovery: single window, unicast to localhost + broadcast on each subnet.
+/// Deduplicate by worker_id. Uses DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS and
+/// early exit on first worker. Each manifest has `signature_verified` set.
+///
+/// Public API preserved for backward compatibility with scan_lan and
+/// scan_and_register_workers.
+pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<DiscoveredManifest> {
+    discover_single_window(
+        broadcast_addrs,
+        DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS,
+        true,
+        None,
+    )
+}
+
 /// Run discovery with structured log. Returns (manifests, log).
 /// Use for deployment ceremony when diagnostics may be needed.
+///
+/// Uses configurable `total_timeout_ms` and `early_exit_on_first_worker`.
+/// Timing data is recorded in the log for Phase 3 "Discovery Timing Breakdown".
+/// `dependency_init_entries` are prepended to the Dependency Initialization Log.
 pub fn discover_workers_with_log(
     broadcast_addrs: &[String],
+    total_timeout_ms: u64,
+    early_exit_on_first_worker: bool,
+    dependency_init_entries: impl IntoIterator<Item = super::discovery_log::DependencyInitEntry>,
 ) -> (Vec<DiscoveredManifest>, super::discovery_log::DiscoveryLog) {
-    const TIMEOUT_MS: u64 = 1500;
-
     let mut interfaces: Vec<String> = vec!["127.0.0.1".to_string()];
     interfaces.extend(broadcast_addrs.iter().cloned());
 
     let mut log = DiscoveryLogBuilder::new(interfaces, DISCOVERY_PORT);
-    let mut seen = HashSet::new();
-    let mut all = Vec::new();
-
-    log.push_raw("Unicast to 127.0.0.1…");
-    for m in unicast_and_collect_with_log("127.0.0.1", TIMEOUT_MS, &mut log) {
-        if seen.insert(m.manifest.worker_id.clone()) {
-            all.push(m);
-        }
+    for entry in dependency_init_entries {
+        log.add_dependency_init_entry(entry);
     }
+    log.push_raw("Single-window discovery (127.0.0.1 + broadcast)…");
 
-    for addr in broadcast_addrs {
-        log.push_raw(&format!("Broadcast to {addr}…"));
-        for m in broadcast_and_collect_with_log(addr, TIMEOUT_MS, &mut log) {
-            if seen.insert(m.manifest.worker_id.clone()) {
-                all.push(m);
-            }
-        }
-    }
+    let manifests =
+        discover_single_window(broadcast_addrs, total_timeout_ms, early_exit_on_first_worker, Some(&mut log));
 
-    log.push_raw(&format!("Done: {} worker(s) discovered", all.len()));
-    let discovery_log = log.build(all.len());
-    (all, discovery_log)
+    log.push_raw(&format!("Done: {} worker(s) discovered", manifests.len()));
+    let discovery_log = log.build(manifests.len());
+    (manifests, discovery_log)
 }

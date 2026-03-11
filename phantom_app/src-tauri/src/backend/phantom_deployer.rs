@@ -2,8 +2,10 @@ use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use tokio::process::Command;
 
-use super::discovery::{self, base_to_broadcast, discover_workers_with_log};
-use super::discovery_log::DiscoveryLog;
+use super::discovery::{
+    self, base_to_broadcast, discover_workers_with_log, DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS,
+};
+use super::discovery_log::{DependencyInitEntry, DiscoveryLog};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -87,6 +89,19 @@ impl PhantomDeployer {
         if let Some(ref app) = self.scan_log_emitter {
             let _ = app.emit("scan-log", line);
         }
+    }
+
+    /// Read discovery config from phantom_config.json.
+    /// Falls back to DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS and true if unavailable.
+    fn read_discovery_config(&self) -> (u64, bool) {
+        let config_path = self.phantom_root.join("phantom_config.json");
+        let total_timeout_ms = read_nested_config(&config_path, &["discovery", "total_timeout_ms"])
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS);
+        let early_exit = read_nested_config(&config_path, &["discovery", "early_exit_on_first_worker"])
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(true);
+        (total_timeout_ms, early_exit)
     }
 
     fn emit_deploy_progress(&self, step: usize, total: usize, label: &str, fraction: f64) {
@@ -377,6 +392,10 @@ impl PhantomDeployer {
                 "readiness_probe_interval_ms":  500,
                 "readiness_max_attempts":       20,
                 "readiness_attempt_timeout_ms": 1000
+            },
+            "discovery": {
+                "total_timeout_ms":            10000,
+                "early_exit_on_first_worker":  true
             },
             "execution_modes": {
                 "default_mode": "manual"
@@ -752,10 +771,13 @@ impl PhantomDeployer {
         }
         self.emit_scan_log("Waiting for worker manifests…");
 
+        let (total_timeout_ms, early_exit) = self.read_discovery_config();
         let addrs = broadcast_addrs.clone();
-        let manifests = tokio::task::spawn_blocking(move || discovery::discover_workers(&addrs))
-            .await
-            .map_err(|e| format!("Discovery task panicked: {e}"))?;
+        let manifests = tokio::task::spawn_blocking(move || {
+            discovery::discover_single_window(&addrs, total_timeout_ms, early_exit, None)
+        })
+        .await
+        .map_err(|e| format!("Discovery task panicked: {e}"))?;
 
         self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
 
@@ -821,11 +843,55 @@ impl PhantomDeployer {
 
         self.emit_deploy_progress(10, TOTAL_STEPS, "Scanning LAN", 10_f64 / TOTAL_STEPS as f64);
 
+        // Dependency Initialization Log — measure each dependency before discovery
+        let mut dependency_init_entries = Vec::new();
+
+        let config_start = std::time::Instant::now();
+        let (total_timeout_ms, early_exit) = self.read_discovery_config();
+        let config_duration = config_start.elapsed().as_millis() as u64;
+        dependency_init_entries.push(DependencyInitEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            item: "config_load (phantom_config.json discovery section)".to_string(),
+            success: true,
+            duration_ms: config_duration,
+        });
+
+        let net_start = std::time::Instant::now();
         let base_ips = local_ip_bases();
         let broadcast_addrs: Vec<String> = base_ips
             .iter()
             .filter_map(|b| base_to_broadcast(b))
             .collect();
+        let net_duration = net_start.elapsed().as_millis() as u64;
+        dependency_init_entries.push(DependencyInitEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            item: "network_interface_enumeration".to_string(),
+            success: !broadcast_addrs.is_empty(),
+            duration_ms: net_duration,
+        });
+
+        let (probe_attempts, probe_success) = self
+            .readiness_result
+            .lock()
+            .map(|r| *r)
+            .unwrap_or((0, false));
+        let probe_interval = read_nested_config(&self.phantom_root.join("phantom_config.json"), &["worker", "readiness_probe_interval_ms"])
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(500);
+        let probe_timeout = read_nested_config(&self.phantom_root.join("phantom_config.json"), &["worker", "readiness_attempt_timeout_ms"])
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1000);
+        let probe_duration_ms = if probe_attempts > 0 {
+            (probe_attempts - 1) * probe_interval + probe_timeout
+        } else {
+            0
+        };
+        dependency_init_entries.push(DependencyInitEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            item: "worker_readiness_probe".to_string(),
+            success: probe_success,
+            duration_ms: probe_duration_ms,
+        });
 
         self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
         self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
@@ -834,17 +900,19 @@ impl PhantomDeployer {
         }
         self.emit_scan_log("Waiting for worker manifests…");
 
+        self.emit_scan_log(&format!(
+            "Discovery window: {} ms (early_exit={})",
+            total_timeout_ms, early_exit
+        ));
+
         let addrs = broadcast_addrs.clone();
-        let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || discover_workers_with_log(&addrs))
-            .await
-            .map_err(|e| format!("Discovery task panicked: {e}"))?;
+        let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || {
+            discover_workers_with_log(&addrs, total_timeout_ms, early_exit, dependency_init_entries)
+        })
+        .await
+        .map_err(|e| format!("Discovery task panicked: {e}"))?;
 
         // Enrich the discovery log with readiness probe results (set by step 9).
-        let (probe_attempts, probe_success) = self
-            .readiness_result
-            .lock()
-            .map(|r| *r)
-            .unwrap_or((0, false));
         discovery_log.set_readiness_result(probe_attempts, probe_success);
 
         self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
@@ -974,10 +1042,20 @@ pub async fn scan_and_register_workers(
     emit_scan_log_opt(&scan_log_emitter, "Broadcasting DISCOVER_WORKERS…");
     emit_scan_log_opt(&scan_log_emitter, "Waiting for worker manifests…");
 
+    let config_path = phantom_root.join("phantom_config.json");
+    let total_timeout_ms = read_nested_config(&config_path, &["discovery", "total_timeout_ms"])
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS);
+    let early_exit = read_nested_config(&config_path, &["discovery", "early_exit_on_first_worker"])
+        .and_then(|s| s.parse::<bool>().ok())
+        .unwrap_or(true);
+
     let addrs = broadcast_addrs.clone();
-    let manifests = tokio::task::spawn_blocking(move || discovery::discover_workers(&addrs))
-        .await
-        .map_err(|e| format!("Discovery task panicked: {e}"))?;
+    let manifests = tokio::task::spawn_blocking(move || {
+        discovery::discover_single_window(&addrs, total_timeout_ms, early_exit, None)
+    })
+    .await
+    .map_err(|e| format!("Discovery task panicked: {e}"))?;
 
     emit_scan_log_opt(&scan_log_emitter, &format!("Received {} manifest(s)", manifests.len()));
 
