@@ -112,47 +112,86 @@ pub(crate) fn discover_single_window(
     let bind_start = std::time::Instant::now();
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => {
+            let dur = bind_start.elapsed().as_millis() as u64;
             if let Some(l) = log {
                 l.add_dependency_init_entry(DependencyInitEntry {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     item: "socket_bind (UDP 0.0.0.0:0)".to_string(),
                     success: true,
-                    duration_ms: bind_start.elapsed().as_millis() as u64,
+                    duration_ms: dur,
                 });
+                l.add_full_deploy_entry("socket_create", true, dur, None, None);
             }
             s
         }
         Err(e) => {
+            let dur = bind_start.elapsed().as_millis() as u64;
+            let err_msg = e.to_string();
             if let Some(l) = log {
                 l.push_raw(&format!("bind error: {e}"));
                 l.add_dependency_init_entry(DependencyInitEntry {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     item: "socket_bind (UDP 0.0.0.0:0)".to_string(),
                     success: false,
-                    duration_ms: bind_start.elapsed().as_millis() as u64,
+                    duration_ms: dur,
                 });
+                l.add_full_deploy_entry("socket_create", false, dur, None, Some(err_msg));
             }
             return vec![];
         }
     };
-    socket.set_broadcast(true).ok();
+    let broadcast_ok = socket.set_broadcast(true).is_ok();
+    if let Some(l) = log {
+        l.add_full_deploy_entry(
+            "socket_set_broadcast",
+            broadcast_ok,
+            0,
+            Some(serde_json::json!({"flag": true})),
+            if broadcast_ok {
+                None
+            } else {
+                Some("set_broadcast failed".to_string())
+            },
+        );
+    }
 
     let mut packets_sent = 0u32;
 
     // Send to 127.0.0.1
     let target_loopback = format!("127.0.0.1:{}", DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok() {
+    let loopback_start = std::time::Instant::now();
+    let loopback_ok = socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok();
+    if loopback_ok {
         packets_sent += 1;
         if let Some(l) = log {
             l.inc_packets_sent();
             l.push_raw(&format!("Sent DISCOVER_WORKERS to {target_loopback}"));
+            l.add_full_deploy_entry(
+                "discovery_send_loopback",
+                true,
+                loopback_start.elapsed().as_millis() as u64,
+                Some(serde_json::json!({"target": &target_loopback})),
+                None,
+            );
         }
+    } else if let Some(l) = log {
+        l.add_full_deploy_entry(
+            "discovery_send_loopback",
+            false,
+            loopback_start.elapsed().as_millis() as u64,
+            Some(serde_json::json!({"target": &target_loopback})),
+            Some("send_to failed".to_string()),
+        );
     }
 
     // Send to each broadcast address
-    for addr in broadcast_addrs {
-        let target = format!("{}:{}", addr, DISCOVERY_PORT);
-        if socket.send_to(DISCOVER_PAYLOAD, &target).is_ok() {
+    let broadcast_targets: Vec<String> = broadcast_addrs
+        .iter()
+        .map(|a| format!("{}:{}", a, DISCOVERY_PORT))
+        .collect();
+    let broadcast_start = std::time::Instant::now();
+    for target in &broadcast_targets {
+        if socket.send_to(DISCOVER_PAYLOAD, target).is_ok() {
             packets_sent += 1;
             if let Some(l) = log {
                 l.inc_packets_sent();
@@ -160,8 +199,27 @@ pub(crate) fn discover_single_window(
             }
         }
     }
+    if let Some(l) = log {
+        l.add_full_deploy_entry(
+            "discovery_send_broadcast",
+            true,
+            broadcast_start.elapsed().as_millis() as u64,
+            Some(serde_json::json!({"targets": &broadcast_targets})),
+            None,
+        );
+    }
 
     if let Some(l) = log {
+        l.add_full_deploy_entry(
+            "discovery_listen_loop_start",
+            true,
+            0,
+            Some(serde_json::json!({
+                "total_timeout_ms": total_timeout_ms,
+                "early_exit_on_first_worker": early_exit_on_first_worker
+            })),
+            None,
+        );
         l.push_raw(&format!(
             "Listening for up to {} ms (early_exit={})",
             total_timeout_ms, early_exit_on_first_worker
@@ -206,6 +264,41 @@ pub(crate) fn discover_single_window(
                                 dm.port,
                                 dm.signature_verified
                             ));
+                            l.add_full_deploy_entry(
+                                "discovery_recv",
+                                true,
+                                0,
+                                Some(serde_json::json!({
+                                    "source_ip": source_ip,
+                                    "bytes": n,
+                                    "worker_id": dm.manifest.worker_id
+                                })),
+                                None,
+                            );
+                            l.add_full_deploy_entry(
+                                "discovery_manifest_parse",
+                                true,
+                                0,
+                                Some(serde_json::json!({
+                                    "worker_id": dm.manifest.worker_id,
+                                    "port": dm.port
+                                })),
+                                None,
+                            );
+                            l.add_full_deploy_entry(
+                                "discovery_signature_validation",
+                                dm.signature_verified,
+                                0,
+                                Some(serde_json::json!({
+                                    "worker_id": dm.manifest.worker_id,
+                                    "verified": dm.signature_verified
+                                })),
+                                if dm.signature_verified {
+                                    None
+                                } else {
+                                    Some("signature verification failed".to_string())
+                                },
+                            );
                         }
                         if seen.insert(dm.manifest.worker_id.clone()) {
                             manifests.push(dm);
@@ -216,10 +309,24 @@ pub(crate) fn discover_single_window(
                             "  parse failed: {}",
                             raw.chars().take(80).collect::<String>()
                         ));
+                        l.add_full_deploy_entry(
+                            "discovery_manifest_parse",
+                            false,
+                            0,
+                            Some(serde_json::json!({"raw_preview": raw.chars().take(80).collect::<String>()})),
+                            Some("invalid manifest".to_string()),
+                        );
                     }
                 } else if let Some(l) = log {
                     l.inc_manifest_error();
                     l.push_raw("  invalid UTF-8");
+                    l.add_full_deploy_entry(
+                        "discovery_manifest_parse",
+                        false,
+                        0,
+                        None,
+                        Some("invalid UTF-8".to_string()),
+                    );
                 }
 
                 if early_exit_on_first_worker && !manifests.is_empty() {
@@ -239,6 +346,16 @@ pub(crate) fn discover_single_window(
     let end_rfc3339 = chrono::Utc::now().to_rfc3339();
     let duration_ms = start.elapsed().as_millis() as u64;
     if let Some(l) = log {
+        l.add_full_deploy_entry(
+            "discovery_listen_loop_end",
+            true,
+            duration_ms,
+            Some(serde_json::json!({
+                "poll_cycles": poll_cycles,
+                "worker_count": manifests.len()
+            })),
+            None,
+        );
         l.set_discovery_timing(
             &start_rfc3339,
             &end_rfc3339,
@@ -291,11 +408,13 @@ pub fn discover_workers(broadcast_addrs: &[String]) -> Vec<DiscoveredManifest> {
 /// Uses configurable `total_timeout_ms` and `early_exit_on_first_worker`.
 /// Timing data is recorded in the log for Phase 3 "Discovery Timing Breakdown".
 /// `dependency_init_entries` are prepended to the Dependency Initialization Log.
+/// `full_deploy_entries` (steps 1–22 from deployer) are prepended to the Full Deployment Log.
 pub fn discover_workers_with_log(
     broadcast_addrs: &[String],
     total_timeout_ms: u64,
     early_exit_on_first_worker: bool,
     dependency_init_entries: impl IntoIterator<Item = super::discovery_log::DependencyInitEntry>,
+    full_deploy_entries: impl IntoIterator<Item = super::discovery_log::FullDeployLogEntry>,
 ) -> (Vec<DiscoveredManifest>, super::discovery_log::DiscoveryLog) {
     let mut interfaces: Vec<String> = vec!["127.0.0.1".to_string()];
     interfaces.extend(broadcast_addrs.iter().cloned());
@@ -304,6 +423,7 @@ pub fn discover_workers_with_log(
     for entry in dependency_init_entries {
         log.add_dependency_init_entry(entry);
     }
+    log.add_full_deploy_entries(full_deploy_entries);
     log.push_raw("Single-window discovery (127.0.0.1 + broadcast)…");
 
     let manifests =

@@ -5,6 +5,19 @@
 
 use serde::Serialize;
 
+/// Single entry in the Full Deployment Initialization Log (Phase 4).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FullDeployLogEntry {
+    pub timestamp: String,
+    pub step_index: u32,
+    pub step_name: String,
+    pub success: bool,
+    pub duration_ms: u64,
+    pub metadata: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+}
+
 /// Single entry in the Dependency Initialization Log (Phase 3).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +59,8 @@ pub struct DiscoveryLog {
     pub discovery_total_timeout_ms: u64,
     /// Number of recv poll cycles in the discovery loop.
     pub discovery_poll_cycles: u32,
+    /// Full Deployment Initialization Log — every step from Deploy click to discovery (Phase 4).
+    pub full_deploy_log: Vec<FullDeployLogEntry>,
 }
 
 impl DiscoveryLog {
@@ -69,6 +84,29 @@ impl DiscoveryLog {
                     "timed out"
                 },
                 self.readiness_probe_attempts,
+            ));
+        }
+        lines.push("--- Full Deployment Initialization Log ---".to_string());
+        for entry in &self.full_deploy_log {
+            let meta = entry
+                .metadata
+                .as_ref()
+                .map(|v| format!(" | {:?}", v))
+                .unwrap_or_default();
+            let err = entry
+                .error_message
+                .as_ref()
+                .map(|e| format!(" | error: {e}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "{} | #{} | {} | {} | {} ms{}{}",
+                entry.timestamp,
+                entry.step_index,
+                entry.step_name,
+                if entry.success { "ok" } else { "FAIL" },
+                entry.duration_ms,
+                meta,
+                err
             ));
         }
         lines.push("--- Discovery Timing Breakdown ---".to_string());
@@ -132,6 +170,8 @@ pub struct DiscoveryLogBuilder {
     dependency_init_log: Vec<DependencyInitEntry>,
     discovery_total_timeout_ms: u64,
     discovery_poll_cycles: u32,
+    full_deploy_log: Vec<FullDeployLogEntry>,
+    step_index_counter: u32,
 }
 
 impl DiscoveryLogBuilder {
@@ -154,6 +194,39 @@ impl DiscoveryLogBuilder {
             dependency_init_log: Vec::new(),
             discovery_total_timeout_ms: 0,
             discovery_poll_cycles: 0,
+            full_deploy_log: Vec::new(),
+            step_index_counter: 0,
+        }
+    }
+
+    /// Add a Full Deployment Initialization Log entry. Step index auto-increments.
+    pub fn add_full_deploy_entry(
+        &mut self,
+        step_name: impl Into<String>,
+        success: bool,
+        duration_ms: u64,
+        metadata: Option<serde_json::Value>,
+        error_message: Option<String>,
+    ) {
+        self.step_index_counter += 1;
+        self.full_deploy_log.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: self.step_index_counter,
+            step_name: step_name.into(),
+            success,
+            duration_ms,
+            metadata,
+            error_message,
+        });
+    }
+
+    /// Add pre-built Full Deployment entries (e.g. from deployer). Preserves step_index.
+    pub fn add_full_deploy_entries(&mut self, entries: impl IntoIterator<Item = FullDeployLogEntry>) {
+        for e in entries {
+            if e.step_index > self.step_index_counter {
+                self.step_index_counter = e.step_index;
+            }
+            self.full_deploy_log.push(e);
         }
     }
 
@@ -234,6 +307,7 @@ impl DiscoveryLogBuilder {
             dependency_init_log: self.dependency_init_log,
             discovery_total_timeout_ms: self.discovery_total_timeout_ms,
             discovery_poll_cycles: self.discovery_poll_cycles,
+            full_deploy_log: self.full_deploy_log,
         }
     }
 }

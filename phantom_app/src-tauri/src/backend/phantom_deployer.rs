@@ -2,10 +2,13 @@ use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use tokio::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use super::discovery::{
     self, base_to_broadcast, discover_workers_with_log, DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS,
 };
-use super::discovery_log::{DependencyInitEntry, DiscoveryLog};
+use super::discovery_log::{DependencyInitEntry, DiscoveryLog, FullDeployLogEntry};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -460,15 +463,17 @@ impl PhantomDeployer {
             .await
             .map_err(|e| format!("mkdir state: {e}"))?;
 
-        Command::new(python.to_string_lossy().as_ref())
-            .args([
-                run_py.to_string_lossy().as_ref(),
-                "--host", &host,
-                "--port", &port,
-                "--security", &security_level,
-            ])
-            .env("PHANTOM_STATE_DIR", state_dir.to_string_lossy().as_ref())
-            .spawn()
+        let mut cmd = Command::new(python.to_string_lossy().as_ref());
+        cmd.args([
+            run_py.to_string_lossy().as_ref(),
+            "--host", &host,
+            "--port", &port,
+            "--security", &security_level,
+        ])
+        .env("PHANTOM_STATE_DIR", state_dir.to_string_lossy().as_ref());
+        #[cfg(windows)]
+        cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        cmd.spawn()
             .map_err(|e| format!("Failed to start controller: {e}"))?;
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -624,6 +629,8 @@ impl PhantomDeployer {
             .arg(config_path.to_string_lossy().as_ref())
             .current_dir(&linux_worker_dir)
             .env("PYTHONPATH", linux_worker_dir.to_string_lossy().as_ref());
+        #[cfg(windows)]
+        cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         match cmd.spawn() {
             Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
@@ -664,6 +671,8 @@ impl PhantomDeployer {
             .arg(config_path.to_string_lossy().as_ref())
             .current_dir(&linux_worker_dir)
             .env("PYTHONPATH", linux_worker_dir.to_string_lossy().as_ref());
+        #[cfg(windows)]
+        cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         match cmd.spawn() {
             Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
@@ -835,10 +844,54 @@ impl PhantomDeployer {
     pub async fn run_pre_scan_deployment(&self) -> Result<DeploymentPreScanResult, String> {
         const TOTAL_STEPS: usize = 12;
 
+        // Full Deployment Initialization Log — collect entries 1–22
+        let mut full_deploy_entries: Vec<FullDeployLogEntry> = Vec::new();
+        let mut step_idx = 0u32;
+
+        step_idx += 1;
+        full_deploy_entries.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: step_idx,
+            step_name: "deploy_clicked".to_string(),
+            success: true,
+            duration_ms: 0,
+            metadata: None,
+            error_message: None,
+        });
+
         for i in 0..=9 {
             let label = Self::steps().get(i).copied().unwrap_or("…");
             self.emit_deploy_progress(i, TOTAL_STEPS, label, (i as f64) / (TOTAL_STEPS as f64));
-            self.run_step(i).await?;
+
+            let step_name = format!("step_{}_{}", i, match i {
+                0 => "create_venv",
+                1 => "install_python_deps",
+                2 => "install_phantom_core",
+                3 => "verify_gpu_plugins",
+                4 => "install_service",
+                5 => "bootstrap_config",
+                6 => "start_controller",
+                7 => "open_ports",
+                8 => "initialize_state",
+                9 => "start_local_worker",
+                _ => "unknown",
+            });
+            let step_start = std::time::Instant::now();
+            let result = self.run_step(i).await;
+            let duration_ms = step_start.elapsed().as_millis() as u64;
+
+            step_idx += 1;
+            full_deploy_entries.push(FullDeployLogEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                step_index: step_idx,
+                step_name,
+                success: result.is_ok(),
+                duration_ms,
+                metadata: Some(serde_json::json!({"step": i})),
+                error_message: result.as_ref().err().map(|e| e.clone()),
+            });
+
+            result?;
         }
 
         self.emit_deploy_progress(10, TOTAL_STEPS, "Scanning LAN", 10_f64 / TOTAL_STEPS as f64);
@@ -855,6 +908,16 @@ impl PhantomDeployer {
             success: true,
             duration_ms: config_duration,
         });
+        step_idx += 1;
+        full_deploy_entries.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: step_idx,
+            step_name: "config_load_phantom_config".to_string(),
+            success: true,
+            duration_ms: config_duration,
+            metadata: Some(serde_json::json!({"total_timeout_ms": total_timeout_ms, "early_exit": early_exit})),
+            error_message: None,
+        });
 
         let net_start = std::time::Instant::now();
         let base_ips = local_ip_bases();
@@ -868,6 +931,27 @@ impl PhantomDeployer {
             item: "network_interface_enumeration".to_string(),
             success: !broadcast_addrs.is_empty(),
             duration_ms: net_duration,
+        });
+        step_idx += 1;
+        full_deploy_entries.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: step_idx,
+            step_name: "network_interface_enumeration".to_string(),
+            success: !broadcast_addrs.is_empty(),
+            duration_ms: net_duration,
+            metadata: Some(serde_json::json!({"bases": base_ips, "broadcast_count": broadcast_addrs.len()})),
+            error_message: None,
+        });
+
+        step_idx += 1;
+        full_deploy_entries.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: step_idx,
+            step_name: "broadcast_address_calculation".to_string(),
+            success: !broadcast_addrs.is_empty(),
+            duration_ms: 0,
+            metadata: Some(serde_json::json!({"broadcast_addrs": &broadcast_addrs})),
+            error_message: None,
         });
 
         let (probe_attempts, probe_success) = self
@@ -892,6 +976,16 @@ impl PhantomDeployer {
             success: probe_success,
             duration_ms: probe_duration_ms,
         });
+        step_idx += 1;
+        full_deploy_entries.push(FullDeployLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            step_index: step_idx,
+            step_name: "readiness_probe_result".to_string(),
+            success: probe_success,
+            duration_ms: probe_duration_ms,
+            metadata: Some(serde_json::json!({"attempts": probe_attempts})),
+            error_message: if probe_success { None } else { Some("readiness probe timed out".to_string()) },
+        });
 
         self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
         self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
@@ -907,7 +1001,13 @@ impl PhantomDeployer {
 
         let addrs = broadcast_addrs.clone();
         let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || {
-            discover_workers_with_log(&addrs, total_timeout_ms, early_exit, dependency_init_entries)
+            discover_workers_with_log(
+                &addrs,
+                total_timeout_ms,
+                early_exit,
+                dependency_init_entries,
+                full_deploy_entries,
+            )
         })
         .await
         .map_err(|e| format!("Discovery task panicked: {e}"))?;
