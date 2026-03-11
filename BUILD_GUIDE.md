@@ -22,7 +22,7 @@
    - Run `./create_tags.ps1` when git is available in PATH
    - This will create annotated tags for v1.0.0 and v1.1.0
 
-2. **Application not built** - No `phantom.exe` exists
+2. **Application not built** - No `phantom_app.exe` exists
    - Rust and Node.js need to be installed
    - Run `./phantom_app/build.ps1` after installing prerequisites
 

@@ -17,20 +17,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: phantom_app/package-lock.json
+
       - name: Set up MSVC Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: phantom_app
+
+      - name: Build frontend
+        run: npm run build && node scripts/prepare-resources.mjs
+        working-directory: phantom_app
+
       - name: Build Phantom.exe (release mode)
         run: cargo build --release
+        working-directory: phantom_app/src-tauri
 
       - name: Upload Phantom.exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: phantom-exe
-          path: target/release/phantom.exe
+          path: phantom_app/src-tauri/target/release/phantom_app.exe
 
   publish:
     name: Publish Release
@@ -50,6 +66,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ./dist/phantom.exe
+          files: ./dist/phantom_app.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
