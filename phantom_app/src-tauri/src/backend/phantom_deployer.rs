@@ -495,8 +495,8 @@ impl PhantomDeployer {
             // Ports: 8080/tcp (controller), 8090/tcp (worker), 8095/udp (discovery)
             let rules: &[(&str, &str, &str)] = &[
                 ("PhantomController", "TCP", "8080"),
-                ("PhantomWorker",     "TCP", "8090"),
-                ("PhantomDiscovery",  "UDP", "8095"),
+                ("PhantomWorker", "TCP", "8090"),
+                ("PhantomDiscovery", "UDP", "8095"),
             ];
 
             for &(name, proto, port) in rules {
