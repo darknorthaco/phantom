@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use tauri::Emitter;
 use tokio::process::Command;
 
 use super::discovery::{self, base_to_broadcast, discover_workers_with_log};
