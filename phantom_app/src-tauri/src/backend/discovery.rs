@@ -301,6 +301,25 @@ fn broadcast_and_collect_with_log(
     manifests
 }
 
+/// Send a single UDP `PHANTOM_DISCOVER_WORKERS` probe to `127.0.0.1:8095`
+/// and return `true` if any response is received within `timeout_ms`.
+/// Used by the worker readiness probe loop in `start_local_worker()`.
+pub fn probe_worker_readiness(timeout_ms: u64) -> bool {
+    let socket = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .ok();
+    let target = format!("127.0.0.1:{}", DISCOVERY_PORT);
+    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    socket.recv_from(&mut buf).is_ok()
+}
+
 /// Run discovery with structured log. Returns (manifests, log).
 /// Use for deployment ceremony when diagnostics may be needed.
 pub fn discover_workers_with_log(

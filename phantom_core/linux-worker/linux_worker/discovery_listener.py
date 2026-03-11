@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -82,14 +83,35 @@ def run_discovery_listener(
     _signer = _init_signer(identity_dir)
 
     def listen() -> None:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(("0.0.0.0", DISCOVERY_PORT))
-            sock.settimeout(1.0)
-            logger.info("Discovery listener on 0.0.0.0:%s", DISCOVERY_PORT)
-        except OSError as e:
-            logger.warning("Discovery listener failed to bind: %s", e)
+        sock = None
+        last_error: Exception = OSError("unknown")
+        for attempt in range(1, 4):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(("0.0.0.0", DISCOVERY_PORT))
+                sock.settimeout(1.0)
+                logger.info("Discovery listener on 0.0.0.0:%s", DISCOVERY_PORT)
+                break
+            except OSError as e:
+                last_error = e
+                logger.warning(
+                    "Discovery listener bind attempt %d/3 failed: %s", attempt, e
+                )
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+                    sock = None
+                if attempt < 3:
+                    time.sleep(1)
+        else:
+            logger.error(
+                "Discovery listener failed to bind port %s after 3 attempts: %s",
+                DISCOVERY_PORT,
+                last_error,
+            )
             return
 
         while True:

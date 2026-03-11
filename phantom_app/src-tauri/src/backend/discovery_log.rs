@@ -18,6 +18,12 @@ pub struct DiscoveryLog {
     pub manifest_errors: u32,
     pub worker_count: usize,
     pub raw_entries: Vec<String>,
+    /// Number of readiness probe attempts made before the LAN scan.
+    pub readiness_probe_attempts: u32,
+    /// Whether the readiness probe received a response from the local worker.
+    pub readiness_probe_success: bool,
+    /// Actionable hints shown when worker_count == 0.
+    pub diagnostic_hints: Vec<String>,
 }
 
 impl DiscoveryLog {
@@ -32,11 +38,39 @@ impl DiscoveryLog {
         lines.push(format!("Signature failures: {}", self.signature_failures));
         lines.push(format!("Manifest parse errors: {}", self.manifest_errors));
         lines.push(format!("Worker count: {}", self.worker_count));
+        if self.readiness_probe_attempts > 0 {
+            lines.push(format!(
+                "Readiness probe: {} (attempts: {})",
+                if self.readiness_probe_success {
+                    "succeeded"
+                } else {
+                    "timed out"
+                },
+                self.readiness_probe_attempts,
+            ));
+        }
         lines.push("--- Raw entries ---".to_string());
         for entry in &self.raw_entries {
             lines.push(entry.clone());
         }
+        if self.worker_count == 0 && !self.diagnostic_hints.is_empty() {
+            lines.push("--- Possible causes ---".to_string());
+            for hint in &self.diagnostic_hints {
+                lines.push(format!("  • {hint}"));
+            }
+        }
         lines.join("\n")
+    }
+
+    /// Set readiness probe result (post-build enrichment).
+    pub fn set_readiness_result(&mut self, attempts: u32, success: bool) {
+        self.readiness_probe_attempts = attempts;
+        self.readiness_probe_success = success;
+    }
+
+    /// Append a diagnostic hint (shown when worker_count == 0).
+    pub fn add_diagnostic_hint(&mut self, hint: impl AsRef<str>) {
+        self.diagnostic_hints.push(hint.as_ref().to_string());
     }
 }
 
@@ -50,6 +84,9 @@ pub struct DiscoveryLogBuilder {
     signature_failures: u32,
     manifest_errors: u32,
     raw_entries: Vec<String>,
+    readiness_probe_attempts: u32,
+    readiness_probe_success: bool,
+    diagnostic_hints: Vec<String>,
 }
 
 impl DiscoveryLogBuilder {
@@ -63,6 +100,9 @@ impl DiscoveryLogBuilder {
             signature_failures: 0,
             manifest_errors: 0,
             raw_entries: Vec::new(),
+            readiness_probe_attempts: 0,
+            readiness_probe_success: false,
+            diagnostic_hints: Vec::new(),
         }
     }
 
@@ -86,6 +126,17 @@ impl DiscoveryLogBuilder {
         self.manifest_errors += 1;
     }
 
+    /// Record the outcome of the worker readiness probe.
+    pub fn set_readiness_result(&mut self, attempts: u32, success: bool) {
+        self.readiness_probe_attempts = attempts;
+        self.readiness_probe_success = success;
+    }
+
+    /// Append a diagnostic hint (shown when worker_count == 0).
+    pub fn add_diagnostic_hint(&mut self, hint: impl AsRef<str>) {
+        self.diagnostic_hints.push(hint.as_ref().to_string());
+    }
+
     pub fn build(self, worker_count: usize) -> DiscoveryLog {
         DiscoveryLog {
             timestamp: self.timestamp,
@@ -97,6 +148,9 @@ impl DiscoveryLogBuilder {
             manifest_errors: self.manifest_errors,
             worker_count,
             raw_entries: self.raw_entries,
+            readiness_probe_attempts: self.readiness_probe_attempts,
+            readiness_probe_success: self.readiness_probe_success,
+            diagnostic_hints: self.diagnostic_hints,
         }
     }
 }
