@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 """
 Config Writer
-Writes llm_config.json and worker_registry.json during installation.
+Writes phantom_config.json (via ConfigBootstrap), llm_config.json, and
+worker_registry.json during installation.
+
+ConfigBootstrap is the authoritative writer of phantom_config.json at
+deploy Step 4.5.  It must be called after the Controller Selection Ceremony
+(§1) and before the controller starts (Step 5).  It writes the file
+atomically and preserves a timestamped backup of any previous version.
 """
+
 from __future__ import annotations
 
 import json
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
+
+# Allow import from phantom_core when running from the installer tree.
+_phantom_core_dir = Path(__file__).parent.parent.parent / "phantom_core"
+if _phantom_core_dir.exists() and str(_phantom_core_dir) not in sys.path:
+    sys.path.insert(0, str(_phantom_core_dir))
 
 
 class ConfigWriter:
@@ -50,9 +64,7 @@ class ConfigWriter:
     # Worker registry
     # ------------------------------------------------------------------ #
 
-    def write_worker_registry(
-        self, workers: List[Dict], task_master: Dict
-    ) -> Path:
+    def write_worker_registry(self, workers: List[Dict], task_master: Dict) -> Path:
         """Write worker_registry.json with selected workers and Task Master.
 
         Args:
@@ -72,8 +84,126 @@ class ConfigWriter:
 
 
 # ---------------------------------------------------------------------------
+# ConfigBootstrap — Step 4.5 writer for phantom_config.json
+# ---------------------------------------------------------------------------
+
+
+class ConfigBootstrap:
+    """Atomic writer for ``phantom_config.json`` at deploy Step 4.5.
+
+    This is the **only** component permitted to create the initial
+    ``phantom_config.json``.  It must be called after the Controller
+    Selection Ceremony (§1) and before the controller process starts
+    (Step 5).
+
+    Write semantics:
+    - Writes to ``<config_path>.tmp`` first, then atomically renames to
+      ``<config_path>``.  An interrupted write leaves the original file
+      untouched.
+    - Before overwriting an existing file, copies it to
+      ``<config_path>.bak.<UTC-timestamp>``.
+    - Annotates the written file with ``written_by_step: "4.5"`` and
+      ``written_at: <ISO-8601 UTC timestamp>``.
+    """
+
+    def __init__(self, config_path: Path):
+        """Initialise with the *absolute* path where phantom_config.json
+        will be written (e.g. ``~/.phantom/phantom_config.json``).
+        """
+        self.config_path = Path(config_path)
+
+    # ------------------------------------------------------------------
+
+    def write(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        security: str = "disabled",
+        identity_fingerprint: str = "",
+        execution_mode: str = "manual",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Path:
+        """Build and atomically write ``phantom_config.json``.
+
+        Args:
+            host:                 Controller host address (from §1 ceremony).
+            port:                 Controller port (default 8080).
+            security:             Security level — ``"disabled"``, ``"basic"``,
+                                  or ``"full"``.
+            identity_fingerprint: Hex-encoded Ed25519 public-key fingerprint
+                                  (first 16 bytes) from IdentityManager (§1).
+            execution_mode:       Default execution mode written into
+                                  ``execution_modes.default_mode``.
+            extra:                Optional dict of additional top-level keys
+                                  to merge into the config (e.g. for future
+                                  schema extensions).
+
+        Returns:
+            The path of the written config file.
+
+        Raises:
+            ValueError: if ``security`` is not one of the allowed values.
+            OSError: if the file cannot be written.
+        """
+        allowed_security = {"disabled", "basic", "full"}
+        if security not in allowed_security:
+            raise ValueError(
+                f"security must be one of {allowed_security!r}; got {security!r}"
+            )
+
+        now_iso = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+
+        config: Dict[str, Any] = {
+            "controller": {
+                "host": host,
+                "port": port,
+                "security": security,
+                "identity_fingerprint": identity_fingerprint,
+            },
+            "ports": {
+                "controller_api": {"port": 8080, "protocol": "tcp", "required": True},
+                "worker_http": {"port": 8090, "protocol": "tcp", "required": True},
+                "discovery_udp": {"port": 8095, "protocol": "udp", "required": True},
+                "socket_infra": {"port": 8081, "protocol": "tcp", "required": False},
+            },
+            "worker": {
+                "readiness_probe_interval_ms": 500,
+                "readiness_max_attempts": 20,
+                "readiness_attempt_timeout_ms": 1000,
+            },
+            "execution_modes": {
+                "default_mode": execution_mode,
+            },
+            "config_version": "1.0",
+            "written_at": now_iso,
+            "written_by_step": "4.5",
+        }
+
+        if extra:
+            for k, v in extra.items():
+                if k not in config:
+                    config[k] = v
+
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Backup any existing file before overwriting.
+        if self.config_path.exists():
+            ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup = self.config_path.with_suffix(f".json.bak.{ts}")
+            self.config_path.replace(backup)
+
+        # Atomic write: .tmp → rename.
+        tmp = self.config_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        tmp.replace(self.config_path)
+
+        return self.config_path
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _worker_entry(w: Dict) -> Dict:
     return {

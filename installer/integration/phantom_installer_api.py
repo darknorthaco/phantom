@@ -7,6 +7,7 @@ This module is the single integration point between the wizard UI and the
 existing Phantom installer machinery.  It MUST NOT modify any constitutional
 pipeline code.  All actions are logged to installation_audit.log.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,7 @@ from backend_interface.model_downloader import (  # noqa: E402
     DownloadError,
     ModelDownloader,
 )
-from backend_interface.config_writer import ConfigWriter  # noqa: E402
+from backend_interface.config_writer import ConfigWriter, ConfigBootstrap  # noqa: E402
 from backend_interface.installer_driver import (  # noqa: E402
     INSTALL_STAGES,
     InstallerDriver,
@@ -67,6 +68,7 @@ class PhantomInstallerAPI:
         self._worker_adapter: Optional[WorkerDiscoveryAdapter] = None
         self._model_downloader: Optional[ModelDownloader] = None
         self._config_writer: Optional[ConfigWriter] = None
+        self._config_bootstrap: Optional[ConfigBootstrap] = None
         self._installer_driver: Optional[InstallerDriver] = None
         self._dep_fetcher: Optional[DependencyFetcher] = None
         self._reboot_manager: Optional[RebootManager] = None
@@ -145,9 +147,7 @@ class PhantomInstallerAPI:
             workers = self.worker_adapter.discover_manual(progress_cb=progress_cb)
         else:
             workers = []
-        self._log(
-            f"Worker discovery complete: {len(workers)} worker(s) found"
-        )
+        self._log(f"Worker discovery complete: {len(workers)} worker(s) found")
         return workers
 
     # ------------------------------------------------------------------ #
@@ -191,15 +191,67 @@ class PhantomInstallerAPI:
         self._log(f"LLM config written: {path}")
         return path
 
-    def write_worker_registry(
-        self, workers: List[Dict], task_master: Dict
-    ) -> Path:
+    def write_worker_registry(self, workers: List[Dict], task_master: Dict) -> Path:
         """Write worker_registry.json."""
         path = self.config_writer.write_worker_registry(workers, task_master)
         self._log(
             f"Worker registry written: {path} "
             f"(task_master={task_master.get('ip', '?')})"
         )
+        return path
+
+    # ------------------------------------------------------------------ #
+    # Step 4.5 — phantom_config.json bootstrap
+    # ------------------------------------------------------------------ #
+
+    def bootstrap_config(
+        self,
+        config_path: Path,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        security: str = "disabled",
+        identity_fingerprint: str = "",
+        execution_mode: str = "manual",
+    ) -> Path:
+        """Write phantom_config.json atomically at deploy Step 4.5.
+
+        This is the **authoritative** writer for phantom_config.json.  It
+        must be called after the Controller Selection Ceremony and before
+        the controller process is started (Step 5).
+
+        A timestamped backup is created before overwriting any existing
+        config file, and the write is atomic (tmp → rename).
+
+        Args:
+            config_path:          Absolute path where phantom_config.json
+                                  should be written (e.g.
+                                  ``~/.phantom/phantom_config.json``).
+            host:                 Controller host from §1 ceremony.
+            port:                 Controller port (default 8080).
+            security:             ``"disabled"``, ``"basic"``, or ``"full"``.
+            identity_fingerprint: Hex Ed25519 fingerprint from IdentityManager.
+            execution_mode:       Default execution mode.
+
+        Returns:
+            Path of the written config file.
+        """
+        self._log(
+            f"[Step 4.5] Bootstrapping phantom_config.json at {config_path} "
+            f"(host={host}, port={port}, security={security})"
+        )
+        if self._config_bootstrap is None:
+            self._config_bootstrap = ConfigBootstrap(Path(config_path))
+        else:
+            self._config_bootstrap = ConfigBootstrap(Path(config_path))
+
+        path = self._config_bootstrap.write(
+            host=host,
+            port=port,
+            security=security,
+            identity_fingerprint=identity_fingerprint,
+            execution_mode=execution_mode,
+        )
+        self._log(f"[Step 4.5] phantom_config.json written: {path}")
         return path
 
     # ------------------------------------------------------------------ #
@@ -280,7 +332,8 @@ class PhantomInstallerAPI:
         self._log(f"Resolved {len(specs)} dependency specs")
 
         ok = self.dep_fetcher.download_wheels(
-            requirements_path, status_cb=status_cb,
+            requirements_path,
+            status_cb=status_cb,
         )
         all_ok, bad = self.dep_fetcher.verify_wheels(status_cb=status_cb)
         if bad:

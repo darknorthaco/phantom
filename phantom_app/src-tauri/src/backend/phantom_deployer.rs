@@ -45,6 +45,7 @@ impl PhantomDeployer {
             "Installing Phantom Core",
             "Verifying GPU plugins",
             "Installing Phantom service",
+            "Bootstrapping config",          // Step 5 (§8 Step 4.5)
             "Starting controller",
             "Opening ports",
             "Initializing state",
@@ -61,12 +62,13 @@ impl PhantomDeployer {
             2 => self.install_phantom_core().await,
             3 => self.verify_gpu_plugins().await,
             4 => self.install_service().await,
-            5 => self.start_controller().await,
-            6 => self.open_ports().await,
-            7 => self.initialize_state().await,
-            8 => self.start_local_worker().await,
-            9 => self.scan_lan().await,
-            10 => self.load_execution_modes().await,
+            5 => self.bootstrap_config().await,  // §8 Step 4.5
+            6 => self.start_controller().await,
+            7 => self.open_ports().await,
+            8 => self.initialize_state().await,
+            9 => self.start_local_worker().await,
+            10 => self.scan_lan().await,
+            11 => self.load_execution_modes().await,
             _ => Err("Unknown deployment step".to_string()),
         }
     }
@@ -247,6 +249,70 @@ impl PhantomDeployer {
         Ok(())
     }
 
+    /// §8 Step 4.5 — write phantom_config.json atomically before the controller starts.
+    ///
+    /// Writes the full corrected schema (controller, ports, worker readiness,
+    /// execution_modes) to `<phantom_root>/phantom_config.json` using an atomic
+    /// tmp → rename pattern.  A timestamped backup of any pre-existing file is
+    /// preserved.
+    ///
+    /// This step MUST succeed before `start_controller` (Step 6) runs.
+    async fn bootstrap_config(&self) -> Result<(), String> {
+        let config_path = self.phantom_root.join("phantom_config.json");
+
+        // Preserve any existing config as a timestamped backup.
+        if config_path.exists() {
+            let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+            let backup = self.phantom_root.join(format!("phantom_config.json.bak.{ts}"));
+            tokio::fs::rename(&config_path, &backup)
+                .await
+                .map_err(|e| format!("Failed to back up phantom_config.json: {e}"))?;
+            log::info!("Backed up phantom_config.json → {}", backup.display());
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let config = serde_json::json!({
+            "controller": {
+                "host":                 "127.0.0.1",
+                "port":                 8080,
+                "security":             "disabled",
+                "identity_fingerprint": ""
+            },
+            "ports": {
+                "controller_api": { "port": 8080, "protocol": "tcp", "required": true  },
+                "worker_http":    { "port": 8090, "protocol": "tcp", "required": true  },
+                "discovery_udp":  { "port": 8095, "protocol": "udp", "required": true  },
+                "socket_infra":   { "port": 8081, "protocol": "tcp", "required": false }
+            },
+            "worker": {
+                "readiness_probe_interval_ms":  500,
+                "readiness_max_attempts":       20,
+                "readiness_attempt_timeout_ms": 1000
+            },
+            "execution_modes": {
+                "default_mode": "manual"
+            },
+            "config_version":  "1.0",
+            "written_at":      now,
+            "written_by_step": "4.5"
+        });
+
+        let tmp_path = self.phantom_root.join("phantom_config.json.tmp");
+        tokio::fs::write(
+            &tmp_path,
+            serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
+        )
+        .await
+        .map_err(|e| format!("Failed to write phantom_config.json.tmp: {e}"))?;
+
+        tokio::fs::rename(&tmp_path, &config_path)
+            .await
+            .map_err(|e| format!("Failed to rename phantom_config.json.tmp: {e}"))?;
+
+        log::info!("phantom_config.json written at step 4.5 ({})", config_path.display());
+        Ok(())
+    }
+
     async fn start_controller(&self) -> Result<(), String> {
         let python = venv_python(&self.phantom_root);
         // Prefer the deployed copy; fall back to engine_source (dev mode).
@@ -257,9 +323,24 @@ impl PhantomDeployer {
             self.engine_source.join("run.py")
         };
 
-        // Read security level from phantom_config.json (written by step 9).
-        // Falls back to "disabled" for first-launch and dev environments.
-        let security_level = read_controller_config(&self.phantom_root, "security_level")
+        // Read controller parameters from phantom_config.json (written at Step 4.5).
+        // No fallback: if the file is absent, Step 4.5 did not complete and this
+        // step must fail with a clear error rather than silently using defaults.
+        let config_path = self.phantom_root.join("phantom_config.json");
+        if !config_path.exists() {
+            return Err(format!(
+                "phantom_config.json not found at {:?}. \
+                 Step 4.5 (Bootstrap config) must complete successfully before \
+                 the controller can start.",
+                config_path
+            ));
+        }
+
+        let host = read_nested_config(&config_path, &["controller", "host"])
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let port = read_nested_config(&config_path, &["controller", "port"])
+            .unwrap_or_else(|| "8080".to_string());
+        let security_level = read_nested_config(&config_path, &["controller", "security"])
             .unwrap_or_else(|| "disabled".to_string());
 
         if !run_py.exists() {
@@ -274,8 +355,8 @@ impl PhantomDeployer {
         Command::new(python.to_string_lossy().as_ref())
             .args([
                 run_py.to_string_lossy().as_ref(),
-                "--host", "127.0.0.1",
-                "--port", "8080",
+                "--host", &host,
+                "--port", &port,
                 "--security", &security_level,
             ])
             .env("PHANTOM_STATE_DIR", state_dir.to_string_lossy().as_ref())
@@ -617,7 +698,7 @@ impl PhantomDeployer {
             .await
             .map_err(|e| format!("Failed to create phantom root: {e}"))?;
 
-        // LLM config
+        // LLM config (separate from phantom_config.json — governs LLM routing only).
         let llm_config_path = self.phantom_root.join("llm_config.json");
         if !llm_config_path.exists() {
             let default = serde_json::json!({
@@ -636,21 +717,47 @@ impl PhantomDeployer {
             log::info!("Default llm_config.json written (execution_mode: manual)");
         }
 
-        // Controller config (security level and connection settings)
+        // phantom_config.json was written at Step 4.5 (bootstrap_config).
+        // This step is idempotent: only add execution_modes.default_mode if
+        // absent from the Step 4.5 write.  Never overwrite the full file here.
         let controller_config_path = self.phantom_root.join("phantom_config.json");
-        if !controller_config_path.exists() {
-            let default = serde_json::json!({
-                "security_level": "disabled",
-                "controller_host": "127.0.0.1",
-                "controller_port": 8080
-            });
-            tokio::fs::write(
-                &controller_config_path,
-                serde_json::to_string_pretty(&default).map_err(|e| e.to_string())?,
-            )
-            .await
-            .map_err(|e| format!("Failed to write phantom_config.json: {e}"))?;
-            log::info!("Default phantom_config.json written (security_level: disabled)");
+        if controller_config_path.exists() {
+            let content = tokio::fs::read_to_string(&controller_config_path)
+                .await
+                .map_err(|e| format!("Failed to read phantom_config.json: {e}"))?;
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+                let needs_update = cfg
+                    .get("execution_modes")
+                    .and_then(|em| em.get("default_mode"))
+                    .is_none();
+                if needs_update {
+                    if let Some(obj) = cfg.as_object_mut() {
+                        obj.entry("execution_modes")
+                            .or_insert(serde_json::json!({}))
+                            .as_object_mut()
+                            .map(|em| em.insert(
+                                "default_mode".to_string(),
+                                serde_json::json!("manual"),
+                            ));
+                    }
+                    let tmp = self.phantom_root.join("phantom_config.json.tmp");
+                    tokio::fs::write(
+                        &tmp,
+                        serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?,
+                    )
+                    .await
+                    .map_err(|e| format!("Failed to write phantom_config.json.tmp: {e}"))?;
+                    tokio::fs::rename(&tmp, &controller_config_path)
+                        .await
+                        .map_err(|e| format!("Failed to update phantom_config.json: {e}"))?;
+                    log::info!("phantom_config.json: execution_modes.default_mode added (idempotent step 10)");
+                }
+            }
+        } else {
+            log::warn!(
+                "phantom_config.json not found at step 10 — Step 4.5 (bootstrap_config) \
+                 may not have run. Execution modes will not be persisted."
+            );
         }
 
         Ok(())
@@ -727,13 +834,31 @@ fn venv_pip(phantom_root: &PathBuf) -> PathBuf {
     return phantom_root.join("venv/bin/pip");
 }
 
-/// Read a string field from `~/.phantom/phantom_config.json`.
+/// Read a string field from a flat `phantom_config.json` (legacy flat schema).
 /// Returns `None` if the file doesn't exist or the field is missing.
+#[allow(dead_code)]
 fn read_controller_config(phantom_root: &PathBuf, key: &str) -> Option<String> {
     let path = phantom_root.join("phantom_config.json");
     let content = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     json.get(key)?.as_str().map(|s| s.to_string())
+}
+
+/// Read a string (or number coerced to string) from a **nested** path inside
+/// `phantom_config.json`.  `keys` is a path of 1–N string segments, e.g.
+/// `&["controller", "security"]`.  Returns `None` if the file, the path, or
+/// the value is absent.
+fn read_nested_config(path: &std::path::Path, keys: &[&str]) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut node: serde_json::Value = serde_json::from_str(&content).ok()?;
+    for key in keys {
+        node = node.get(key)?.clone();
+    }
+    match &node {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 /// Derive /24 base (e.g. "192.168.1.1") from an IPv4 address string.
