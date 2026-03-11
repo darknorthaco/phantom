@@ -8,6 +8,50 @@ interface Worker {
   port: number;
   gpu_info: Record<string, unknown>;
   status: string;
+  signature_verified?: boolean;
+  fingerprint?: string;
+  key_changed?: boolean;
+}
+
+/** Signature status badge for §3 manifest verification. */
+function SignatureBadge({ worker }: { worker: Worker }) {
+  if (worker.key_changed) {
+    return (
+      <span
+        className="status-badge"
+        style={{ background: 'var(--accent-crimson, #dc3545)', color: '#fff' }}
+        title="Public key changed — re-approval required"
+      >
+        ⚠ Key Changed
+      </span>
+    );
+  }
+  if (worker.signature_verified === true) {
+    return (
+      <span
+        className="status-badge active"
+        title={`Verified · ${worker.fingerprint ?? ''}`}
+      >
+        ✓ Verified
+      </span>
+    );
+  }
+  if (worker.signature_verified === false) {
+    return (
+      <span
+        className="status-badge offline"
+        title="Signature missing or invalid — not eligible for auto-selection"
+      >
+        ✗ Unverified
+      </span>
+    );
+  }
+  // undefined — legacy worker, no sig info
+  return (
+    <span className="status-badge" style={{ opacity: 0.6 }} title="No signature data (legacy worker)">
+      — N/A
+    </span>
+  );
 }
 
 export default function WorkersPanel() {
@@ -120,6 +164,7 @@ export default function WorkersPanel() {
               <th>Host</th>
               <th>Port</th>
               <th>GPU</th>
+              <th>Signature</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -130,6 +175,7 @@ export default function WorkersPanel() {
                 <td>{w.host}</td>
                 <td>{w.port}</td>
                 <td>{(w.gpu_info as Record<string, string>)?.name ?? '—'}</td>
+                <td><SignatureBadge worker={w} /></td>
                 <td>
                   <span className={`status-badge ${w.status === 'active' ? 'active' : 'offline'}`}>
                     {w.status}

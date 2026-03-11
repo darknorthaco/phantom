@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use super::discovery::{self, base_to_broadcast, WorkerManifest};
+use super::discovery::{self, base_to_broadcast};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -568,15 +568,15 @@ impl PhantomDeployer {
         let controller = PhantomApiClient::new("http://127.0.0.1:8080");
         let mut registered = 0usize;
 
-        for m in manifests {
+        for m in &manifests {
             let host = m.registration_host();
-            self.emit_scan_log(&format!("Received worker manifest from {}:{}", host, m.port));
+            self.emit_scan_log(&format!("Received worker manifest from {}:{} (sig={})", host, m.port, m.signature_verified));
             self.emit_scan_log("Validating manifest…");
             let req = RegisterWorkerRequest {
-                worker_id: m.worker_id.clone(),
+                worker_id: m.manifest.worker_id.clone(),
                 host,
                 port: m.port,
-                gpu_info: m.gpu_info,
+                gpu_info: m.manifest.capabilities.clone(),
                 status: "active".to_string(),
             };
             match controller.register_worker(&req).await {
@@ -595,7 +595,7 @@ impl PhantomDeployer {
             let scan_path = self.phantom_root.join("lan_scan.json");
             let json_manifests: Vec<_> = manifests
                 .iter()
-                .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id}))
+                .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id()}))
                 .collect();
             let json = serde_json::to_string_pretty(&json_manifests).unwrap_or_else(|_| "[]".to_string());
             tokio::fs::write(&scan_path, json)
@@ -643,13 +643,13 @@ pub async fn scan_and_register_workers(
     let mut registered = 0usize;
     for m in &manifests {
         let host = m.registration_host();
-        emit_scan_log_opt(&scan_log_emitter, &format!("Received worker manifest from {}:{}", host, m.port));
+        emit_scan_log_opt(&scan_log_emitter, &format!("Received worker manifest from {}:{} (sig={})", host, m.port, m.signature_verified));
         emit_scan_log_opt(&scan_log_emitter, "Validating manifest…");
         let req = RegisterWorkerRequest {
-            worker_id: m.worker_id.clone(),
+            worker_id: m.manifest.worker_id.clone(),
             host,
             port: m.port,
-            gpu_info: m.gpu_info.clone(),
+            gpu_info: m.manifest.capabilities.clone(),
             status: "active".to_string(),
         };
         match controller.register_worker(&req).await {
@@ -659,7 +659,7 @@ pub async fn scan_and_register_workers(
             }
             Err(e) => {
                 emit_scan_log_opt(&scan_log_emitter, &format!("Registration failed: {e}"));
-                log::warn!("Failed to register {}: {e}", m.worker_id);
+                log::warn!("Failed to register {}: {e}", m.worker_id());
             }
         }
     }
@@ -669,7 +669,7 @@ pub async fn scan_and_register_workers(
         let scan_path = phantom_root.join("lan_scan.json");
         let json_manifests: Vec<_> = manifests
             .iter()
-            .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id}))
+            .map(|m| serde_json::json!({"ip": m.registration_host(), "port": m.port, "worker_id": m.worker_id()}))
             .collect();
         let json = serde_json::to_string_pretty(&json_manifests).unwrap_or_else(|_| "[]".to_string());
         let _ = tokio::fs::write(&scan_path, json).await;
