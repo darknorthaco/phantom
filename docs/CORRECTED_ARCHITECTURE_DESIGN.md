@@ -1,9 +1,9 @@
 # Phantom Distributed Compute Fabric — Corrected Architecture Design
 
 **Date:** 2026-03-10  
-**Basis:** FINAL_ARCHITECTURAL_CORRECTION_MAP.md, GAP_ANALYSIS_AUDIT_REPORT.md, ROOT_CAUSE_ANALYSIS_REPORT.md, Phantom Doctrine, Deploy-flow correction map, Trust model alignment, GPU discovery audit, DARPA DevOps audit  
+**Basis:** FINAL_ARCHITECTURAL_CORRECTION_MAP.md, GAP_ANALYSIS_AUDIT_REPORT.md, ROOT_CAUSE_ANALYSIS_REPORT.md, Phantom Doctrine  
 **Audience:** Senior engineers implementing Phantom's doctrine  
-**Method:** Design only. No code. No implementation details.
+**Scope:** Design only. No code. No implementation details.
 
 ---
 
@@ -25,159 +25,135 @@
 
 ### Purpose
 
-The Controller Selection Ceremony establishes — before any deployment step executes — which machine, address, and identity will serve as the sovereign controller for this Phantom domain. It surfaces the controller's cryptographic identity to the user and requires an explicit, informed decision about placement.
+The Controller Selection Ceremony is a mandatory pre-deploy gate that requires the user to explicitly choose controller placement, confirm the controller's cryptographic identity, and authorize the start of any deployment work. No installation step may execute until the ceremony completes.
 
-Doctrine principles satisfied:
-- **§2 Sovereign Domains:** The user asserts which node is sovereign. No authority is assumed.
-- **§3 Authentic Trust:** The controller identity (Ed25519) is generated or loaded and displayed before trust relationships are formed.
-- **§4 Transparent Operation:** The user sees exactly where the controller will run and what identity it will carry.
-- **§8 Reversibility:** The user may cancel or reconfigure before any installation step commits.
+This ceremony satisfies:
+- **§2 Sovereign Domains** — the user asserts which node is sovereign; no placement is assumed.
+- **§3 Authentic Trust** — the controller's Ed25519 identity is generated and displayed before any trust relationship can form.
+- **§4 Transparent Operation** — the user sees the exact address, port, and identity fingerprint before committing.
+- **§8 Reversibility** — cancellation at this stage leaves the system entirely unchanged.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-1 (controller selection missing), RC-12 (deploy flow assumes LAN trusted), RC-14 (deploy flow assumes controller config exists early).
-
-The current deploy flow hardcodes the controller address to `127.0.0.1:8080` and never asks the user where the controller should run, which device should be sovereign, or what identity the controller holds. The `identity_manager` exists and produces Ed25519 keypairs but is never invoked during deployment. The WizardWelcome screen obtains general consent ("configure your system as a compute controller") but offers no placement choice. This means:
-
-- Multi-device deployments silently fail or produce an unintended topology.
-- The controller identity is invisible to the user at the moment it matters most.
-- Users cannot exercise domain sovereignty because they are never asked to assert it.
+RC-1 (correction map): the deploy flow has no controller selection ceremony; controller placement is implicit and identity is never surfaced to the user during deployment. This prevents multi-device topologies, violates §2, and makes controller identity invisible at the moment it is most consequential.
 
 ---
 
 ### Design Specification
 
-**High-level architecture:**  
-A pre-deploy screen (ControllerSelectionScreen) is inserted between WizardWelcome consent and the deploy button. It drives a two-phase interaction: (1) placement selection, (2) identity confirmation.
+**Architecture:**  
+A `ControllerSelectionScreen` is inserted between WizardWelcome (where general consent is obtained) and the deploy trigger. It runs a two-phase interaction — placement selection followed by identity confirmation — and produces a `ControllerPlacementParams` record that all subsequent deploy steps consume.
 
 **Required components:**
-- `ControllerSelectionScreen` — UI panel presenting placement options and identity fingerprint
-- `ControllerPlacementParams` — data structure capturing user's placement decision
-- `IdentityRecord` — controller Ed25519 public key, fingerprint, and creation timestamp, sourced from identity_manager
-- Updated `start_controller` — consumes `ControllerPlacementParams`; does not hardcode host or port
 
-**Required data structures:**
+| Component | Responsibility |
+|-----------|----------------|
+| `ControllerSelectionScreen` | UI panel; collects placement choice; displays identity fingerprint |
+| `ControllerPlacementParams` | Immutable record of user's confirmed placement decision |
+| `IdentityManager` | Generates or loads the controller Ed25519 keypair; provides fingerprint |
+
+**ControllerPlacementParams schema:**
 ```
-ControllerPlacementParams {
-  host: string          // e.g. "127.0.0.1" or a LAN IP
-  port: uint16          // default 8080; user-configurable
-  device_label: string  // human-readable name for this controller node
-  identity_fingerprint: string  // Ed25519 pubkey hex, shown to user
-  confirmed_at: timestamp
+{
+  host:                  string   // user-selected address (e.g. "127.0.0.1" or LAN IP)
+  port:                  uint16   // default 8080; user-configurable
+  device_label:          string   // human-readable name for this controller node
+  identity_fingerprint:  string   // hex-encoded Ed25519 public key (first 16 bytes)
+  confirmed_at:          timestamp
 }
 ```
 
-**Required ceremonies:**
-1. User opens ControllerSelectionScreen before deploy.
-2. System loads or generates the controller Ed25519 keypair via identity_manager.
-3. Screen displays: placement options (local CPU, local GPU, specify IP), identity fingerprint, and device label.
-4. User reviews and confirms or cancels.
-5. On confirmation, `ControllerPlacementParams` is persisted to config layer (see §8).
-6. Deploy flow Step 0 reads `ControllerPlacementParams`; all subsequent steps consume it.
+**Ceremony steps:**
+1. ControllerSelectionScreen opens; IdentityManager loads or generates an Ed25519 keypair.
+2. Screen presents: placement options (Local CPU · Local GPU · Custom IP:Port), controller address preview, identity fingerprint, and device label.
+3. User selects placement, reviews identity, and either confirms or cancels.
+4. On confirm: `ControllerPlacementParams` is written to the config layer (see §8) and the deploy flow is unblocked.
+5. On cancel: no state is written; the system returns to WizardWelcome.
 
-**Required trust boundaries:**  
-No controller starts until placement is confirmed. Identity_manager must not be bypassed. Fingerprint displayed must match the key actually used.
+**Trust boundaries:**
+- The controller must not start until `ControllerPlacementParams` is present.
+- The fingerprint shown must match the keypair actually used by the controller at runtime.
+- IdentityManager must not be bypassed; the keypair path must not be configurable at ceremony time.
 
-**Required user interactions:**  
-Explicit confirmation click. Cancel must abort deploy entirely without side effects.
+**Network behavior:** No network calls occur during the ceremony. Placement is a local configuration decision.
 
-**Required controller/worker responsibilities:**  
-Controller: bind only to the host/port from `ControllerPlacementParams`. Worker: no change at this ceremony stage.
+**Identity behavior:** The Ed25519 keypair generated here is the controller's root identity. It is the signing authority referenced in §3 (Manifest Signing Model) and the identity recorded in §5 (Trust Model). On subsequent deploys the existing keypair is loaded and the user is shown the same fingerprint to confirm continuity.
 
-**Required network behavior:**  
-No network calls during the ceremony. Placement is local configuration only.
+**Error handling:** If IdentityManager cannot generate or load a keypair, the ceremony halts and surfaces the error. The deploy button remains disabled. There is no fallback to an anonymous or unsigned controller.
 
-**Required identity behavior:**  
-Ed25519 keypair is generated on first deploy if absent; loaded from storage on subsequent deploys. Fingerprint is shown as hex-encoded public key truncated to 16 bytes (human-readable). Key is never transmitted during the ceremony; it is used in manifest signing (see §3).
-
-**Required config behavior:**  
-`ControllerPlacementParams` written to `phantom_config.json` before Step 5. See §8 for config ordering rules.
-
-**Required timing behavior:**  
-Ceremony completes before any deploy step executes. No timeout on user decision.
-
-**Required error-handling behavior:**  
-If identity_manager fails to generate a keypair, the ceremony blocks and surfaces the error. Deploy cannot proceed without a confirmed placement.
-
-**Required reversibility behavior:**  
-User may return to this screen, change placement, and re-confirm before deploy. After deploy starts, placement cannot change without a full undeploy-redeploy cycle (see §8).
+**Reversibility:** Before deploy begins, the user may return to this screen, change placement, and re-confirm. After deploy starts, placement changes require a full undeploy-redeploy cycle.
 
 ---
 
 ### Flow Diagram
 
 ```
-[WizardWelcome — consent obtained]
+[WizardWelcome — general consent obtained]
         |
         v
 [ControllerSelectionScreen]
         |
-        |-- Load/generate Ed25519 keypair via identity_manager
+        |-- IdentityManager: load or generate Ed25519 keypair
         |
         |-- Display:
-        |     Placement options: Local CPU | Local GPU | Custom IP
+        |     Placement options: Local CPU | Local GPU | Custom IP:Port
         |     Controller address: <host>:<port>
-        |     Identity fingerprint: <hex>
+        |     Identity fingerprint: <hex-16-bytes>
         |     Device label: <string>
         |
         |-- User selects placement and reviews identity
         |
-        |-- [CANCEL] --> Return to WizardWelcome; no state written
+        |--[CANCEL]──> return to WizardWelcome; no state written
         |
-        |-- [CONFIRM] --> Write ControllerPlacementParams to config
-        |
-        v
-[FrontPorchDeploy — deploy button now enabled]
+        |--[CONFIRM]──> write ControllerPlacementParams; keypair persisted
         |
         v
-[Deploy Step 0: read ControllerPlacementParams]
+[FrontPorchDeploy — deploy button enabled]
         |
         v
-[Deploy Step 5: start_controller(host, port from params)]
+[Deploy Step 0: ControllerPlacementParams available to all steps]
+        ...
+[Deploy Step 5: controller starts at confirmed host:port with confirmed identity]
 
-PRECONDITION:  WizardWelcome consent obtained; no prior deploy in progress
-POSTCONDITION: ControllerPlacementParams persisted; identity_manager keypair on disk;
-               FrontPorchDeploy enabled; controller not yet started
+PRECONDITION:  WizardWelcome consent complete; no deploy in progress
+POSTCONDITION: ControllerPlacementParams persisted; Ed25519 keypair on disk;
+               deploy button enabled; controller not yet started
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §2 Sovereign Domains | User chooses controller placement; no implicit authority |
-| §3 Authentic Trust | Identity fingerprint shown before any trust relationship forms |
-| §4 Transparent Operation | Address, port, and fingerprint visible at decision point |
-| §8 Reversibility | Cancel returns to pre-ceremony state with no side effects |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §2 Sovereign Domains | User asserts placement; no controller starts without explicit authorization |
+| §3 Authentic Trust | Identity is cryptographic, generated before deployment, and visible to the user |
+| §4 Transparent Operation | Host, port, and fingerprint are shown at the decision point |
+| §8 Reversibility | Cancel leaves zero state; placement is reviewable before and between deploys |
 
 ---
 
 ### Trust Model Alignment
 
-- **Eliminates implicit trust:** Controller is no longer silently started at a hardcoded address. Every controller has a user-confirmed identity.
-- **Restores user approval workflows:** Placement is an explicit screen, not a background step.
-- **Prevents auto-registration:** Controller identity is confirmed before workers are allowed to register.
-- **Enforces manifest authenticity:** The keypair confirmed here is the signing root for manifest verification (see §3).
+This design ensures that every controller has a user-confirmed identity before any worker is permitted to contact it. The fingerprint shown in the ceremony is the same key used at runtime — there is no anonymous or defaulted controller identity. The keypair produced here is the root of the manifest verification chain in §3, so trust cannot be established unless the controller ceremony has been completed.
 
 ---
 
 ### Interoperability Requirements
 
-- `ControllerPlacementParams` is written to `phantom_config.json` (§8) before Step 5. All components reading controller address must read from this config, not hardcoded values.
-- Identity keypair is the same root used by §3 Manifest Signing Model.
-- §4 Corrected Deploy Flow must insert this ceremony as its first gate.
-- §5 Corrected Trust Model reads confirmed identity from this ceremony.
+- `ControllerPlacementParams` is written to `phantom_config.json` at Step 4.5 (§8) and is the authoritative source for controller host and port. No other component may hardcode these values.
+- The Ed25519 keypair produced here is the root identity referenced by §3 Manifest Signing Model and §5 Trust Model.
+- §4 Corrected Deploy Flow positions this ceremony at Pre-0, before any installation step.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** `start_controller` hardcodes `127.0.0.1:8080`. On first run of corrected deploy, user sees the new ceremony. Existing single-node users confirm local placement; no functional change for them.
-- **Deprecated:** Hardcoded host/port in `start_controller`. Fixed controller address in WizardWelcome consent text.
-- **Transitional behavior:** If `phantom_config.json` already exists with a controller address (from a prior deploy), pre-populate the ceremony fields with that address and prompt the user to review, not re-enter from scratch.
+- **Existing single-node installs:** On first corrected deploy, users see the ceremony, pre-populated with `127.0.0.1:8080` and their existing keypair (if present). One confirmation click; no functional change.
+- **Legacy config:** If a prior `phantom_config.json` exists with a controller address, pre-populate the ceremony fields from it. Do not silently re-use the values — require the user to review and re-confirm.
+- **Deprecated:** Any mechanism that starts the controller without a confirmed `ControllerPlacementParams`.
 
 ---
 
@@ -185,153 +161,151 @@ POSTCONDITION: ControllerPlacementParams persisted; identity_manager keypair on 
 
 ### Purpose
 
-The Worker Selection Ceremony presents discovered worker manifests to the user and requires explicit per-worker approval before any worker is registered with the controller. It is the enforcement gate for the Voluntary Mesh principle: no worker joins the mesh without a human decision.
+The Worker Selection Ceremony is a mandatory gate between worker discovery and worker registration. It presents the list of discovered workers to the user and requires explicit per-worker approval before any registration call is made. No worker joins the mesh without a human decision.
 
-Doctrine principles satisfied:
-- **§5 Voluntary Mesh Participation:** Joining is a human decision; automatic registration is prohibited.
-- **§8 Reversibility:** Users may deselect workers; selection is reviewable before commit.
-- **§3 Authentic Trust:** Only manifests that pass signature verification (§3) appear in the selection list.
-- **§4 Transparent Operation:** Each discovered worker's identity, address, and capabilities are shown before the user decides.
+This ceremony satisfies:
+- **§5 Voluntary Mesh Participation** — joining is an explicit human act; automatic enrollment is prohibited.
+- **§8 Reversibility** — selections are reviewable before commit; registered workers can be deregistered at any time.
+- **§3 Authentic Trust** — only manifests that pass signature verification appear with a trusted indicator; unsigned manifests appear with a warning.
+- **§4 Transparent Operation** — every worker's identity, address, and capabilities are shown before the user decides.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-2 (worker selection missing), RC-10 (auto-registration violates trust model), RC-12 (LAN assumed trusted).
-
-The current `scan_lan()` and `scan_and_register_workers()` functions discover worker manifests and immediately register every one of them without user interaction. No UI step exists between discovery and registration. The `WorkersPanel` only shows workers that are already registered. The Phantom Doctrine explicitly bans auto-approval. The installer architecture defines a `select_workers()` step (S3) but the Tauri deploy path never invokes it.
+RC-2 and RC-10 (correction map): the deploy flow auto-registers every discovered worker without user interaction, violating §5 (Voluntary Mesh) and §8 (Reversibility) and directly contradicting the doctrine requirement that trust relationships require manual approval.
 
 ---
 
 ### Design Specification
 
-**High-level architecture:**  
-Step 9 (LAN scan) is split into three ordered sub-steps: 9a Discover, 9b User Selects, 9c Register Selected. An intermediate UI panel (`WorkerSelectionPanel`) receives the discovered-but-unregistered manifest list and gates Step 9c on explicit user confirmation.
+**Architecture:**  
+Step 9 (LAN scan) is decomposed into three ordered sub-steps:
+
+- **9a — Discover:** broadcast and collect; do not register.
+- **9b — Worker Selection Ceremony:** present manifest list; gate on user confirmation.
+- **9c — Register Selected:** register only approved manifests, with final signature verification.
+
+A `WorkerSelectionPanel` UI component mediates Step 9b. It receives the discovered-but-unregistered manifest list via a Tauri event and gates Step 9c on an explicit user action.
 
 **Required components:**
-- `WorkerSelectionPanel` — UI panel displaying discovered manifests pending approval
-- `DiscoveredManifest` — data structure for a manifest received from discovery, before registration
-- `WorkerSelectionDecision` — records which manifests the user approved, rejected, or deferred
-- Updated Step 9c — registers only approved manifests; skips rejected/deferred ones
 
-**Required data structures:**
+| Component | Responsibility |
+|-----------|----------------|
+| `WorkerSelectionPanel` | UI panel; displays discovered manifests; collects per-worker approval decisions |
+| `DiscoveredManifest` | Data record for a manifest received from discovery, before registration |
+| `WorkerSelectionDecision` | Immutable record of user approvals, rejections, and deferrals for this scan session |
+
+**DiscoveredManifest schema:**
 ```
-DiscoveredManifest {
-  worker_id: string
-  address: string         // IP:port
-  capabilities: string[]  // CPU, GPU type, VRAM
+{
+  worker_id:          string
+  address:            string      // IP:port
+  capabilities:       string[]    // e.g. ["CPU", "NVIDIA RTX 4090", "24576MB VRAM"]
   signature_verified: bool
-  discovered_at: timestamp
+  discovered_at:      timestamp
 }
+```
 
-WorkerSelectionDecision {
-  approved: [worker_id, ...]
-  rejected: [worker_id, ...]
-  deferred: [worker_id, ...]
+**WorkerSelectionDecision schema:**
+```
+{
+  approved:   [worker_id, ...]
+  rejected:   [worker_id, ...]
+  deferred:   [worker_id, ...]
   decided_at: timestamp
 }
 ```
 
-**Required ceremonies:**
-1. Step 9a: Discovery broadcast runs; manifests collected (not registered).
-2. System emits manifest list to frontend via Tauri event.
-3. `WorkerSelectionPanel` displays each manifest with: worker_id, address, capabilities, signature status.
-4. User checks/unchecks each worker; confirms selection.
-5. Step 9c: Only checked (approved) manifests are passed to `register_worker()`.
-6. Rejected manifests are logged; never registered in this session.
-7. Deferred manifests may be re-offered on next scan.
+**Ceremony steps:**
+1. Step 9a completes; manifests collected and signature-verified per §3.
+2. `DiscoveredManifest[]` emitted to the frontend.
+3. `WorkerSelectionPanel` renders each manifest with: worker_id, address, capabilities, and a signature badge (VERIFIED · UNVERIFIED · INVALID).
+4. Manifests with `signature_verified: false` default to unchecked; the user must actively check them to approve.
+5. User reviews, checks/unchecks, and confirms.
+6. `WorkerSelectionDecision` is written; Step 9c proceeds with the approved list.
+7. Rejected and deferred manifests are logged; they are never registered in this session.
 
-**Required trust boundaries:**  
-Manifests with `signature_verified: false` must be visually flagged and should default to unchecked. The user may still approve an unverified manifest but must do so knowingly (see §3 for full enforcement).
+**Trust boundaries:**
+- The controller must not call the worker registration endpoint until `WorkerSelectionDecision.approved` is provided.
+- Manifests with an invalid or missing signature are ineligible for approval unless the user explicitly overrides with a visible warning.
+- Step 9c must perform a final signature re-verification for each approved manifest before the registration call.
 
-**Required user interactions:**  
-Per-manifest checkboxes. Confirm button (registers selected). Cancel button (registers none; leaves deploy in post-discovery state).
-
-**Required controller/worker responsibilities:**  
-Controller: does not call `register_worker()` until `WorkerSelectionDecision.approved` list is provided.  
-Worker: no change; continues responding to discovery broadcasts.
-
-**Required reversibility behavior:**  
-A registered worker may be deregistered from the WorkersPanel at any time. The selection decision is not final beyond the current session; re-scanning presents a fresh list.
+**Reversibility:** Registration is not final. Any registered worker can be deregistered from WorkersPanel at any time without re-deploying. Re-scanning always produces a fresh manifest list; prior decisions do not carry forward automatically.
 
 ---
 
 ### Flow Diagram
 
 ```
-[Deploy Step 9a: Discovery broadcast]
+[Deploy Step 9a: Discovery]
         |
-        |-- UDP broadcast PHANTOM_DISCOVER_WORKERS to :8095
-        |-- Collect WORKER_MANIFEST responses (timeout 1500ms per subnet)
-        |-- Verify signatures (§3)
+        |-- UDP broadcast PHANTOM_DISCOVER_WORKERS → :8095
+        |-- Unicast to 127.0.0.1:8095 (local worker)
+        |-- Collect SignedManifest responses (1500ms timeout per subnet)
+        |-- Verify signatures per §3
         |-- Emit DiscoveredManifest[] to frontend
         |
         v
-[WorkerSelectionPanel]
+[Step 9b: WorkerSelectionPanel]
         |
         |-- Display each DiscoveredManifest:
-        |     worker_id | address | capabilities | sig: OK / UNVERIFIED
-        |     [checkbox — default: checked if verified, unchecked if not]
+        |     worker_id | address | capabilities | VERIFIED / UNVERIFIED / INVALID
+        |     [checkbox: checked by default if VERIFIED; unchecked if UNVERIFIED/INVALID]
         |
-        |-- [CANCEL] --> No workers registered; deploy continues to Step 10
+        |--[CANCEL]──> no workers registered; flow advances to Step 10
         |
-        |-- [CONFIRM SELECTION]
-        |       |
-        |       v
-        |   WorkerSelectionDecision written
+        |--[CONFIRM SELECTION]──> WorkerSelectionDecision written
         |
         v
-[Deploy Step 9c: Register approved workers only]
+[Step 9c: Register approved workers]
         |
         |-- For each worker_id in approved list:
-        |     verify signature (double-check, §3)
-        |     POST /workers/register with manifest
+        |     Re-verify signature (§3)
+        |     POST worker manifest to controller registration endpoint
         |
-        |-- Rejected workers: logged, not registered
+        |-- Rejected/deferred workers: logged; not registered
         |
         v
 [Step 10: Load execution modes]
 
-PRECONDITION:  Step 9a complete; manifests collected; §3 verification run
-POSTCONDITION: Only user-approved workers registered; WorkersPanel reflects final list
+PRECONDITION:  Step 9a complete; DiscoveredManifest[] available
+POSTCONDITION: Only user-approved workers registered; WorkersPanel reflects final membership
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §5 Voluntary Mesh | Every registration is an explicit user act |
-| §8 Reversibility | No irreversible trust without approval; deregistration always available |
-| §3 Authentic Trust | Unsigned/unverified manifests flagged; user sees trust status |
-| §4 Transparent Operation | Full manifest details shown before decision |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §5 Voluntary Mesh | Every registration is an explicit user decision; no background enrollment |
+| §8 Reversibility | Selection is reviewable before commit; deregistration is always available |
+| §3 Authentic Trust | Signature verification precedes the user decision; unsigned manifests are flagged |
+| §4 Transparent Operation | Full manifest details (identity, address, capabilities, trust status) shown at decision point |
 
 ---
 
 ### Trust Model Alignment
 
-- **Eliminates implicit trust:** No manifest is registered by discovery alone.
-- **Restores user approval workflows:** Per-worker checkboxes enforce manual approval per `.cursorrules:50`.
-- **Prevents auto-registration:** The loop `for m in manifests { register_worker(m) }` is replaced by a gated ceremony.
-- **Enforces manifest authenticity:** Signature status visible; unverified manifests default-unchecked.
+This design ensures that the mesh boundary is defined entirely by user decisions, not by network reachability. Discovery is a candidate-collection phase, not a trust-granting phase. Every worker in the mesh has a corresponding user approval record in the TrustStore (§5). Workers that the user has never seen cannot be registered, and workers the user has rejected are excluded from the session regardless of network availability.
 
 ---
 
 ### Interoperability Requirements
 
-- Depends on §3 Manifest Signing Model for `signature_verified` field.
-- Feeds into §4 Corrected Deploy Flow as Steps 9a/9b/9c.
-- §5 Corrected Trust Model records each approval in the trust ledger.
-- `WorkerSelectionPanel` replaces the current auto-register behavior in `scan_lan()`.
+- Depends on §3 Manifest Signing Model for the `signature_verified` field in `DiscoveredManifest`.
+- Step 9b/9c are the registration gates defined by §4 Corrected Deploy Flow.
+- Each user approval writes a `TrustRecord` to §5 Trust Model.
+- The installer's S3 Worker Selection stage (§9) mirrors this ceremony for the installer deploy path.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** `scan_lan()` registers all. On migration, this function is split; existing single-worker deployments where the only worker is local will see a one-item selection list — one click to confirm, no regression.
-- **Deprecated:** Auto-register loop in `scan_lan()` and `scan_and_register_workers()`.
-- **Transitional behavior:** If running in a non-UI (CLI) deploy mode, require an explicit `--approve-all-workers` flag to replicate current behavior, with a clear trust-bypass warning logged.
+- **Existing single-worker installs:** On the first corrected deploy, users see a one-item selection list (the local worker). One checkbox confirmation; no functional change to the end state.
+- **CLI / headless deploys:** Must require an explicit `--approve-all-workers` flag. This flag must log a doctrine-bypass warning to the audit log on every use.
+- **Deprecated:** Any code path that registers workers without a preceding `WorkerSelectionDecision`.
 
 ---
 
@@ -339,147 +313,156 @@ POSTCONDITION: Only user-approved workers registered; WorkersPanel reflects fina
 
 ### Purpose
 
-The Manifest Signing Model ensures that every worker manifest transmitted over the network carries a cryptographic signature proving its origin. The controller verifies the signature before considering registration. This transforms discovery from a network-scoped trust assumption into a cryptographic trust assertion.
+The Manifest Signing Model defines how every worker manifest is cryptographically signed by its originating worker and how that signature is verified by any receiver before the manifest is acted upon. It replaces network-location trust with cryptographic identity attestation as the foundational primitive for all worker trust decisions.
 
-Doctrine principles satisfied:
-- **§3 Authentic Trust:** Identity is cryptographic and verifiable; no peer trusted by default.
-- **§2 Sovereign Domains:** Each worker's identity is self-sovereign; its signature cannot be forged.
-- **§6 Consistent Behavior:** All discovery paths — Tauri, installer, future clients — verify signatures the same way.
+This model satisfies:
+- **§3 Authentic Trust** — identity is cryptographic; no peer is trusted by default; LAN adjacency grants no privileges.
+- **§2 Sovereign Domains** — each worker's identity is self-sovereign and cannot be forged or transferred.
+- **§6 Consistent Behavior** — all discovery paths (Tauri, installer, future clients) sign and verify using the same schema and algorithm.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-3 (manifest signing missing), RC-12 (LAN assumed trusted).
-
-Workers currently emit plain unsigned JSON manifests. The `discovery_listener.py` docstring claims manifests are signed — they are not. The controller's `register_worker()` accepts any `WorkerInfo` without verification. Any host on the LAN can send a forged manifest claiming any `worker_id`. This enables impersonation and mesh infiltration.
+RC-3 (correction map): worker manifests are transmitted as unsigned JSON, making it impossible to distinguish legitimate workers from imposters; any host on the LAN can claim any worker identity and be registered without challenge.
 
 ---
 
 ### Design Specification
 
-**High-level architecture:**  
-Each worker generates or loads a per-worker Ed25519 keypair at startup. Before sending a discovery response, the worker signs the manifest payload. The receiver (Tauri deployer or controller) verifies the signature against the worker's public key before accepting the manifest.
+**Architecture:**  
+Each worker holds a per-worker Ed25519 keypair generated at first startup. When responding to a discovery request, the worker constructs a deterministic canonical payload, signs it, and includes the signature and public key in the response. The receiver verifies the signature before forwarding the manifest to the selection ceremony or registration pipeline.
 
 **Required components:**
-- `WorkerIdentity` — per-worker Ed25519 keypair stored at worker startup path
-- `SignedManifest` — manifest schema extended with signature and public_key fields
-- `ManifestSigner` — worker-side component that signs the payload before sending
-- `ManifestVerifier` — controller/deployer-side component that verifies before registering
 
-**Required data structures:**
+| Component | Responsibility |
+|-----------|----------------|
+| `WorkerIdentity` | Per-worker Ed25519 keypair; generated on first startup; persisted to worker identity path |
+| `SignedManifest` | Canonical manifest schema that includes `public_key`, `signature`, and `signed_at` |
+| `ManifestSigner` | Worker-side: constructs canonical payload; signs with private key |
+| `ManifestVerifier` | Receiver-side: reconstructs canonical payload; verifies signature; applies TOFU rules |
+
+**SignedManifest schema:**
 ```
-SignedManifest {
-  // Existing fields
-  worker_id: string
-  address: string
+{
+  // Discovery fields (existing)
+  worker_id:    string
+  address:      string
   capabilities: object
-  msg_type: "WORKER_MANIFEST"
-  // New fields
-  public_key: string      // hex-encoded Ed25519 public key
-  signature: string       // hex-encoded Ed25519 signature over canonical payload
-  signed_at: timestamp
+  msg_type:     "WORKER_MANIFEST"
+
+  // Signing fields (new)
+  public_key:   string     // hex-encoded Ed25519 public key
+  signature:    string     // hex-encoded Ed25519 signature over canonical_payload
+  signed_at:    timestamp
 }
 
-canonical_payload = JSON(worker_id, address, capabilities, msg_type, signed_at)
-// deterministic: sorted keys, no whitespace
+canonical_payload = deterministic JSON of:
+  { worker_id, address, capabilities, msg_type, signed_at }
+  // sorted keys; no extra whitespace
 ```
 
-**Required ceremonies:**
-1. Worker startup: generate Ed25519 keypair if absent; persist to worker identity store.
-2. On discovery request: construct canonical payload; sign with private key; include `public_key` and `signature` in response.
-3. Receiver: reconstruct canonical payload from received fields; verify `signature` using `public_key`; reject if invalid.
-4. Controller `register_worker()`: requires `signature_verified: true` before persisting worker record.
+**Signing ceremony (worker-side):**
+1. At startup: load Ed25519 keypair from worker identity path; generate if absent.
+2. On discovery request: construct `canonical_payload` from current manifest fields.
+3. Sign `canonical_payload` with the worker's private key.
+4. Emit `SignedManifest` (canonical_payload fields + `public_key` + `signature`).
 
-**Required trust boundaries:**  
-The receiver must never trust a manifest where signature verification fails. An invalid signature must result in rejection, logging, and (in the §2 Worker Selection Ceremony) the manifest appearing with `sig: INVALID` and defaulting to unchecked.
+**Verification ceremony (receiver-side):**
+1. Parse received message; check for presence of `public_key`, `signature`, `signed_at`.
+2. Reconstruct `canonical_payload` from received fields.
+3. Verify `signature` against `canonical_payload` using `public_key`.
+4. Apply TOFU: on first contact from a given `worker_id`, record `public_key` in the TrustStore (§5). On subsequent contacts, compare received `public_key` to the recorded key.
+5. Set `signature_verified = true` if verification passes and key matches (or is new TOFU). Set to `false` otherwise.
+6. Forward `DiscoveredManifest` with `signature_verified` flag to §2 Worker Selection Ceremony.
 
-**Required identity behavior:**  
-Per-worker keypairs are independent of the controller keypair (§1). A Trust-On-First-Use (TOFU) model applies: on first connection from a given `worker_id`, the public key is recorded. On subsequent connections, the recorded key is used for verification. A key change triggers a re-approval requirement.
+**Trust boundaries:**
+- A manifest with a missing, malformed, or invalid signature must never reach the registration pipeline.
+- A manifest whose `public_key` differs from the recorded TrustStore key for that `worker_id` must be flagged as a key-change event and require explicit user re-approval.
+- The controller registration endpoint must reject any `WorkerInfo` not accompanied by a verified trust record.
 
-**Required error-handling behavior:**  
-Missing signature: reject manifest, log warning, do not register.  
-Invalid signature: reject manifest, log security event, do not register.  
-Unknown worker_id + valid signature: accept as new worker, present in selection ceremony (§2).
+**Error handling:**
 
-**Required reversibility behavior:**  
-A worker's recorded public key can be removed from the trust store by the user, forcing re-approval on next discovery.
+| Condition | Action |
+|-----------|--------|
+| Signature absent | Reject; log warning; set `signature_verified = false` |
+| Signature invalid | Reject; log security event; set `signature_verified = false` |
+| Key mismatch (known worker_id) | Flag as suspicious; require re-approval; do not auto-register |
+| New worker_id, valid signature | TOFU: record key; `signature_verified = true`; forward to §2 |
 
 ---
 
 ### Flow Diagram
 
 ```
-[Worker startup]
+[Worker: startup]
         |
         |-- Load or generate per-worker Ed25519 keypair
-        |-- Store keypair at worker identity path
+        |-- Persist keypair to worker identity path
         |
         v
-[Discovery request received at :8095]
+[Worker: discovery request received on :8095]
         |
-        |-- Construct canonical payload:
-        |     {worker_id, address, capabilities, msg_type, signed_at}
-        |-- Sign payload with worker private key
-        |-- Build SignedManifest (payload + public_key + signature)
-        |-- Send UDP response to requester
-        |
-        v
-[Tauri deployer / controller receives SignedManifest]
-        |
-        |-- Reconstruct canonical payload from received fields
-        |-- Verify signature using received public_key
-        |     |
-        |     |-- [INVALID] --> Reject; log security event; do not forward to selection ceremony
-        |     |
-        |     |-- [VALID, known worker_id] --> Compare public_key to trust store
-        |     |       |-- [KEY MISMATCH] --> Flag as suspicious; require re-approval
-        |     |       |-- [KEY MATCH]    --> signature_verified = true
-        |     |
-        |     |-- [VALID, new worker_id] --> TOFU: record public_key; signature_verified = true
+        |-- Construct canonical_payload {worker_id, address, capabilities, msg_type, signed_at}
+        |-- Sign canonical_payload with private key → signature
+        |-- Assemble SignedManifest {canonical_payload, public_key, signature}
+        |-- Send UDP SignedManifest to requester
         |
         v
-[Worker Selection Ceremony (§2) receives DiscoveredManifest with signature_verified flag]
+[Receiver: SignedManifest received]
+        |
+        |-- Parse: check for public_key, signature, signed_at
+        |-- Reconstruct canonical_payload
+        |-- Verify signature using public_key
+        |
+        |--[INVALID/MISSING]──> reject; log event; signature_verified = false
+        |
+        |--[VALID, known worker_id]
+        |       |--[KEY MATCH]──> signature_verified = true
+        |       |--[KEY MISMATCH]──> flag suspicious; require re-approval
+        |
+        |--[VALID, new worker_id]──> TOFU: record public_key; signature_verified = true
+        |
+        v
+[§2 Worker Selection Ceremony receives DiscoveredManifest with signature_verified flag]
 
-PRECONDITION:  Worker has a keypair; discovery listener is active
-POSTCONDITION: Controller only receives manifests that passed signature verification and user approval
+PRECONDITION:  Worker has a persisted keypair; discovery listener is active on :8095
+POSTCONDITION: Receiver has a verified (or flagged) DiscoveredManifest;
+               controller registration endpoint is never called without a verified trust record
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §3 Authentic Trust | Every manifest cryptographically attested; no implicit trust on LAN |
-| §2 Sovereign Domains | Per-worker identity is self-sovereign; cannot be forged |
-| §6 Consistent Behavior | Same signing/verification logic regardless of discovery path |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §3 Authentic Trust | Every manifest carries a cryptographic proof of origin; no implicit LAN trust |
+| §2 Sovereign Domains | Each worker's identity is self-sovereign; keypair cannot be transferred or forged |
+| §6 Consistent Behavior | The same SignedManifest schema and verification logic applies on all discovery paths |
 
 ---
 
 ### Trust Model Alignment
 
-- **Eliminates implicit trust:** LAN adjacency no longer grants trust. Signature is the trust primitive.
-- **Restores user approval workflows:** §2 ceremony uses `signature_verified` to inform user decision.
-- **Prevents impersonation:** `worker_id` cannot be claimed without the corresponding private key.
-- **Enforces manifest authenticity:** The `discovery_listener.py` docstring claim ("responds with a signed manifest") is now architecturally true.
+This design makes the network layer transparent to trust decisions. A manifest's trustworthiness is determined entirely by its cryptographic validity and the user's approval history, not by which network it arrived on. The LAN is a transport medium, not a trust boundary. Key-change detection ensures that a worker's identity cannot be silently replaced — any such change surfaces to the user as a re-approval requirement.
 
 ---
 
 ### Interoperability Requirements
 
-- Depended upon by §2 Worker Selection Ceremony (provides `signature_verified` field).
-- Depended upon by §4 Corrected Deploy Flow (Step 9c verifies before registering).
-- §9 Corrected Installer Discovery Model must adopt the same `SignedManifest` schema.
-- All three discovery paths (Rust/Tauri, Python worker, installer) must produce and consume the same schema.
+- `SignedManifest` schema is the canonical manifest format for all discovery paths: Tauri, Python worker listener, and installer (§9).
+- §2 Worker Selection Ceremony consumes `DiscoveredManifest.signature_verified` as produced here.
+- §5 Trust Model's TrustStore is populated with `public_key` records via the TOFU path defined here.
+- §9 Installer Discovery Model must implement the same signing contract and schema on the installer path.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** Manifests are unsigned JSON. Receivers accept all. On migration, introduce a **grace period mode** where unsigned manifests are accepted but flagged as `signature_verified: false` and shown in the selection ceremony with a visible warning.
-- **Deprecated:** Unsigned manifest emission in `discovery_listener.py`; unconditional acceptance in `register_worker()`.
-- **Transitional behavior:** Grace period ends after a configurable migration window. After the window, unsigned manifests are rejected outright.
+- **Grace period:** During the initial migration window, manifests without a signature are accepted but surfaced in §2 with `sig: UNSIGNED` and default to unchecked. This allows existing workers time to adopt the signing model.
+- **End of grace period:** After the migration window, unsigned manifests are rejected at the receiver before reaching the selection ceremony. The window duration is configurable in `phantom_config.json` (§8).
+- **Deprecated:** Unsigned manifest emission; unconditional manifest acceptance at the registration endpoint.
 
 ---
 
@@ -487,73 +470,78 @@ POSTCONDITION: Controller only receives manifests that passed signature verifica
 
 ### Purpose
 
-The Corrected Deploy Flow is a fully-ordered, ceremony-gated sequence of steps from user consent through running mesh. It eliminates silent assumptions, inserts the two required ceremonies (controller selection §1, worker selection §2), enforces config ordering (§8), extends firewall rules (§6), replaces the fixed readiness sleep (§7), and ensures manifests are signed (§3) before any worker is registered.
+The Corrected Deploy Flow is a fully-ordered, ceremony-gated sequence that takes the system from user consent to a running, doctrine-compliant mesh. It integrates all nine corrected domains into a coherent, reversible, step-by-step process where every user-visible decision point is explicit and every automated step is transparent.
 
-Doctrine principles satisfied:
-- **§4 Transparent Operation:** Each step is visible, logged, and produces a verifiable outcome.
-- **§2 Sovereign Domains:** Controller placement is user-confirmed before deploy.
-- **§5 Voluntary Mesh:** Worker registration is user-gated.
-- **§8 Reversibility:** Each step is individually reversible; failure at any step halts forward progress.
+This flow satisfies:
+- **§4 Transparent Operation** — each step is visible, logged, and produces a verifiable outcome.
+- **§2 Sovereign Domains** — controller placement is user-confirmed before any installation work begins.
+- **§5 Voluntary Mesh** — worker registration is gated by the user's explicit selection decision.
+- **§8 Reversibility** — step failures halt forward progress; undeploy reverses steps in reverse order.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-1 through RC-14 (all root causes intersect the deploy flow).
-
-The current flow is a linear 11-step sequence (0–10) with no ceremony gates, incorrect config ordering, insufficient readiness timing, incomplete port rules, misleading logs, and auto-registration. It was designed for single-node local deployment and was never updated to reflect multi-device, doctrine-aligned behavior.
+RC-1, RC-2, RC-4, RC-5, RC-6, RC-7, RC-8, RC-10, RC-12 (correction map): the current deploy flow has no ceremony gates, starts the controller before config is written, opens only one port, uses a fixed sleep for worker readiness, and auto-registers all discovered workers — in aggregate, a linear script that violates sovereignty, trust, and transparency at every decision point.
 
 ---
 
 ### Design Specification
 
-**Corrected Step Sequence:**
+**Corrected step sequence:**
 
-| Step | Label | Change from Current |
-|------|-------|---------------------|
-| **Pre-0** | Controller Selection Ceremony | **NEW** — see §1 |
+| Step | Label | Status |
+|------|-------|--------|
+| **Pre-0** | Controller Selection Ceremony | NEW — §1; user selects placement, confirms identity |
 | 0 | Create virtual environment | Unchanged |
 | 1 | Install Python runtime | Unchanged |
 | 2 | Install Phantom Core | Unchanged |
-| 3 | Verify GPU plugins | Unchanged (log-only; never blocking) |
+| 3 | Verify GPU plugins | Unchanged (log-only; never blocking; corrected log text at Step 8) |
 | 4 | Install Phantom service | Unchanged |
-| **4.5** | Bootstrap config | **NEW** — write phantom_config.json before Step 5; see §8 |
-| 5 | Start controller | Consumes `ControllerPlacementParams`; reads config written at 4.5 |
-| 6 | Open ports | **EXTENDED** — adds 8090/tcp, 8095/udp, 8081/tcp; see §6 |
+| **4.5** | Bootstrap config | NEW — §8; write `phantom_config.json` before Step 5 reads it |
+| 5 | Start controller | Updated — consumes `ControllerPlacementParams` from config; reads security level from config |
+| **6** | Open ports | Updated — §6; opens 8080/tcp, 8090/tcp, 8095/udp (see Port Model) |
 | 7 | Initialize state | Unchanged |
-| 8 | Start local worker | **READINESS PROBE** replaces 2s sleep; fix GPU log; see §7 |
-| **9a** | Discover workers | Broadcast UDP to :8095; collect SignedManifests; verify signatures |
-| **9b** | Worker Selection Ceremony | **NEW** — user approves/rejects; see §2 |
-| **9c** | Register selected workers | Register only approved manifests; verify signature before each call |
-| 10 | Load execution modes | Retain; may be a no-op if 4.5 already wrote all needed config |
+| **8** | Start local worker | Updated — §7; readiness probe replaces fixed sleep; corrected log text |
+| **9a** | Discover workers | NEW sub-step — UDP broadcast; collect SignedManifests; verify per §3 |
+| **9b** | Worker Selection Ceremony | NEW sub-step — §2; user approves/rejects each discovered worker |
+| **9c** | Register selected workers | NEW sub-step — register only approved manifests; re-verify signature before each call |
+| 10 | Load execution modes | Retained; idempotent if §8 config bootstrap already wrote the relevant fields |
 
-**Required error-handling behavior:**  
-Any step failure halts forward progress and surfaces the error to the UI. The deploy does not silently continue past a failed critical step. Non-critical steps (GPU verification, log-only) may log and continue.
+**Step failure policy:**  
+Critical steps (Pre-0, 0, 1, 2, 4, 4.5, 5) must halt the flow on failure and surface the error to the UI. Non-critical steps (3, 7) may log and continue. Step 8 readiness timeout is non-fatal (see §7). Step 9b cancellation skips registration and proceeds to Step 10 with an empty worker set.
 
-**Required reversibility behavior:**  
-Each step records its pre-state. Undeploy reverses steps in reverse order. No step may make an irreversible change without a confirmation gate.
+**Reversibility policy:**  
+Each step that writes state must record the pre-state. Undeploy reverses steps in the reverse order of their execution. No step may produce an irreversible side effect without a user confirmation gate.
 
 ---
 
 ### Flow Diagram
 
 ```
-[WizardWelcome — consent]
+[WizardWelcome — general consent]
         |
         v
-[Pre-0: Controller Selection Ceremony] ──[CANCEL]──> Exit
+[Pre-0: Controller Selection Ceremony]──[CANCEL]──> exit; no state written
         |
         v
-[Step 0–4: Environment, deps, core, GPU, service]
+[Steps 0–4: venv · Python deps · Phantom Core · GPU verify · service install]
         |
         v
-[Step 4.5: Bootstrap config (phantom_config.json written)]
+[Step 4.5: Config bootstrap]
+        |-- Write phantom_config.json (controller params, port policy, readiness config)
+        |-- Atomic write: tmp file → rename
         |
         v
-[Step 5: Start controller at confirmed host:port]
+[Step 5: Start controller]
+        |-- Read host, port, security level from phantom_config.json
+        |-- Bind controller to confirmed address
         |
         v
-[Step 6: Open ports 8080/tcp, 8081/tcp, 8090/tcp, 8095/udp]
+[Step 6: Open ports]
+        |-- Open 8080/tcp  (Controller API)
+        |-- Open 8090/tcp  (Worker HTTP API)
+        |-- Open 8095/udp  (Discovery listener)
         |
         v
 [Step 7: Initialize state marker]
@@ -561,67 +549,79 @@ Each step records its pre-state. Undeploy reverses steps in reverse order. No st
         v
 [Step 8: Start local worker]
         |-- Spawn worker process
-        |-- Readiness probe: poll :8095 until WORKER_MANIFEST received or timeout
-        |-- On timeout: warn user; Step 9a will attempt discovery anyway
+        |-- Readiness probe: unicast PHANTOM_DISCOVER_WORKERS → 127.0.0.1:8095
+        |-- Poll until WORKER_MANIFEST received or readiness timeout
+        |-- On timeout: log warning; proceed to Step 9a
         |
         v
-[Step 9a: Discovery broadcast → collect SignedManifests]
+[Step 9a: Discovery broadcast]
+        |-- UDP broadcast PHANTOM_DISCOVER_WORKERS → <subnet>:8095
+        |-- Unicast → 127.0.0.1:8095
+        |-- Collect SignedManifests (1500ms timeout per subnet)
+        |-- Verify signatures per §3
         |
         v
-[Step 9b: Worker Selection Ceremony] ──[CANCEL/none]──> Step 10
+[Step 9b: Worker Selection Ceremony]──[CANCEL/no selection]──> Step 10
         |
         v
-[Step 9c: Verify + Register approved workers only]
+[Step 9c: Register approved workers]
+        |-- Re-verify signature for each approved manifest
+        |-- POST to controller registration endpoint
         |
         v
-[Step 10: Load execution modes]
+[Step 10: Load execution modes — idempotent]
         |
         v
-[FrontPorchDeploy: Deployed]
+[Deployed]
 
-PRECONDITION:  WizardWelcome consent; ControllerPlacementParams confirmed
-POSTCONDITION: Controller running; selected workers registered; all ports open; config coherent
+PRECONDITION:  WizardWelcome consent; no deploy in progress
+POSTCONDITION: Controller running at user-confirmed address;
+               selected workers registered;
+               8080/tcp, 8090/tcp, 8095/udp open;
+               phantom_config.json coherent and written before it is read
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §4 Transparent Operation | Every step visible; no silent failures; accurate logs |
-| §2 Sovereign Domains | Controller placement confirmed at Pre-0 |
-| §5 Voluntary Mesh | Worker registration gated at 9b |
-| §8 Reversibility | Halt-on-failure; undeploy reversal |
-| §7 Evolution Without Drift | Legacy steps updated; no stale assumptions remain |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §2 Sovereign Domains | Controller placement is a user decision made at Pre-0, not an assumption |
+| §3 Authentic Trust | Manifest signing and verification enforced at Steps 9a–9c |
+| §4 Transparent Operation | Every step visible; accurate logs; no silent failures or false port openings |
+| §5 Voluntary Mesh | Worker registration is gated by user approval at Step 9b |
+| §7 Evolution Without Drift | All legacy assumptions (fixed sleep, single port, auto-register) removed |
+| §8 Reversibility | Halt-on-failure; step pre-state recorded; undeploy reverses in order |
 
 ---
 
 ### Trust Model Alignment
 
-- Controller identity confirmed before any worker contacts it.
-- Workers verified before registration (§3).
-- User approves each worker (§2).
-- Firewall rules match actual service ports (§6).
+The deploy flow enforces the trust model at every point where a trust boundary is crossed:
+- Pre-0 ensures the controller has a confirmed identity before workers can contact it.
+- Steps 9a–9c ensure that no worker reaches the registration endpoint without a valid signature and explicit user approval.
+- Step 6 ensures that the ports actually required by the trust-model components (discovery on 8095, worker API on 8090) are open before those components are exercised.
 
 ---
 
 ### Interoperability Requirements
 
-- All nine domains feed into or are ordered by this flow.
-- §8 Config Model governs Step 4.5.
-- §6 Port Model governs Step 6.
-- §7 Readiness Model governs Step 8.
-- §2 and §3 govern Steps 9a–9c.
+All nine corrected domains are sequenced by or feed into this flow:
 - §1 governs Pre-0.
+- §8 governs Step 4.5.
+- §6 governs Step 6.
+- §7 governs Step 8.
+- §3 and §2 govern Steps 9a–9c.
+- §5 receives trust records written during Steps 9b–9c.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** Steps 0–10 run linearly with no gates. Migration adds Pre-0 and 4.5 as new phases; splits 9 into 9a/9b/9c.
-- **Transitional behavior:** A `--legacy-deploy` flag may bypass ceremonies during a migration window, logging a doctrine-violation warning for each bypass.
-- **Deprecated:** Fixed 2s sleep in Step 8; single-port firewall in Step 6; auto-register in Step 9; config read-before-write.
+- **Existing deploys:** The first corrected deploy adds Pre-0 (one confirmation screen) and Step 4.5 (automatic config bootstrap). Steps 0–7 and 10 behave identically for existing single-node users.
+- **Transitional flag:** A `--legacy-deploy` mode may be provided for automated environments during a migration window. Every invocation must write a doctrine-bypass warning to the audit log.
+- **Deprecated:** Fixed 2-second sleep after worker spawn; single-port firewall in Step 6; auto-register loop in Step 9; controller start before config is written.
 
 ---
 
@@ -629,123 +629,135 @@ POSTCONDITION: Controller running; selected workers registered; all ports open; 
 
 ### Purpose
 
-The Corrected Trust Model defines how trust is established, recorded, and revoked across all Phantom entities — controllers, workers, and the local user. It eliminates network-topology trust (LAN = trusted) and replaces it with cryptographic attestation plus explicit user approval at every trust boundary.
+The Corrected Trust Model defines the lifecycle of trust between the controller and every worker: how trust is initiated, elevated through verification and user approval, recorded immutably, and revoked. It establishes the LAN as a discovery medium with zero inherent trust, and cryptographic attestation plus explicit user approval as the only paths to mesh membership.
 
-Doctrine principles satisfied:
-- **§3 Authentic Trust:** Trust is explicit, never implied; identity is cryptographic.
-- **§2 Sovereign Domains:** Each domain's trust store is sovereign; no external authority populates it.
-- **§5 Voluntary Mesh:** Mesh membership requires approval at the trust boundary.
-- **§8 Reversibility:** Trust relationships can be revoked by the user.
+This model satisfies:
+- **§3 Authentic Trust** — trust is cryptographic and explicit; it cannot be inferred from network location.
+- **§2 Sovereign Domains** — the trust store is local to the controller; no external authority populates it.
+- **§5 Voluntary Mesh** — mesh membership requires a user approval record in the trust store.
+- **§8 Reversibility** — trust can be revoked by the user at any time without re-deploying.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-3, RC-10, RC-12 (LAN assumed trusted; auto-registration; unsigned manifests).
-
-The current model trusts any manifest that arrives over UDP on port 8095 from any LAN host. There is no signature verification, no trust store, and no revocation mechanism. A single `register_worker()` call accepts any `WorkerInfo`. This violates §3 and §5 and contradicts `.cursorrules:50` ("Trust relationships require manual approval").
+RC-3, RC-10, RC-12 (correction map): the current system has no trust store and no revocation mechanism; network reachability on the LAN is the de facto trust criterion, meaning any host that can send a UDP packet to port 8095 can become a registered mesh member.
 
 ---
 
 ### Design Specification
 
-**Trust Levels:**
+**Trust levels:**
 
-| Level | Description | How Established |
-|-------|-------------|-----------------|
-| **Unverified** | Manifest received; signature not yet checked | Discovery arrival |
-| **Signature-Valid** | Manifest signature verified; TOFU key recorded | §3 verification |
-| **User-Approved** | User explicitly approved in selection ceremony | §2 ceremony |
-| **Registered** | Worker record persisted in controller | Post-§2 approval |
-| **Revoked** | User removed worker from trust store | Explicit user action |
+| Level | Meaning | How Reached |
+|-------|---------|-------------|
+| Unverified | Manifest received; signature check not yet run | Discovery arrival |
+| Sig-Valid | Signature passes verification; TOFU key recorded | §3 ManifestVerifier |
+| Approved | User explicitly selected this worker in §2 ceremony | §2 WorkerSelectionDecision |
+| Registered | Worker record persisted in the controller | Post-approval registration call |
+| Revoked | User removed this worker from the trust store | Explicit user action in WorkersPanel |
 
 **Required components:**
-- `TrustStore` — per-controller ledger of worker public keys and approval records
-- `TrustRecord` — immutable log entry for each trust event (approve, revoke, key-change)
-- `TrustBoundary` — the verification+approval gate that all manifests must pass before registration
 
-**Required data structures:**
+| Component | Responsibility |
+|-----------|----------------|
+| `TrustStore` | Per-controller persistent ledger of worker public keys and their current trust level |
+| `TrustRecord` | Immutable log entry written at every trust-level transition |
+| `TrustBoundary` | Gate that enforces: no manifest enters the approval pipeline without passing §3 verification; no worker is registered without a `TrustRecord(Approved)` |
+
+**TrustRecord schema:**
 ```
-TrustRecord {
-  worker_id: string
-  public_key: string
-  trust_level: enum(unverified, sig_valid, approved, registered, revoked)
-  decided_by: string      // "user" or "system"
-  decided_at: timestamp
-  reason: string          // human-readable
+{
+  worker_id:   string
+  public_key:  string
+  trust_level: enum { unverified, sig_valid, approved, registered, revoked }
+  decided_by:  string     // "user" | "system"
+  decided_at:  timestamp
+  reason:      string     // human-readable note
 }
 ```
 
-**Required network behavior:**  
-LAN is a discovery space, not a trust space. Network adjacency grants zero trust. Trust is established only through the cryptographic and approval pipeline.
+**Trust store behavior:**
+- The TrustStore is local to the controller and initialized empty on first deploy.
+- Every signature verification result writes a TrustRecord.
+- Every user approval decision (approve, reject, defer) writes a TrustRecord.
+- Every deregistration writes a TrustRecord with `trust_level: revoked`.
+- TrustRecords are append-only; the store maintains a full history per `worker_id`.
+- The current trust level for a worker is the level of its most recent TrustRecord.
+
+**Key-change handling:**  
+If a manifest arrives with a valid signature but a `public_key` that differs from the recorded key for that `worker_id`, the manifest is flagged as a key-change event. The worker's trust level is set back to `unverified`, a TrustRecord is written with `reason: "key_change_detected"`, and the worker must pass the full approval pipeline again.
+
+**Network behavior:** The LAN is a discovery space. Network adjacency to port 8095 does not grant any trust level. The TrustBoundary is enforced regardless of the network path a manifest traversed.
 
 ---
 
 ### Flow Diagram
 
 ```
-[Manifest received from LAN]
+[SignedManifest arrives from discovery]
         |
         v
-[TrustBoundary: signature verification (§3)]
+[TrustBoundary: §3 verification]
         |
-        |-- INVALID/MISSING --> TrustRecord(unverified); blocked from §2
-        |-- VALID, new key  --> TOFU record; TrustRecord(sig_valid)
-        |-- VALID, known key, match --> TrustRecord(sig_valid)
-        |-- VALID, key mismatch --> FLAG; TrustRecord(suspicious); blocked
-        |
-        v
-[Worker Selection Ceremony (§2) — user approves or rejects]
-        |
-        |-- REJECTED --> TrustRecord(revoked); not registered
-        |-- APPROVED --> TrustRecord(approved)
+        |--[MISSING sig]──> TrustRecord(unverified); blocked from approval pipeline
+        |--[INVALID sig]──> TrustRecord(unverified); security event logged
+        |--[VALID sig, new worker_id]──> TOFU; TrustRecord(sig_valid)
+        |--[VALID sig, key matches stored]──> TrustRecord(sig_valid)
+        |--[VALID sig, key mismatch]──> TrustRecord(unverified, reason:key_change); re-approval required
         |
         v
-[register_worker() — TrustRecord(registered)]
+[§2 Worker Selection Ceremony — user decision]
+        |
+        |--[REJECTED]──> TrustRecord(revoked); not registered
+        |--[APPROVED]──> TrustRecord(approved)
         |
         v
-[WorkersPanel — user may revoke at any time → TrustRecord(revoked)]
+[Registration call → TrustRecord(registered)]
+        |
+        v
+[Mesh member; WorkersPanel shows worker]
+        |
+        v
+[User may revoke at any time → TrustRecord(revoked)]
 
-PRECONDITION:  Manifest received; TrustBoundary active
-POSTCONDITION: TrustStore reflects user's decisions; only approved workers registered
+PRECONDITION:  §3 ManifestVerifier active; §2 ceremony available
+POSTCONDITION: TrustStore contains a complete, auditable record of every trust decision;
+               only workers with TrustRecord(registered) are in the active mesh
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §3 Authentic Trust | Every trust transition requires cryptographic evidence |
-| §2 Sovereign Domains | Trust store is local; no external authority |
-| §5 Voluntary Mesh | Approval is the gateway to mesh membership |
-| §8 Reversibility | Revocation available at any time |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §3 Authentic Trust | Every trust transition is backed by cryptographic evidence |
+| §2 Sovereign Domains | Trust store is entirely local; the user is the sole authority |
+| §5 Voluntary Mesh | A TrustRecord(Approved) written by the user is the gateway to mesh membership |
+| §8 Reversibility | Trust can be revoked to TrustRecord(revoked) at any time without side effects on other workers |
 
 ---
 
 ### Trust Model Alignment
 
-- Eliminates LAN-as-trust-boundary entirely.
-- Every worker has an auditable TrustRecord chain.
-- Key changes trigger re-approval — no silent substitution.
-- User is the sole authority over the trust store.
+This design makes trust transitions explicit, auditable, and user-controlled at every stage. Network proximity never advances a worker's trust level. A key-change event cannot silently elevate a new actor to the `registered` level. The trust store provides a complete audit trail that the user can inspect, and the revocation mechanism ensures that no trust relationship is ever irreversible.
 
 ---
 
 ### Interoperability Requirements
 
-- §3 Manifest Signing Model feeds `signature_verified` and `public_key` into TrustBoundary.
-- §2 Worker Selection Ceremony reads from TrustBoundary and writes TrustRecords.
-- §4 Deploy Flow Step 9c queries TrustStore before calling `register_worker()`.
-- §9 Installer Discovery must produce manifests compatible with this TrustBoundary.
+- §3 Manifest Signing Model feeds the signature verification result into the TrustBoundary.
+- §2 Worker Selection Ceremony writes `TrustRecord(Approved)` or `TrustRecord(Revoked)` for each user decision.
+- §4 Deploy Flow Step 9c queries the TrustStore to confirm `TrustRecord(Approved)` before each registration call.
+- §9 Installer Discovery must route its discovered workers through the same TrustBoundary and approval pipeline.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** No trust store; all workers auto-registered. On migration, populate TrustStore with existing registered workers at `trust_level: registered` with `decided_by: "legacy-migration"`.
-- **Transitional behavior:** Legacy-migrated workers are flagged in the UI; user prompted to review and explicitly re-approve or revoke.
-- **Deprecated:** Unconditional `register_worker()` acceptance.
+- **Existing registered workers:** On first corrected deploy, seed the TrustStore with a `TrustRecord(registered, decided_by: "legacy-migration")` for each previously registered worker. Flag these records in the UI and prompt the user to review and explicitly re-approve or revoke each one.
+- **Deprecated:** Any registration pathway that does not require a preceding `TrustRecord(Approved)`.
 
 ---
 
@@ -753,45 +765,57 @@ POSTCONDITION: TrustStore reflects user's decisions; only approved workers regis
 
 ### Purpose
 
-The Corrected Port Model defines exactly which ports Phantom services use, what protocol each carries, and which must be opened by the deploy flow. It eliminates the port mismatch between what is opened (8080/tcp only) and what the system requires (8080, 8081, 8090, 8095), and corrects the UI tooltip that conflates worker HTTP and discovery UDP ports.
+The Corrected Port Model defines the canonical set of ports and protocols that Phantom services require, specifies that all required ports must be opened during deploy, and provides a single config-driven source of truth for port assignments. It eliminates silent firewall blocks and removes ambiguity between port roles across all layers.
 
-Doctrine principles satisfied:
-- **§4 Transparent Operation:** All communication paths are documented, opened, and reachable. No silent network failures.
-- **§6 Consistent Behavior:** Port roles are consistent across Rust, Python, and installer layers.
+This model satisfies:
+- **§4 Transparent Operation** — all communication paths are documented, opened, and reachable; no service fails silently because its port was never opened.
+- **§6 Consistent Behavior** — port assignments and their roles are identical across Rust, Python, and installer layers.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-5 (ports 8090/8095 not opened), RC-9 (UI tooltip wrong port).
-
-Deploy Step 6 opens only TCP 8080. Ports 8081 (socket), 8090 (worker HTTP), and 8095 (discovery UDP) are never opened. On systems with strict host firewalls, worker traffic and discovery are silently blocked. The `WorkersPanel` tooltip says "port 8090" for discovery, but discovery uses UDP 8095. This conflation causes user confusion and misconfiguration.
+RC-5 and RC-9 (correction map): the deploy flow opens only one port (8080/tcp), leaving the worker HTTP API (8090/tcp) and discovery listener (8095/udp) inaccessible on systems with host firewalls, and the WorkersPanel tooltip conflates the worker API port with the discovery port, causing users to open the wrong firewall rules.
 
 ---
 
 ### Design Specification
 
-**Canonical Port Table:**
+**Canonical port table:**
 
-| Port | Protocol | Service | Direction | Opened by Deploy |
-|------|----------|---------|-----------|-----------------|
-| 8080 | TCP | Controller API (HTTP/WS) | Inbound | Yes |
-| 8081 | TCP | Socket Infrastructure (WebSocket) | Inbound | Yes |
+| Port | Protocol | Service | Traffic Direction | Required by Deploy |
+|------|----------|---------|-------------------|--------------------|
+| 8080 | TCP | Controller API (HTTP/WebSocket) | Inbound | Yes |
 | 8090 | TCP | Worker HTTP API | Inbound (LAN) | Yes |
-| 8095 | UDP | Discovery listener | Inbound (LAN, broadcast) | Yes |
+| 8095 | UDP | Discovery listener | Inbound (LAN broadcast + unicast) | Yes |
+
+> Note: Port 8081 (Socket Infrastructure WebSocket) may also be opened depending on whether the socket layer is included in the deploy scope. This is configuration-dependent and should be listed in `phantom_config.json` alongside the three required ports above.
 
 **Required components:**
-- `PortPolicy` — enumerated list of all required ports and protocols; single source of truth
-- Updated `open_ports()` — iterates `PortPolicy`; opens all listed ports in Step 6
 
-**Required network behavior:**  
-All four ports listed above must be opened before workers are started (Step 8) and before discovery is attempted (Step 9a). Opening order must respect the corrected deploy flow sequence.
+| Component | Responsibility |
+|-----------|----------------|
+| `PortPolicy` | Enumerated, config-driven list of all required ports and protocols; single source of truth |
+| Port-opening step (Step 6) | Iterates `PortPolicy`; opens each port/protocol combination via the platform firewall API |
 
-**Required config behavior:**  
-`PortPolicy` is defined in `phantom_config.json` (see §8). Ports are not hardcoded in deploy logic; they are read from the config. This allows future port reassignment without code changes.
+**PortPolicy schema (in phantom_config.json):**
+```
+"ports": {
+  "controller_api":    { "port": 8080, "protocol": "tcp", "required": true  },
+  "worker_http":       { "port": 8090, "protocol": "tcp", "required": true  },
+  "discovery_udp":     { "port": 8095, "protocol": "udp", "required": true  },
+  "socket_infra":      { "port": 8081, "protocol": "tcp", "required": false }
+}
+```
+
+**Operational rules:**
+- All ports marked `required: true` must be opened at Step 6 before workers are started (Step 8) and before discovery runs (Step 9a).
+- Port-opening failures for required ports must be logged as warnings and surfaced to the UI. They are non-fatal — the deploy continues — but the user must be informed that affected services may be unreachable.
+- No port may be hardcoded in the deploy logic. Port assignments must always be read from `phantom_config.json`.
+- Port assignments in the UI (tooltips, labels, descriptions) must match the `PortPolicy` values exactly.
 
 **UI correction:**  
-`WorkersPanel` tooltip must read: "Discovery uses UDP port 8095 · Worker API uses TCP port 8090". Port roles must never be conflated.
+The WorkersPanel discovery tooltip must distinguish the two roles: "Workers are discovered via UDP broadcast on port 8095 · The Worker HTTP API is available on TCP port 8090." These must never be conflated.
 
 ---
 
@@ -802,105 +826,111 @@ All four ports listed above must be opened before workers are started (Step 8) a
         |
         |-- Read PortPolicy from phantom_config.json
         |
-        |-- For each entry in PortPolicy:
-        |     Open firewall rule: <port>/<protocol>
+        |-- For each port entry where required = true:
+        |     Apply firewall rule: <port>/<protocol> inbound allow
         |     Log: "Opened <port>/<protocol> for <service>"
         |
-        |-- On any rule failure:
-        |     Log warning with port, protocol, and error
-        |     Surface to UI (non-fatal; worker/discovery may still work)
+        |-- For each port entry where required = false (e.g. 8081):
+        |     Apply rule only if the corresponding service is enabled in config
+        |     Log: "Opened <port>/<protocol> for <service> (optional)"
+        |
+        |-- On failure for any required port:
+        |     Log warning with port, protocol, and error detail
+        |     Surface warning to UI: "Port <port>/<protocol> could not be opened;
+        |       <service> may be unreachable — open this port manually if needed"
         |
         v
-[Step 7, 8, 9a proceed with all ports open]
+[Steps 7, 8, 9a: all services start with required ports already open]
 
-PRECONDITION:  Step 5 (controller started); firewall management available
-POSTCONDITION: Rules exist for 8080/tcp, 8081/tcp, 8090/tcp, 8095/udp
+PRECONDITION:  Step 5 complete (controller started); firewall management available
+POSTCONDITION: 8080/tcp, 8090/tcp, 8095/udp open and logged;
+               8081/tcp open if socket layer is enabled in config
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §4 Transparent Operation | All service ports opened and logged; no silent firewall blocks |
-| §6 Consistent Behavior | Same port policy applied on Linux and Windows |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §4 Transparent Operation | Every port opened or attempted is logged; failures surface to the user |
+| §6 Consistent Behavior | One PortPolicy; identical port assignments on Linux and Windows; UI matches config |
 
 ---
 
 ### Trust Model Alignment
 
-- Correct port opening ensures discovery reaches only the intended listener (signed manifests per §3), not arbitrary hosts.
-- Firewall rules align with the actual trust perimeter.
+Correct port opening ensures that the discovery channel (8095/udp) and worker API (8090/tcp) are reachable when the manifest signing and verification pipeline runs. An inaccessible discovery port would silently prevent signature-verified manifests from being received, breaking the trust chain without any error visible to the user. Opening the correct ports is therefore a precondition for the trust model to function.
 
 ---
 
 ### Interoperability Requirements
 
-- `PortPolicy` is read by §8 Config Model.
-- §4 Deploy Flow Step 6 consumes `PortPolicy`.
-- §9 Installer Discovery Model must open 8095/udp independently if deploying via installer path.
+- `PortPolicy` is defined in `phantom_config.json`, written at §8 Config Model Step 4.5.
+- §4 Deploy Flow Step 6 iterates `PortPolicy`.
 - §7 Readiness Model depends on 8095/udp being open before the readiness probe runs.
+- §9 Installer Discovery Model must also open 8095/udp before running its discovery stage.
+- UI components that reference port numbers must read from `PortPolicy`, not hardcoded values.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** Only 8080/tcp opened. On migration, Step 6 is updated to iterate `PortPolicy`. Existing single-port systems gain three additional rules; no rules are removed.
-- **Deprecated:** Hardcoded single-port logic in `open_ports()`.
-- **Transitional behavior:** If the firewall management layer fails to open 8090 or 8095 (e.g., insufficient permissions), deploy continues but logs a clear warning: "Discovery and worker traffic may be blocked. Open ports 8090/tcp and 8095/udp manually."
-
----
+- **Existing installs:** Only 8080/tcp is currently opened. On the first corrected deploy, Step 6 opens 8090/tcp and 8095/udp additionally. No existing rules are removed.
+- **Permission failures:** On systems where the deploy user lacks firewall management permissions, all three required ports must be listed in the post-deploy output with instructions for manual opening.
+- **Deprecated:** Hardcoded single-port logic in the port-opening step; any UI label that conflates 8090 and 8095.
 
 ## 7. Corrected Readiness Model
 
 ### Purpose
 
-The Corrected Readiness Model replaces the fixed 2-second sleep after worker spawn with an active readiness probe. The probe confirms that the worker's discovery listener is bound and responsive before the deploy flow advances to discovery (Step 9a). This eliminates the race condition where discovery runs before the worker is ready.
+The Corrected Readiness Model replaces the fixed post-spawn sleep with an active readiness probe that confirms the local worker's discovery listener is bound and responsive before the deploy flow advances to Step 9a. It also corrects the worker spawn failure log to be accurate regardless of GPU presence.
 
-Doctrine principles satisfied:
-- **§4 Transparent Operation:** Deploy does not silently advance past an unready worker; the user is informed of readiness status.
-- **§6 Consistent Behavior:** Readiness is probed the same way on all platforms and hardware configurations.
+This model satisfies:
+- **§4 Transparent Operation** — deploy status accurately reflects whether the local worker is ready; no silent race condition passes undetected.
+- **§6 Consistent Behavior** — readiness is probed identically on all platforms and all hardware configurations; there are no platform-specific timing assumptions.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-4 (worker readiness timing too short), RC-13 (deploy flow assumes worker ready in 2 seconds).
-
-The worker's startup sequence — GPU detection, plugin initialization, HTTP registration, background task spawn — can exceed 2 seconds on GPU-equipped or slow systems. The fixed sleep is a race condition. If the worker's discovery listener is not yet bound when Step 9a runs, the local worker does not appear in the discovery results and the deploy completes with zero workers.
+RC-4 and RC-13 (correction map): a fixed two-second sleep after worker spawn is an unreliable readiness gate — on systems where GPU detection or plugin initialization takes longer, the local worker's discovery listener is not yet bound when Step 9a runs, and the worker is silently absent from the discovery results.
 
 ---
 
 ### Design Specification
 
-**Required components:**
-- `ReadinessProbe` — sends a unicast UDP discovery request to `127.0.0.1:8095`; expects a `WORKER_MANIFEST` response
-- `ReadinessConfig` — configurable probe parameters (interval, max_attempts, timeout_per_attempt)
+**Architecture:**  
+Immediately after spawning the worker process, the deployer enters a `ReadinessProbe` loop. The probe sends a unicast `PHANTOM_DISCOVER_WORKERS` UDP packet to `127.0.0.1:8095` and waits for a `WORKER_MANIFEST` response. The loop exits when the worker responds, or after `max_attempts` are exhausted. In either case, Step 9a proceeds — the probe is a best-effort gate, not a hard dependency.
 
-**Required data structures:**
+**Required components:**
+
+| Component | Responsibility |
+|-----------|----------------|
+| `ReadinessProbe` | Sends unicast PHANTOM_DISCOVER_WORKERS to 127.0.0.1:8095; waits for WORKER_MANIFEST response |
+| `ReadinessConfig` | Configurable probe parameters; stored in `phantom_config.json` under `worker.*` (§8) |
+
+**ReadinessConfig schema:**
 ```
-ReadinessConfig {
-  probe_interval_ms: uint     // default 500ms
-  max_attempts: uint          // default 20 (10 seconds total)
-  attempt_timeout_ms: uint    // default 1000ms
-  success_criterion: "WORKER_MANIFEST_received"
+{
+  probe_interval_ms:      uint   // default 500 — wait between attempts
+  max_attempts:           uint   // default 20  — 10 seconds total at defaults
+  attempt_timeout_ms:     uint   // default 1000 — per-attempt response window
 }
 ```
 
-**Required timing behavior:**
-1. After worker process is spawned, immediately begin readiness probing.
-2. Send unicast `PHANTOM_DISCOVER_WORKERS` to `127.0.0.1:8095`.
-3. Wait up to `attempt_timeout_ms` for a `WORKER_MANIFEST` response.
-4. If received: worker is ready; advance to Step 9a.
-5. If not received: wait `probe_interval_ms`; retry up to `max_attempts`.
-6. If `max_attempts` exhausted: log warning "Local worker did not respond within readiness window"; advance to Step 9a anyway (non-fatal; broadcast may still find it or it may not be present).
+**Probe sequence:**
+1. Spawn worker process.
+2. Send unicast `PHANTOM_DISCOVER_WORKERS` → `127.0.0.1:8095`.
+3. Wait `attempt_timeout_ms` for a `WORKER_MANIFEST` response.
+4. On response: worker is ready; advance to Step 9a immediately.
+5. On timeout: increment attempt counter; wait `probe_interval_ms`; retry from step 2.
+6. On `max_attempts` exhausted: log a clear warning — "Local worker did not respond within the readiness window. Discovery will proceed; the worker may appear in the LAN scan if it completes startup shortly." Advance to Step 9a.
 
-**Required error-handling behavior:**  
-Readiness timeout is non-fatal. The probe is a best-effort gate, not a hard dependency. Discovery in Step 9a is the authoritative step; if the local worker responds there, it is discovered. If not, the user sees it absent from the §2 selection list.
+**Worker spawn log text (all platforms):**  
+On any spawn failure, the log message must be: `"Failed to start local worker: <reason>"`. GPU presence must never be asserted in a spawn failure message. The worker supports CPU-only mode; a spawn failure is not evidence of a GPU requirement.
 
-**GPU log correction:**  
-The worker spawn failure log message must not assert GPU necessity. Correct text: `"Failed to start local worker: {e}"` (applicable on all platforms equally).
+**Error handling:** Readiness timeout is non-fatal. Step 9a's broadcast discovery is the authoritative step for finding workers. If the local worker starts after the readiness window, it will respond to the broadcast in Step 9a.
 
 ---
 
@@ -909,59 +939,60 @@ The worker spawn failure log message must not assert GPU necessity. Correct text
 ```
 [Deploy Step 8: Start local worker]
         |
-        |-- Write local_worker_config.json
         |-- Spawn worker process
+        |-- Begin ReadinessProbe loop (attempt = 0)
         |
         v
 [ReadinessProbe loop]
         |
-        |-- attempt = 0
-        |-- LOOP:
-        |     Send unicast PHANTOM_DISCOVER_WORKERS to 127.0.0.1:8095
-        |     Wait attempt_timeout_ms for WORKER_MANIFEST response
-        |     |
-        |     |-- RECEIVED --> Worker ready; exit loop
-        |     |-- TIMEOUT  --> attempt++
-        |     |               if attempt < max_attempts: sleep probe_interval_ms; retry
-        |     |               if attempt == max_attempts: log warning; exit loop
+        |-- Send unicast PHANTOM_DISCOVER_WORKERS → 127.0.0.1:8095
+        |-- Wait attempt_timeout_ms for WORKER_MANIFEST
+        |
+        |--[WORKER_MANIFEST received]──> Worker ready; exit loop
+        |
+        |--[Timeout]──> attempt++
+        |               attempt < max_attempts? → wait probe_interval_ms → retry
+        |               attempt == max_attempts? → log warning; exit loop
         |
         v
-[Deploy Step 9a: Discovery broadcast]
+[Deploy Step 9a: Discovery broadcast proceeds]
 
-PRECONDITION:  Worker process spawned
-POSTCONDITION: Either worker confirmed ready, or timeout logged; Step 9a proceeds either way
+PRECONDITION:  Worker process spawned; 8095/udp open (§6)
+POSTCONDITION: Either worker confirmed ready via probe response,
+               or timeout logged and Step 9a proceeds with best-effort discovery
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §4 Transparent Operation | Readiness status surfaced to user; no silent race condition |
-| §6 Consistent Behavior | Same probe on all platforms; no platform-specific sleep assumptions |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §4 Transparent Operation | Readiness outcome is logged and surfaced; no silent advancement past an unready worker |
+| §6 Consistent Behavior | One probe mechanism; same behavior on all platforms; no platform-specific timing |
 
 ---
 
 ### Trust Model Alignment
 
-- Readiness probe uses the same UDP channel as discovery (§3 manifests). A responsive worker is already speaking the signed manifest protocol.
+The probe response is a `WORKER_MANIFEST` governed by §3 Manifest Signing Model. A worker that responds to the readiness probe has already demonstrated its ability to produce a signed manifest, which is the minimum requirement for appearing in the §2 selection ceremony. The probe therefore acts as an early-stage trust signal, not just a liveness check.
 
 ---
 
 ### Interoperability Requirements
 
-- Depends on §6 Port Model having opened 8095/udp before this probe runs.
-- §4 Deploy Flow Step 8 invokes `ReadinessProbe` before Step 9a.
-- §3 Manifest Signing Model applies to the probe response — the local worker's manifest is verified even in the readiness probe.
+- Requires 8095/udp to be open before the probe runs — §6 Port Model Step 6 must precede Step 8.
+- `ReadinessConfig` parameters are stored in `phantom_config.json` (§8); the probe reads these values, not hardcoded constants.
+- The probe response is a `SignedManifest` (§3); the ManifestVerifier should verify it even during the readiness phase.
+- §4 Deploy Flow positions the probe within Step 8, between worker spawn and Step 9a.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** `sleep(2s)` in `start_local_worker()`. Replace with `ReadinessProbe`. On fast machines the probe completes in one or two attempts (< 1s); on slow machines it waits up to 10s instead of potentially failing silently.
-- **Deprecated:** Fixed `sleep(2s)` after worker spawn; platform-inconsistent "GPU required" log text.
-- **Transitional behavior:** `ReadinessConfig` values are conservative defaults; operators may tune via config (§8).
+- **Existing behavior:** Fixed `sleep(2s)` after spawn. On migration, the sleep is removed and the probe loop is substituted. On fast machines, the probe typically resolves in under one second — faster than the original sleep. On slow machines, the probe waits up to 10 seconds instead of silently missing the worker.
+- **Config tuning:** `ReadinessConfig` defaults are conservative. Operators running on fast hardware may reduce `max_attempts`; operators running on slow GPU systems may increase it.
+- **Deprecated:** Any fixed sleep after worker spawn; the "GPU required" wording in spawn failure log messages.
 
 ---
 
@@ -969,20 +1000,18 @@ POSTCONDITION: Either worker confirmed ready, or timeout logged; Step 9a proceed
 
 ### Purpose
 
-The Corrected Config Model defines the lifecycle of `phantom_config.json` and related configuration artifacts. It enforces write-before-read ordering, establishes a bootstrap step that writes config before the controller starts, and provides a single authoritative source of truth for all runtime parameters — port policy, placement params, execution modes, and readiness config.
+The Corrected Config Model defines the lifecycle of `phantom_config.json` — when it is written, what it contains, and who reads it — and establishes Step 4.5 as the authoritative write point. It ensures that the config file exists and is coherent before the controller starts (Step 5), and that all subsequent steps read from this single source of truth rather than from hardcoded defaults.
 
-Doctrine principles satisfied:
-- **§4 Transparent Operation:** Config state is deterministic; no silent fallbacks due to missing files.
-- **§6 Consistent Behavior:** All components read from the same config; no component has its own hardcoded defaults that diverge from the config.
-- **§8 Reversibility:** Config is written atomically; prior config is preserved before overwrite.
+This model satisfies:
+- **§4 Transparent Operation** — config state is deterministic; no component silently defaults to a value because the config file was absent.
+- **§6 Consistent Behavior** — all components (controller, worker, ports, readiness probe) read from the same config; there are no divergent hardcoded values.
+- **§8 Reversibility** — config is written atomically; a timestamped backup is preserved before any overwrite.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-7 (phantom_config ordering bug), RC-14 (deploy flow assumes config exists early).
-
-`phantom_config.json` is written in Step 10 (`load_execution_modes`) but read in Step 5 (`start_controller`). On first deploy, the file does not exist, and the controller starts with a fallback value of `"disabled"` for security. The comment in the deployer source says "written by step 9" — both the comment and the step number are wrong. This is low-risk today because the fallback is acceptable, but it is architecturally fragile: if any future component requires a correct config value at Step 5 or earlier, read-before-write will silently produce wrong behavior.
+RC-7 and RC-14 (correction map): `phantom_config.json` is currently written late in the deploy sequence but read early, meaning the controller starts before its own configuration exists and silently falls back to default values for security level and other parameters.
 
 ---
 
@@ -990,57 +1019,67 @@ Doctrine principles satisfied:
 
 **Config lifecycle:**
 
-| Phase | Action | Config state |
-|-------|--------|-------------|
-| Pre-0 (Controller ceremony) | `ControllerPlacementParams` available | Not yet written |
-| Step 4.5 (Bootstrap config) | Write `phantom_config.json` with: placement, port policy, security level, readiness config, execution mode defaults | Written; authoritative |
-| Step 5 | Read `phantom_config.json` → start controller with correct params | Read (file exists) |
-| Step 10 | Verify or update execution modes; no re-write if already written at 4.5 | Idempotent update |
+| Deploy phase | Config action |
+|-------------|---------------|
+| Pre-0 (§1 ceremony) | `ControllerPlacementParams` collected; config not yet written |
+| Steps 0–4 | Environment setup; config not yet written |
+| **Step 4.5** | `ConfigBootstrap` writes `phantom_config.json` atomically |
+| Step 5 | Controller reads `phantom_config.json`; file guaranteed to exist |
+| Steps 6–9c | Port policy, readiness config, and other values consumed from config |
+| Step 10 | Execution modes step is idempotent; adds only fields absent from the Step 4.5 write |
 
 **Required components:**
-- `ConfigBootstrap` — Step 4.5 component that collects all pre-deploy inputs and writes `phantom_config.json` atomically
-- `ConfigSchema` — defines all fields of `phantom_config.json` with types and defaults
-- Atomic write pattern: write to `.phantom_config.json.tmp`, then rename to `phantom_config.json`
 
-**Required data structures:**
+| Component | Responsibility |
+|-----------|----------------|
+| `ConfigBootstrap` | Collects all pre-deploy inputs; writes `phantom_config.json` atomically at Step 4.5 |
+| `ConfigSchema` | Defines all fields, types, and defaults; the single contract for the config file |
+
+**`phantom_config.json` schema:**
 ```
-phantom_config.json {
-  controller: {
-    host: string,
-    port: uint16,
-    security: string,           // "disabled" | "basic" | "full"
-    identity_fingerprint: string
+{
+  "controller": {
+    "host":                 string,   // from ControllerPlacementParams (§1)
+    "port":                 uint16,   // from ControllerPlacementParams (§1)
+    "security":             string,   // "disabled" | "basic" | "full"; from user selection
+    "identity_fingerprint": string    // from IdentityManager (§1)
   },
-  ports: {
-    controller_api: 8080,
-    socket: 8081,
-    worker_http: 8090,
-    discovery_udp: 8095
+  "ports": {
+    "controller_api": { "port": 8080, "protocol": "tcp", "required": true  },
+    "worker_http":    { "port": 8090, "protocol": "tcp", "required": true  },
+    "discovery_udp":  { "port": 8095, "protocol": "udp", "required": true  },
+    "socket_infra":   { "port": 8081, "protocol": "tcp", "required": false }
   },
-  worker: {
-    readiness_probe_interval_ms: 500,
-    readiness_max_attempts: 20,
-    readiness_attempt_timeout_ms: 1000
+  "worker": {
+    "readiness_probe_interval_ms":  500,
+    "readiness_max_attempts":       20,
+    "readiness_attempt_timeout_ms": 1000
   },
-  execution_modes: {
-    default_mode: string,
-    ...
+  "execution_modes": {
+    "default_mode": string
   },
-  config_version: string,
-  written_at: timestamp,
-  written_by_step: "4.5"    // correct annotation
+  "config_version":  string,
+  "written_at":      timestamp,
+  "written_by_step": "4.5"
 }
 ```
 
-**Required reversibility behavior:**  
-Before overwriting an existing `phantom_config.json`, back it up to `phantom_config.json.bak` with a timestamp. The backup is retained until the next successful deploy.
+**Write semantics:**
+- Atomic write: `ConfigBootstrap` writes to a `.tmp` file, then renames it to `phantom_config.json`.
+- Before overwriting, any existing `phantom_config.json` is copied to `phantom_config.json.bak.<timestamp>`.
+- The backup is retained through the next successful deploy.
+- `written_by_step: "4.5"` is the authoritative annotation; no other step claims ownership of the initial write.
+
+**Read semantics:**
+- Step 5 reads `phantom_config.json`; no fallback is applied. If the file is absent, Step 5 fails and surfaces an error — it does not silently default.
+- All other consuming steps (6, 8, 9a) read from the same file. Port assignments, readiness parameters, and security level all come from this single source.
 
 ---
 
 ### Flow Diagram
 
 ```
-[Pre-0: ControllerPlacementParams confirmed (§1)]
+[Pre-0: ControllerPlacementParams confirmed]
         |
         v
 [Steps 0–4: environment setup]
@@ -1048,59 +1087,61 @@ Before overwriting an existing `phantom_config.json`, back it up to `phantom_con
         v
 [Step 4.5: ConfigBootstrap]
         |
-        |-- Collect: ControllerPlacementParams, PortPolicy, ReadinessConfig, execution defaults
-        |-- If phantom_config.json exists: backup to .bak
-        |-- Write phantom_config.json atomically (tmp → rename)
+        |-- Collect inputs: ControllerPlacementParams, security level, PortPolicy, ReadinessConfig
+        |-- If phantom_config.json exists: copy to phantom_config.json.bak.<timestamp>
+        |-- Write to phantom_config.json.tmp
+        |-- Rename .tmp → phantom_config.json (atomic)
         |-- Log: "phantom_config.json written at step 4.5"
         |
         v
-[Step 5: start_controller reads phantom_config.json]
-        |   (file guaranteed to exist; no fallback needed)
+[Step 5: start controller]
+        |-- Read phantom_config.json (guaranteed present)
+        |-- No fallback applied
         |
         v
-[Steps 6–9c: consume config values (ports, readiness)]
+[Steps 6–9c: consume port policy, readiness config from phantom_config.json]
         |
         v
-[Step 10: load_execution_modes — idempotent; updates only missing fields]
+[Step 10: execution modes — idempotent; adds only absent fields]
 
 PRECONDITION:  Pre-0 ceremony complete; Steps 0–4 complete
-POSTCONDITION: phantom_config.json exists and is coherent before Step 5 reads it
+POSTCONDITION: phantom_config.json exists, is coherent, and is the sole
+               source of runtime parameters for all subsequent steps
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §4 Transparent Operation | Config written before read; no silent fallback; step annotation correct |
-| §6 Consistent Behavior | All components read the same config; no divergent hardcoded defaults |
-| §8 Reversibility | Atomic write; backup before overwrite |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §4 Transparent Operation | Config is written before it is read; no silent fallbacks; annotation is correct |
+| §6 Consistent Behavior | All components read from one file; no component has divergent hardcoded values |
+| §8 Reversibility | Atomic write prevents partial state; timestamped backup enables rollback |
 
 ---
 
 ### Trust Model Alignment
 
-- Security level in config is set by user at ceremony time (Pre-0), not silently defaulted to "disabled".
-- Config is the source of truth for controller identity fingerprint, ensuring no drift between ceremony and runtime.
+The security level and controller identity fingerprint stored in `phantom_config.json` are set by the user at the §1 ceremony — they are never silently defaulted. The config file therefore carries the user's explicit security intent into every component that reads it, preventing security drift between what the user chose at ceremony time and what the controller actually runs with.
 
 ---
 
 ### Interoperability Requirements
 
-- §1 Controller Selection Ceremony writes `ControllerPlacementParams` which becomes the `controller` block in config.
-- §6 Port Model reads `ports` block.
-- §7 Readiness Model reads `worker.readiness_*` fields.
-- §4 Deploy Flow Step 4.5 is the write point.
-- §5 Trust Model reads `controller.identity_fingerprint` from config.
+- `ControllerPlacementParams` from §1 populates the `controller` block.
+- `PortPolicy` from §6 is stored in the `ports` block; the port-opening step reads from here.
+- `ReadinessConfig` from §7 is stored in the `worker` block; the readiness probe reads from here.
+- §4 Deploy Flow Step 4.5 is the sole write point for the initial config.
+- §5 Trust Model reads `controller.identity_fingerprint` from this config to confirm controller identity continuity.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** Config written at Step 10; read at Step 5 with `unwrap_or_else("disabled")`. On migration, Step 4.5 is inserted. For existing deployments, the first corrected deploy backs up the old config and writes a new one.
-- **Deprecated:** `unwrap_or_else` fallback in `start_controller`; incorrect "written by step 9" comment.
-- **Transitional behavior:** If `phantom_config.json` exists from a legacy deploy and passes schema validation, ConfigBootstrap may skip re-writing it and log "existing config retained."
+- **Legacy read-before-write:** On first corrected deploy, Step 4.5 is inserted and writes the config before Step 5 reads it. For existing single-node installs, the written values match the prior behavior (local address, existing security level), so there is no functional change.
+- **Existing config files:** Any pre-existing `phantom_config.json` is backed up before ConfigBootstrap writes the new one. The user is informed.
+- **Deprecated:** Any mechanism that reads `phantom_config.json` with a fallback value when the file is absent; any annotation claiming a step other than 4.5 owns the initial write.
 
 ---
 
@@ -1108,48 +1149,57 @@ POSTCONDITION: phantom_config.json exists and is coherent before Step 5 reads it
 
 ### Purpose
 
-The Corrected Installer Discovery Model aligns the installer's worker discovery mechanism with the protocol used by the Tauri deploy path and the worker's discovery listener. It replaces the incompatible TCP raw-JSON probe with a UDP broadcast-based discovery that matches the actual worker protocol, and ensures the same `SignedManifest` schema (§3) is used across all discovery paths.
+The Corrected Installer Discovery Model establishes a single canonical discovery protocol — UDP broadcast to port 8095 with `SignedManifest` responses — and requires all discovery paths to use it: the Tauri deploy path, the installer path, and any future clients. It replaces the installer's broken TCP-based probe with a protocol that workers actually speak, and applies the same manifest signing verification (§3) and worker selection ceremony (§2) on the installer path as on the Tauri path.
 
-Doctrine principles satisfied:
-- **§6 Consistent Behavior:** Installer discovers workers the same way as Tauri — via UDP broadcast to port 8095.
-- **§4 Transparent Operation:** Discovery failures are reported accurately; no silent fallback to fabricated worker info.
-- **§7 Evolution Without Drift:** The legacy TCP placeholder is retired; a single canonical discovery protocol exists.
+This model satisfies:
+- **§6 Consistent Behavior** — every discovery client uses the same protocol, schema, timeout, and deduplication logic; there are no path-specific discovery dialects.
+- **§4 Transparent Operation** — discovery results reflect what workers actually report; fabricated fallback records are prohibited.
+- **§7 Evolution Without Drift** — the TCP placeholder is retired permanently; there is one protocol, owned by this specification.
 
 ---
 
 ### Problem Statement
 
-**Root causes addressed:** RC-8 (installer discovery TCP probing incompatible with HTTP workers).
-
-`installer/modules/worker_discovery.py::_query_worker_info()` sends a raw JSON `{"action": "get_info"}` payload over a raw TCP connection to ports 8090–8094. Workers speak HTTP on port 8090 — they do not respond to raw JSON over TCP. The function's comment explicitly marks it as a placeholder that was never replaced. This means the installer's worker discovery always falls back to fabricated minimal info (`Worker-{ip}`) and never retrieves real `worker_id`, GPU info, or capabilities. The Tauri deploy path is unaffected (it uses `discovery.rs` UDP broadcast), but the installer path is systematically broken for worker discovery.
+RC-8 (correction map): the installer's worker discovery sends a raw JSON payload over TCP to worker ports, which is incompatible with the HTTP protocol workers actually use; as a result, the installer never retrieves real worker identity or capabilities, and falls back to fabricated records that contain no meaningful information.
 
 ---
 
 ### Design Specification
 
-**Required components:**
-- `InstallerDiscoveryClient` — sends UDP broadcast `PHANTOM_DISCOVER_WORKERS` to `:8095`; collects `SignedManifest` responses; replaces `_query_worker_info()`
-- `InstallerWorkerRecord` — populated from real `SignedManifest` data, not fabricated fallback
+**Architecture:**  
+The installer's Stage S2 (Worker Discovery) is rebuilt around an `InstallerDiscoveryClient` that implements the canonical discovery contract: UDP broadcast + unicast, `PHANTOM_DISCOVER_WORKERS` request format, 1500ms timeout, `SignedManifest` response schema, deduplication by `worker_id`. This is exactly the contract implemented by the Tauri `discovery.rs` module. The same contract governs all future discovery clients.
 
-**Required protocol:**
+**Canonical discovery contract:**
 
-| Property | Corrected Value |
+| Property | Canonical value |
 |----------|----------------|
 | Protocol | UDP |
 | Discovery port | 8095 |
-| Request payload | `{"msg_type": "PHANTOM_DISCOVER_WORKERS"}` |
-| Response schema | `SignedManifest` (see §3) |
-| Timeout | 1500ms per subnet (matches Tauri `TIMEOUT_MS`) |
-| Deduplication | By `worker_id` |
+| Request message type | `PHANTOM_DISCOVER_WORKERS` |
+| Response schema | `SignedManifest` (§3) |
+| Timeout per subnet | 1500 ms |
+| Deduplication key | `worker_id` |
+| Signature requirement | All responses verified per §3; unsigned flagged, not silently accepted |
 
-**Required alignment with Tauri discovery:**  
-The installer discovery must use the same timeout, request payload format, deduplication key, and response schema as `discovery.rs`. This is the canonical discovery contract. Any future discovery client must implement this contract.
+**Required components:**
 
-**Required signature verification:**  
-`InstallerDiscoveryClient` must verify `SignedManifest` signatures (§3) before surfacing workers to the installer's selection step (S3). Unsigned or invalid-signature manifests are flagged, not silently accepted.
+| Component | Responsibility |
+|-----------|----------------|
+| `InstallerDiscoveryClient` | Sends UDP broadcast + unicast; collects and deduplicates SignedManifest responses |
+| `InstallerManifestVerifier` | Applies §3 verification to each collected manifest; sets `signature_verified` flag |
+| Installer Stage S3 | Worker selection ceremony (mirrors §2); user approves or rejects each discovered worker |
 
-**Required error-handling behavior:**  
-If no workers respond within the timeout: report "No workers discovered" accurately. Do not fabricate minimal worker records. Do not silently substitute `Worker-{ip}`.
+**Discovery sequence:**
+1. `InstallerDiscoveryClient` sends `PHANTOM_DISCOVER_WORKERS` UDP broadcast to `<subnet-broadcast>:8095`.
+2. Also sends unicast to `127.0.0.1:8095` to find the local worker.
+3. Collects `SignedManifest` responses for 1500ms.
+4. Deduplicates by `worker_id`.
+5. `InstallerManifestVerifier` applies §3 verification; sets `signature_verified` for each.
+6. Passes `DiscoveredManifest[]` to Stage S3 (Worker Selection Ceremony).
+
+**No fabricated records:** If no workers respond within the timeout, the installer reports "No workers discovered on this subnet" and presents an empty selection list. It does not create placeholder entries with fabricated worker IDs, addresses, or capabilities.
+
+**Error handling:** An empty discovery result is a valid, expected outcome. It is surfaced to the user with instructions for verifying that target workers are running and that port 8095/udp is reachable.
 
 ---
 
@@ -1158,100 +1208,126 @@ If no workers respond within the timeout: report "No workers discovered" accurat
 ```
 [Installer Stage S2: Worker Discovery]
         |
-        |-- Send UDP broadcast: PHANTOM_DISCOVER_WORKERS to <broadcast>:8095
-        |-- Also unicast to 127.0.0.1:8095 (local worker)
-        |-- Wait 1500ms
-        |-- Collect SignedManifest responses
-        |-- Deduplicate by worker_id
-        |-- Verify signatures (§3):
-        |     |-- VALID   --> InstallerWorkerRecord(real worker_id, capabilities, sig_verified=true)
-        |     |-- INVALID --> flag; include in list with sig_verified=false
-        |     |-- MISSING --> flag; include in list with sig_verified=false (grace period) or exclude
+        |-- InstallerDiscoveryClient:
+        |     UDP broadcast PHANTOM_DISCOVER_WORKERS → <broadcast>:8095
+        |     UDP unicast  PHANTOM_DISCOVER_WORKERS → 127.0.0.1:8095
+        |     Wait 1500ms
+        |     Collect SignedManifest responses
+        |     Deduplicate by worker_id
+        |
+        |-- InstallerManifestVerifier (§3):
+        |     VALID sig, new worker_id     → signature_verified = true  (TOFU)
+        |     VALID sig, known key match   → signature_verified = true
+        |     VALID sig, key mismatch      → flag suspicious; require re-approval
+        |     INVALID sig                  → signature_verified = false; include with warning
+        |     MISSING sig                  → signature_verified = false; grace period flag
+        |
+        |-- No responses within timeout → "No workers discovered"; empty list
         |
         v
-[Installer Stage S3: Worker Selection]
-        |   (identical ceremony to §2 Worker Selection Ceremony)
-        |   User approves/rejects each discovered worker
+[Installer Stage S3: Worker Selection Ceremony]
+        |   (mirrors §2 Worker Selection Ceremony exactly)
+        |   Display each DiscoveredManifest:
+        |     worker_id | address | capabilities | VERIFIED / UNVERIFIED / INVALID
+        |   User checks/unchecks; confirms selection
         |
         v
-[Installer Stage S4: Register approved workers only]
+[Installer Stage S4: Register approved workers]
+        |-- Re-verify signature for each approved manifest
+        |-- POST to controller registration endpoint
+        |-- Apply TrustRecord(registered) in TrustStore (§5)
 
-PRECONDITION:  Port 8095/udp reachable; workers running and listening
-POSTCONDITION: Real worker info (not fabricated) surfaced to S3; only approved workers registered
+PRECONDITION:  Workers running; 8095/udp reachable from installer host
+POSTCONDITION: Real worker data surfaced to S3; only user-approved workers registered;
+               no fabricated worker records in any data store
 ```
 
 ---
 
 ### Doctrine Alignment
 
-| Principle | How Satisfied |
-|-----------|--------------|
-| §6 Consistent Behavior | Installer and Tauri use the same discovery protocol |
-| §4 Transparent Operation | No fabricated fallback; accurate reporting of discovery results |
-| §7 Evolution Without Drift | TCP placeholder retired; single canonical UDP protocol |
+| Principle | How This Design Satisfies It |
+|-----------|------------------------------|
+| §6 Consistent Behavior | One discovery protocol across Tauri and installer paths; same schema, timeout, and dedup |
+| §4 Transparent Operation | Actual worker data, not fabricated; empty results reported accurately |
+| §7 Evolution Without Drift | TCP placeholder retired; canonical protocol owned by this spec; no path-specific dialects |
 
 ---
 
 ### Trust Model Alignment
 
-- Same `SignedManifest` verification as §3 applied on installer path.
-- Installer's S3 selection ceremony mirrors §2 Worker Selection Ceremony.
-- No installer-specific trust bypass; trust model is uniform across deploy paths.
+The installer path is now subject to the identical trust pipeline as the Tauri deploy path: §3 signature verification, §2-style worker selection ceremony, §5 TrustRecord writes, and §5 TrustStore persistence. A worker discovered by the installer and approved by the user receives the same `TrustRecord(registered)` as one discovered via Tauri. There is no installer-specific trust bypass and no weaker verification path for installer-originated workers.
 
 ---
 
 ### Interoperability Requirements
 
-- §3 Manifest Signing Model defines the `SignedManifest` schema consumed here.
-- §2 Worker Selection Ceremony design is reused for installer S3.
-- §5 Corrected Trust Model applies equally to installer-discovered workers.
-- §6 Port Model: installer must open 8095/udp before running S2 discovery.
+- Implements the same canonical discovery contract as `discovery.rs` (Tauri); both must be kept in sync.
+- Consumes `SignedManifest` schema from §3; any schema change must propagate to both paths simultaneously.
+- Stage S3 worker selection mirrors §2 Worker Selection Ceremony; the UX and approval semantics must be identical.
+- §5 Trust Model applies to installer-discovered workers; the TrustStore is shared, not installer-specific.
+- Port 8095/udp must be open on the installer host before Stage S2 runs; see §6 Port Model.
 
 ---
 
 ### Migration Notes
 
-- **Legacy behavior:** `_query_worker_info()` TCP raw-JSON probe, fallback to `Worker-{ip}`. On migration, this function is replaced by `InstallerDiscoveryClient` (UDP). No data is preserved from the legacy fallback records — they were fabricated.
-- **Deprecated:** `_query_worker_info()` TCP probing; fabricated worker record fallback; `discover_workers_comprehensive()` TCP connect loop.
-- **Transitional behavior:** During migration, if a target host does not respond to UDP discovery, the installer reports "Worker at {ip} did not respond to UDP discovery on port 8095" with instructions for the user to verify the worker is running. No silent fallback.
+- **Legacy TCP probe:** The TCP raw-JSON discovery function is removed entirely on migration. There is no transitional mode; the protocol was always broken and produced no usable data.
+- **Fabricated records:** Any `Worker-{ip}` placeholder records in installer data stores are invalid and must not be migrated forward. Users are informed that prior installer discovery results are unreliable.
+- **Deprecated:** The TCP discovery function; the fabricated-fallback path; any installer stage that registers workers without a preceding selection ceremony.
 
 ---
 
-## Summary: Cross-Domain Dependency Map
+## Cross-Domain Dependency Map
 
 ```
-§1 Controller Selection ──writes──> §8 Config (ControllerPlacementParams)
-                        ──identity root──> §3 Manifest Signing (controller keypair)
+§1 Controller Selection
+    ──writes ControllerPlacementParams──> §8 Config (Step 4.5)
+    ──provides controller keypair root──> §3 Manifest Signing
 
-§3 Manifest Signing ──provides sig_verified──> §2 Worker Selection
-                    ──provides sig_verified──> §9 Installer Discovery
-                    ──provides signed manifests──> §5 Trust Model
+§3 Manifest Signing
+    ──provides signature_verified field──> §2 Worker Selection
+    ──provides signature_verified field──> §9 Installer Discovery
+    ──writes TOFU public_key records──> §5 Trust Model
 
-§2 Worker Selection ──gates registration in──> §4 Deploy Flow (Step 9b)
-                    ──writes TrustRecords to──> §5 Trust Model
+§2 Worker Selection
+    ──gates registration at Step 9b──> §4 Deploy Flow
+    ──writes TrustRecord(approved/revoked)──> §5 Trust Model
 
-§4 Deploy Flow ──consumes──> §1 (Pre-0 ceremony)
-               ──consumes──> §6 Port Model (Step 6)
-               ──consumes──> §7 Readiness Model (Step 8)
-               ──consumes──> §8 Config Model (Step 4.5)
-               ──invokes──> §2 and §3 (Steps 9a–9c)
+§4 Deploy Flow
+    ──positions ceremony at Pre-0──> §1
+    ──triggers config write at Step 4.5──> §8
+    ──opens ports at Step 6──> §6
+    ──invokes readiness probe at Step 8──> §7
+    ──runs discovery+signing+ceremony at Steps 9a–9c──> §3, §2
 
-§6 Port Model ──read by──> §4 Deploy Flow Step 6
-              ──enables──> §7 Readiness Model (8095/udp must be open)
-              ──enables──> §9 Installer Discovery (8095/udp)
+§5 Trust Model
+    ──receives all TrustRecord writes from──> §2, §3, §9
 
-§7 Readiness Model ──depends on──> §6 Port Model (8095/udp open)
-                   ──precedes──> §4 Deploy Flow Step 9a
+§6 Port Model
+    ──port policy stored in──> §8 Config (ports block)
+    ──8095/udp open enables──> §7 Readiness probe
+    ──8095/udp open enables──> §9 Installer discovery
+    ──8090/tcp open enables──> worker registration calls in §2, §9
 
-§8 Config Model ──provides config to──> §4, §6, §7 at Step 4.5
+§7 Readiness Model
+    ──ReadinessConfig stored in──> §8 Config (worker block)
+    ──depends on 8095/udp from──> §6 Port Model
+    ──precedes discovery Step 9a in──> §4 Deploy Flow
 
-§9 Installer Discovery ──mirrors protocol of──> §4 Deploy Flow Steps 9a–9c
-                       ──applies──> §3 Manifest Signing verification
-                       ──applies──> §2 Worker Selection ceremony (S3)
-                       ──subject to──> §5 Trust Model
+§8 Config Model
+    ──written at Step 4.5, read at Step 5 and beyond──> §4 Deploy Flow
+    ──provides port policy to──> §6
+    ──provides readiness config to──> §7
+    ──provides controller identity to──> §5
+
+§9 Installer Discovery
+    ──mirrors canonical protocol of──> §3, §2
+    ──writes TrustRecords via same pipeline as──> §5
+    ──requires 8095/udp from──> §6
 ```
 
 ---
 
 *End of document. No code. No implementation details. Design only.*  
-*Senior engineers implementing this design must treat each section as an authoritative specification.*
+*Senior engineers implementing this design must treat each section as an authoritative specification and cross-reference the linked input documents — FINAL_ARCHITECTURAL_CORRECTION_MAP.md, GAP_ANALYSIS_AUDIT_REPORT.md, ROOT_CAUSE_ANALYSIS_REPORT.md, and doctrine/PHANTOM_DOCTRINE.md — for detailed evidence of each root cause addressed.*
