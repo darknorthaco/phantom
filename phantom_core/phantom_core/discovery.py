@@ -5,6 +5,7 @@ Provides SignedManifest schema, canonical payload construction,
 Ed25519 signature creation and verification for worker discovery.
 """
 
+import base64
 import json
 import logging
 import time
@@ -130,8 +131,6 @@ class ManifestSigner:
         pub_bytes = private_key.public_key().public_bytes(
             Encoding.Raw, PublicFormat.Raw
         )
-        import base64
-
         self._public_key_b64 = base64.b64encode(pub_bytes).decode("ascii")
 
     @classmethod
@@ -141,10 +140,6 @@ class ManifestSigner:
 
     @classmethod
     def from_raw_bytes(cls, key_bytes: bytes) -> "ManifestSigner":
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-            Ed25519PrivateKey,
-        )
-
         key = Ed25519PrivateKey.from_private_bytes(key_bytes)
         return cls(key)
 
@@ -152,10 +147,20 @@ class ManifestSigner:
     def public_key_b64(self) -> str:
         return self._public_key_b64
 
+    def export_private_key_bytes(self) -> bytes:
+        """Export raw 32-byte Ed25519 private key for persistence."""
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+        )
+
+        return self._private_key.private_bytes(
+            Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+        )
+
     def sign(self, manifest: SignedManifest) -> SignedManifest:
         """Populate public_key_b64, signed_at, and signature_b64."""
-        import base64
-
         manifest.signed_at = time.time()
         manifest.public_key_b64 = self._public_key_b64
         payload = manifest.canonical_payload().encode("utf-8")
@@ -178,8 +183,6 @@ class ManifestVerifier:
 
         Sets manifest.signature_verified as a side-effect.
         """
-        import base64
-
         if not manifest.public_key_b64 or not manifest.signature_b64:
             manifest.signature_verified = False
             logger.debug(

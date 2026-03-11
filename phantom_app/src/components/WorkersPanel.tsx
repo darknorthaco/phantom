@@ -9,7 +9,7 @@ interface Worker {
   gpu_info: Record<string, unknown>;
   status: string;
   signature_verified?: boolean;
-  public_key_fingerprint?: string;
+  fingerprint?: string;
   key_changed?: boolean;
 }
 
@@ -30,7 +30,7 @@ function SignatureBadge({ worker }: { worker: Worker }) {
     return (
       <span
         className="status-badge active"
-        title={`Verified · ${worker.public_key_fingerprint ?? ''}`}
+        title={`Verified · ${worker.fingerprint ?? ''}`}
       >
         ✓ Verified
       </span>

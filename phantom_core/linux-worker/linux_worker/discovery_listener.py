@@ -52,15 +52,8 @@ def _init_signer(identity_dir: Optional[str] = None) -> Optional[object]:
     signer = ManifestSigner.generate()
     # Persist private key (base64-encoded raw 32 bytes)
     import base64
-    from cryptography.hazmat.primitives.serialization import (
-        Encoding,
-        NoEncryption,
-        PrivateFormat,
-    )
 
-    raw = signer._private_key.private_bytes(
-        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
-    )
+    raw = signer.export_private_key_bytes()
     priv_path.write_bytes(base64.b64encode(raw))
     logger.info("Generated new worker identity in %s", key_dir)
     return signer
