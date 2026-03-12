@@ -1,5 +1,7 @@
 # The Ten Commandments of Phantom
 
+#DARKNORTH
+
 **Version:** 1.0.0  
 **Status:** Authoritative  
 **Applies to:** All Phantom Operations, Systems, and Distributions
@@ -208,3 +210,7 @@ When rules conflict, higher authority takes precedence.
 ---
 
 **These commandments are not suggestions. They are law within Phantom.**
+
+---
+
+#DARKNORTH

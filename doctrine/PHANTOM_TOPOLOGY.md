@@ -1,6 +1,8 @@
 # PHANTOM TOPOLOGY
 ### *Architecture Map of the Phantom Intelligence Fabric*
 
+#DARKNORTH
+
 > **Classification: DESCRIPTIVE**
 > This document maps the physical architecture. It does not govern identity,
 > reasoning, or behavior. It is subordinate to the Soul, Mind, and Body.
@@ -19,3 +21,7 @@
 - **Connection:** Local LAN (Gigabit)
 - **Security:** Sovereign Tunnel (QUIC/TLS)
 - **Priority:** Human tasks on Windows PC take 100% precedence over Phantom workers.
+
+---
+
+#DARKNORTH
