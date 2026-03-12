@@ -113,7 +113,7 @@ pub(crate) fn discover_single_window(
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => {
             let dur = bind_start.elapsed().as_millis() as u64;
-            if let Some(l) = log {
+            if let Some(l) = log.as_mut() {
                 l.add_dependency_init_entry(DependencyInitEntry {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     item: "socket_bind (UDP 0.0.0.0:0)".to_string(),
@@ -127,7 +127,7 @@ pub(crate) fn discover_single_window(
         Err(e) => {
             let dur = bind_start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
-            if let Some(l) = log {
+            if let Some(l) = log.as_mut() {
                 l.push_raw(&format!("bind error: {e}"));
                 l.add_dependency_init_entry(DependencyInitEntry {
                     timestamp: chrono::Utc::now().to_rfc3339(),
@@ -141,7 +141,7 @@ pub(crate) fn discover_single_window(
         }
     };
     let broadcast_ok = socket.set_broadcast(true).is_ok();
-    if let Some(l) = log {
+    if let Some(l) = log.as_mut() {
         l.add_full_deploy_entry(
             "socket_set_broadcast",
             broadcast_ok,
@@ -160,7 +160,7 @@ pub(crate) fn discover_single_window(
     let loopback_start = std::time::Instant::now();
     let loopback_ok = socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok();
     if loopback_ok {
-        if let Some(l) = log {
+        if let Some(l) = log.as_mut() {
             l.inc_packets_sent();
             l.push_raw(&format!("Sent DISCOVER_WORKERS to {target_loopback}"));
             l.add_full_deploy_entry(
@@ -171,7 +171,7 @@ pub(crate) fn discover_single_window(
                 None,
             );
         }
-    } else if let Some(l) = log {
+    } else if let Some(l) = log.as_mut() {
         l.add_full_deploy_entry(
             "discovery_send_loopback",
             false,
@@ -189,13 +189,13 @@ pub(crate) fn discover_single_window(
     let broadcast_start = std::time::Instant::now();
     for target in &broadcast_targets {
         if socket.send_to(DISCOVER_PAYLOAD, target).is_ok() {
-            if let Some(l) = log {
+            if let Some(l) = log.as_mut() {
                 l.inc_packets_sent();
                 l.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
             }
         }
     }
-    if let Some(l) = log {
+    if let Some(l) = log.as_mut() {
         l.add_full_deploy_entry(
             "discovery_send_broadcast",
             true,
@@ -205,7 +205,7 @@ pub(crate) fn discover_single_window(
         );
     }
 
-    if let Some(l) = log {
+    if let Some(l) = log.as_mut() {
         l.add_full_deploy_entry(
             "discovery_listen_loop_start",
             true,
@@ -235,7 +235,7 @@ pub(crate) fn discover_single_window(
         }
 
         if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(remaining_ms))) {
-            if let Some(l) = log {
+            if let Some(l) = log.as_mut() {
                 l.push_raw(&format!("set_read_timeout error: {e}"));
             }
             break;
@@ -246,12 +246,12 @@ pub(crate) fn discover_single_window(
             Ok((n, src)) => {
                 let source_ip = src.ip().to_string();
                 let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
-                if let Some(l) = log {
+                if let Some(l) = log.as_mut() {
                     l.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
                 }
                 if let Ok(s) = std::str::from_utf8(&buf[..n]) {
                     if let Some(dm) = parse_manifest(s, &source_ip) {
-                        if let Some(l) = log {
+                        if let Some(l) = log.as_mut() {
                             l.inc_responses_received(dm.signature_verified);
                             l.push_raw(&format!(
                                 "  worker {} {}:{} sig={}",
@@ -299,7 +299,7 @@ pub(crate) fn discover_single_window(
                         if seen.insert(dm.manifest.worker_id.clone()) {
                             manifests.push(dm);
                         }
-                    } else if let Some(l) = log {
+                    } else if let Some(l) = log.as_mut() {
                         l.inc_manifest_error();
                         l.push_raw(&format!(
                             "  parse failed: {}",
@@ -313,7 +313,7 @@ pub(crate) fn discover_single_window(
                             Some("invalid manifest".to_string()),
                         );
                     }
-                } else if let Some(l) = log {
+                } else if let Some(l) = log.as_mut() {
                     l.inc_manifest_error();
                     l.push_raw("  invalid UTF-8");
                     l.add_full_deploy_entry(
@@ -326,7 +326,7 @@ pub(crate) fn discover_single_window(
                 }
 
                 if early_exit_on_first_worker && !manifests.is_empty() {
-                    if let Some(l) = log {
+                    if let Some(l) = log.as_mut() {
                         l.push_raw(&format!(
                             "Early exit: {} worker(s) discovered",
                             manifests.len()
@@ -341,7 +341,7 @@ pub(crate) fn discover_single_window(
 
     let end_rfc3339 = chrono::Utc::now().to_rfc3339();
     let duration_ms = start.elapsed().as_millis() as u64;
-    if let Some(l) = log {
+    if let Some(l) = log.as_mut() {
         l.add_full_deploy_entry(
             "discovery_listen_loop_end",
             true,

@@ -979,8 +979,8 @@ impl PhantomDeployer {
         let probe_timeout = read_nested_config(&self.phantom_root.join("phantom_config.json"), &["worker", "readiness_attempt_timeout_ms"])
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(1000);
-        let probe_duration_ms = if probe_attempts > 0 {
-            (probe_attempts - 1) * probe_interval + probe_timeout
+        let probe_duration_ms: u64 = if probe_attempts > 0 {
+            (probe_attempts as u64 - 1) * probe_interval + probe_timeout
         } else {
             0
         };
