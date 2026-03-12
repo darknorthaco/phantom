@@ -644,11 +644,16 @@ impl PhantomDeployer {
     #[cfg(target_os = "windows")]
     async fn start_local_worker(&self) -> Result<(), String> {
         let engine = self.phantom_root.join("engine");
-        let linux_worker_dir = engine.join("linux-worker");
-        let main_py = linux_worker_dir.join("linux_worker").join("main.py");
+        let windows_worker_dir = engine.join("windows-worker");
+        let main_py = windows_worker_dir.join("windows_worker").join("main.py");
+
         if !main_py.exists() {
-            log::info!("Local worker main.py not found, skipping");
-            return Ok(());
+            let msg = "Windows worker runtime missing. Expected engine/windows-worker/windows_worker/main.py";
+            log::error!("worker_runtime_missing: {msg}");
+            return Err(format!(
+                "Windows worker runtime missing or failed to start. {}",
+                msg
+            ));
         }
 
         let config_path = self.phantom_root.join("local_worker_config.json");
@@ -667,16 +672,25 @@ impl PhantomDeployer {
 
         let python = venv_python(&self.phantom_root);
         let mut cmd = Command::new(python.to_string_lossy().as_ref());
-        cmd.args(["-m", "linux_worker.main", "--config"])
+        cmd.args(["-m", "windows_worker.main", "--config"])
             .arg(config_path.to_string_lossy().as_ref())
-            .current_dir(&linux_worker_dir)
-            .env("PYTHONPATH", linux_worker_dir.to_string_lossy().as_ref());
+            .current_dir(&windows_worker_dir)
+            .env("PYTHONPATH", windows_worker_dir.to_string_lossy().as_ref());
         #[cfg(windows)]
         cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         match cmd.spawn() {
-            Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
-            Err(e) => log::warn!("Failed to start local worker: {e}"),
+            Ok(_) => {
+                log::info!("Local Windows worker started on 0.0.0.0:8090");
+            }
+            Err(e) => {
+                let msg = format!("worker_spawn_failed: {e}");
+                log::error!("{}", msg);
+                return Err(format!(
+                    "Windows worker runtime missing or failed to start. {}",
+                    msg
+                ));
+            }
         }
 
         self.run_readiness_probe().await;
