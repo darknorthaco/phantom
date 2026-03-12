@@ -4,6 +4,7 @@ name: Build Phantom
 # Push to master only runs lint + test, not the full native build.
 on:
   push:
+    branches: [master]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -46,6 +47,7 @@ jobs:
   # ── Native desktop builds ────────────────────────────────────────
   build-desktop:
     name: Build ${{ matrix.label }}
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: test-controller
     strategy:
       fail-fast: false
