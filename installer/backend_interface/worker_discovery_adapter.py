@@ -30,6 +30,8 @@ class WorkerDiscoveryAdapter:
     def __init__(self):
         self._udp_client = InstallerDiscoveryClient()
         self._legacy = WorkerDiscovery()
+        # Backward-compatible alias for tests that expect _backend (get_local_network, check_worker_port)
+        self._backend = self._legacy
 
     # ------------------------------------------------------------------ #
     # Network helpers (from legacy for GUI compatibility)

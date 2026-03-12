@@ -270,9 +270,10 @@ class TestWorkerDiscoveryAdapter(unittest.TestCase):
         self.assertIn("unknown", msg.lower())
 
     def test_discover_comprehensive_delegates(self):
+        """discover_comprehensive() uses UDP discovery; mock _udp_client.discover."""
         with patch.object(
-            self.adapter._backend,
-            "discover_workers_comprehensive",
+            self.adapter._udp_client,
+            "discover",
             return_value=[],
         ) as mock:
             result = self.adapter.discover_comprehensive()
@@ -280,9 +281,10 @@ class TestWorkerDiscoveryAdapter(unittest.TestCase):
             self.assertEqual(result, [])
 
     def test_discover_manual_delegates(self):
+        """discover_manual() uses UDP discovery; mock _udp_client.discover."""
         with patch.object(
-            self.adapter._backend,
-            "discover_workers_manual",
+            self.adapter._udp_client,
+            "discover",
             return_value=[],
         ) as mock:
             result = self.adapter.discover_manual()
