@@ -77,7 +77,7 @@ pub fn base_to_broadcast(base_ip: &str) -> Option<String> {
 
 /// Parse a raw UDP payload into a DiscoveredManifest. Handles both legacy
 /// unsigned manifests and new SignedManifest format.
-fn parse_manifest(raw: &str, source_ip: String) -> Option<DiscoveredManifest> {
+fn parse_manifest(raw: &str, source_ip: &str) -> Option<DiscoveredManifest> {
     let wire: RawWireManifest = serde_json::from_str(raw).ok()?;
     if wire.effective_msg_type() != "WORKER_MANIFEST" || wire.worker_id.is_empty() {
         return None;
@@ -90,7 +90,7 @@ fn parse_manifest(raw: &str, source_ip: String) -> Option<DiscoveredManifest> {
     Some(DiscoveredManifest {
         manifest: signed,
         port,
-        source_ip,
+        source_ip: source_ip.to_string(),
         signature_verified,
         fingerprint,
     })
@@ -155,14 +155,11 @@ pub(crate) fn discover_single_window(
         );
     }
 
-    let mut packets_sent = 0u32;
-
     // Send to 127.0.0.1
     let target_loopback = format!("127.0.0.1:{}", DISCOVERY_PORT);
     let loopback_start = std::time::Instant::now();
     let loopback_ok = socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok();
     if loopback_ok {
-        packets_sent += 1;
         if let Some(l) = log {
             l.inc_packets_sent();
             l.push_raw(&format!("Sent DISCOVER_WORKERS to {target_loopback}"));
@@ -192,7 +189,6 @@ pub(crate) fn discover_single_window(
     let broadcast_start = std::time::Instant::now();
     for target in &broadcast_targets {
         if socket.send_to(DISCOVER_PAYLOAD, target).is_ok() {
-            packets_sent += 1;
             if let Some(l) = log {
                 l.inc_packets_sent();
                 l.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
@@ -254,7 +250,7 @@ pub(crate) fn discover_single_window(
                     l.push_raw(&format!("Recv from {source_ip}: {} bytes", n));
                 }
                 if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                    if let Some(dm) = parse_manifest(s, source_ip) {
+                    if let Some(dm) = parse_manifest(s, &source_ip) {
                         if let Some(l) = log {
                             l.inc_responses_received(dm.signature_verified);
                             l.push_raw(&format!(
