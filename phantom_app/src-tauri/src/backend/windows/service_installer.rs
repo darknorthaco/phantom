@@ -6,7 +6,7 @@ pub async fn install_service(
     display_name: &str,
     python_path: &Path,
     run_py: &Path,
-    state_dir: &Path,
+    _state_dir: &Path,
 ) -> Result<(), String> {
     let bin_path = format!(
         "{} {} --host 127.0.0.1 --port 8080 --security basic",

@@ -155,7 +155,7 @@ class PhantomInstallerAPI:
     # ------------------------------------------------------------------ #
 
     def get_models(self) -> List[Dict]:
-        """Return the curated model catalogue."""
+        """Return the curated model catalogue (sovereign-safe only; Chinese-origin models never listed)."""
         return MODELS
 
     def download_model(

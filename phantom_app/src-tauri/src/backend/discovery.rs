@@ -104,7 +104,7 @@ pub(crate) fn discover_single_window(
     broadcast_addrs: &[String],
     total_timeout_ms: u64,
     early_exit_on_first_worker: bool,
-    log: Option<&mut DiscoveryLogBuilder>,
+    mut log: Option<&mut DiscoveryLogBuilder>,
 ) -> Vec<DiscoveredManifest> {
     let start = std::time::Instant::now();
     let start_rfc3339 = chrono::Utc::now().to_rfc3339();

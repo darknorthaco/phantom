@@ -138,11 +138,14 @@
 <div class="panel-header">
 <h2 class="glitch" data-text="TASK INTERFACE">TASK INTERFACE</h2>
 <div class="model-selector">
-<!-- TODO: Populate model list dynamically from backend GET /api/models -->
+<!-- Sovereign-safe models only (Phi-3.5, Llama 3.1, Mistral, Gemma, SmolLM). Chinese-origin models never listed. -->
 <select class="matrix-select" id="ai-model">
-<option value="phi-3.5-mini" selected>PHI-3.5-MINI (DEFAULT)</option>
+<option value="phi-3.5-mini" selected>PHI-3.5-MINI (RECOMMENDED)</option>
+<option value="llama-3.1-8b">LLAMA-3.1-8B (RECOMMENDED)</option>
+<option value="mistral-7b">MISTRAL-7B (RECOMMENDED)</option>
+<option value="gemma-2-2b">GEMMA-2-2B</option>
+<option value="smollm2-360m">SMOLLM2-360M</option>
 <option value="custom-model">CUSTOM MODEL</option>
-<!-- Additional models populated at runtime from controller API -->
 </select>
 </div>
 </div>

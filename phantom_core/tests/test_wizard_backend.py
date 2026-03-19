@@ -316,11 +316,11 @@ class TestModelDownloader(unittest.TestCase):
             ):
                 self.assertIn(field, m, f"Model {m.get('id')} missing '{field}'")
 
-    def test_exactly_one_recommended(self):
+    def test_at_least_one_recommended(self):
         from backend_interface.model_downloader import MODELS
 
         recommended = [m for m in MODELS if m.get("recommended")]
-        self.assertEqual(len(recommended), 1)
+        self.assertGreaterEqual(len(recommended), 1, "At least one model must be recommended")
 
     def test_verify_checksum_empty_skips(self):
         from backend_interface.model_downloader import ModelDownloader

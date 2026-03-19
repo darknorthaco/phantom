@@ -380,10 +380,11 @@ impl PhantomDeployer {
         let now = chrono::Utc::now().to_rfc3339();
         let config = serde_json::json!({
             "controller": {
-                "host":                 host,
-                "port":                 port,
-                "security":             "disabled",
-                "identity_fingerprint": identity_fingerprint
+                "host": host,
+                "port": port,
+                "security": "disabled",
+                "identity_fingerprint": identity_fingerprint,
+                "socket_integrated": true
             },
             "ports": {
                 "controller_api": { "port": 8080, "protocol": "tcp", "required": true  },
@@ -426,17 +427,20 @@ impl PhantomDeployer {
 
     async fn start_controller(&self) -> Result<(), String> {
         let python = venv_python(&self.phantom_root);
-        // Prefer the deployed copy; fall back to engine_source (dev mode).
-        let deployed_run_py = self.phantom_root.join("engine/run.py");
+        let engine = self.phantom_root.join("engine");
+        let deployed_run_py = engine.join("run.py");
+        let deployed_integrated_py = engine.join("run_integrated_phantom.py");
         let run_py = if deployed_run_py.exists() {
             deployed_run_py
         } else {
             self.engine_source.join("run.py")
         };
+        let run_integrated_py = if deployed_integrated_py.exists() {
+            deployed_integrated_py
+        } else {
+            self.engine_source.join("run_integrated_phantom.py")
+        };
 
-        // Read controller parameters from phantom_config.json (written at Step 4.5).
-        // No fallback: if the file is absent, Step 4.5 did not complete and this
-        // step must fail with a clear error rather than silently using defaults.
         let config_path = self.phantom_root.join("phantom_config.json");
         if !config_path.exists() {
             return Err(format!(
@@ -453,10 +457,27 @@ impl PhantomDeployer {
             .unwrap_or_else(|| "8080".to_string());
         let security_level = read_nested_config(&config_path, &["controller", "security"])
             .unwrap_or_else(|| "disabled".to_string());
+        let socket_integrated = read_nested_config(&config_path, &["controller", "socket_integrated"])
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(true);
 
-        if !run_py.exists() {
+        if socket_integrated && !run_integrated_py.exists() {
+            return Err(format!(
+                "run_integrated_phantom.py not found at {:?}. \
+                 Socket integration enabled but integrated entrypoint missing.",
+                run_integrated_py
+            ));
+        }
+        if !socket_integrated && !run_py.exists() {
             return Err(format!("run.py not found at {:?}", run_py));
         }
+
+        let entrypoint = if socket_integrated { run_integrated_py } else { run_py };
+        if socket_integrated {
+            log::info!("Socket integration enabled — launching integrated controller");
+            log::info!("Running integrated controller entrypoint: {:?}", entrypoint);
+        }
+        let working_dir = entrypoint.parent().unwrap_or(engine.as_path());
 
         let state_dir = self.phantom_root.join("state");
         tokio::fs::create_dir_all(&state_dir)
@@ -465,11 +486,15 @@ impl PhantomDeployer {
 
         let mut cmd = Command::new(python.to_string_lossy().as_ref());
         cmd.args([
-            run_py.to_string_lossy().as_ref(),
-            "--host", &host,
-            "--port", &port,
-            "--security", &security_level,
+            entrypoint.to_string_lossy().as_ref(),
+            "--host",
+            &host,
+            "--port",
+            &port,
+            "--security",
+            &security_level,
         ])
+        .current_dir(working_dir)
         .env("PHANTOM_STATE_DIR", state_dir.to_string_lossy().as_ref());
         #[cfg(windows)]
         cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
@@ -481,14 +506,28 @@ impl PhantomDeployer {
     }
 
     async fn open_ports(&self) -> Result<(), String> {
+        let socket_integrated = self
+            .phantom_root
+            .join("phantom_config.json")
+            .exists()
+            .then(|| {
+                read_nested_config(&self.phantom_root.join("phantom_config.json"), &["controller", "socket_integrated"])
+                    .and_then(|s| s.parse::<bool>().ok())
+            })
+            .flatten()
+            .unwrap_or(true);
+
         #[cfg(target_os = "linux")]
         {
-            // Ports: 8080/tcp (controller), 8090/tcp (worker), 8095/udp (discovery)
-            let port_rules: &[(&str, &str)] = &[
+            let mut port_rules = vec![
                 ("8080", "tcp"),
                 ("8090", "tcp"),
                 ("8095", "udp"),
             ];
+            if socket_integrated {
+                port_rules.push(("8081", "tcp"));
+                log::info!("Opening socket port 8081/tcp");
+            }
 
             // Try ufw first (Ubuntu/Debian)
             let ufw_available = {
@@ -500,22 +539,25 @@ impl PhantomDeployer {
             };
 
             if ufw_available {
-                // ufw worked for 8080/tcp; open the remaining ports
-                for &(port, proto) in &port_rules[1..] {
+                for &(port, proto) in port_rules.iter().skip(1) {
                     let rule = format!("{port}/{proto}");
                     let _ = Command::new("ufw")
                         .args(["allow", &rule])
                         .output()
                         .await;
                 }
-                log::info!("ufw: allowed ports 8080/tcp, 8090/tcp, 8095/udp");
+                let ports_str = port_rules
+                    .iter()
+                    .map(|&(p, pr)| format!("{p}/{pr}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                log::info!("ufw: allowed ports {ports_str}");
                 return Ok(());
             }
 
             log::info!("ufw not available, trying iptables");
 
-            // Fall back to iptables
-            for &(port, proto) in port_rules {
+            for &(port, proto) in &port_rules {
                 let ipt = Command::new("iptables")
                     .args(["-C", "INPUT", "-p", proto, "--dport", port, "-j", "ACCEPT"])
                     .output()
@@ -551,14 +593,17 @@ impl PhantomDeployer {
 
         #[cfg(target_os = "windows")]
         {
-            // Ports: 8080/tcp (controller), 8090/tcp (worker), 8095/udp (discovery)
-            let rules: &[(&str, &str, &str)] = &[
+            let mut rules = vec![
                 ("PhantomController", "TCP", "8080"),
                 ("PhantomWorker", "TCP", "8090"),
                 ("PhantomDiscovery", "UDP", "8095"),
             ];
+            if socket_integrated {
+                rules.push(("PhantomSocket", "TCP", "8081"));
+                log::info!("Opening socket port 8081/tcp");
+            }
 
-            for &(name, proto, port) in rules {
+            for &(name, proto, port) in &rules {
                 let result = Command::new("netsh")
                     .args([
                         "advfirewall", "firewall", "add", "rule",

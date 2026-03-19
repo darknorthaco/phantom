@@ -12,20 +12,21 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
-# Curated model catalogue
+# Curated model catalogue — sovereign-safe only (Meta, Mistral, Microsoft, Google, EU)
+# Chinese-origin models are NEVER listed. See phantom_core/llm_taskmaster/sovereign_compliance.py
 # ---------------------------------------------------------------------------
 
-MODELS: List[Dict] = [
+_MODELS_RAW: List[Dict] = [
     {
         "id": "phi35_q4_k_m",
         "name": "Phi-3.5 Mini Q4_K_M",
-        "description": "Recommended — Best balance of speed and quality",
+        "description": "Recommended — Microsoft, best balance of speed and quality",
         "filename": "Phi-3.5-mini-instruct-Q4_K_M.gguf",
         "url": (
             "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF"
             "/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
         ),
-        "sha256": "",  # populated when official checksum is published
+        "sha256": "",
         "vram_min_gb": 6,
         "vram_rec_gb": 8,
         "file_size_gb": 2.4,
@@ -61,7 +62,85 @@ MODELS: List[Dict] = [
         "file_size_gb": 2.8,
         "recommended": False,
     },
+    {
+        "id": "llama31_8b_q4_k_m",
+        "name": "Llama 3.1 8B Q4_K_M",
+        "description": "Recommended — Meta, strong general-purpose model",
+        "filename": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+        "url": (
+            "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
+            "/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+        ),
+        "sha256": "",
+        "vram_min_gb": 6,
+        "vram_rec_gb": 8,
+        "file_size_gb": 4.9,
+        "recommended": True,
+    },
+    {
+        "id": "mistral_7b_q4_k_m",
+        "name": "Mistral 7B Q4_K_M",
+        "description": "Recommended — Mistral AI, efficient 7B model",
+        "filename": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+        "url": (
+            "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+            "/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+        ),
+        "sha256": "",
+        "vram_min_gb": 6,
+        "vram_rec_gb": 8,
+        "file_size_gb": 4.4,
+        "recommended": True,
+    },
+    {
+        "id": "gemma2_2b_q4_k_m",
+        "name": "Gemma 2 2B Q4_K_M",
+        "description": "Google — Compact, efficient",
+        "filename": "gemma-2-2b-it-Q4_K_M.gguf",
+        "url": (
+            "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF"
+            "/resolve/main/gemma-2-2b-it-Q4_K_M.gguf"
+        ),
+        "sha256": "",
+        "vram_min_gb": 4,
+        "vram_rec_gb": 6,
+        "file_size_gb": 1.5,
+        "recommended": False,
+    },
+    {
+        "id": "smollm2_360m",
+        "name": "SmolLM2 360M Q4_K_M",
+        "description": "EU-origin — Ultra-lightweight",
+        "filename": "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+        "url": (
+            "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF"
+            "/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+        ),
+        "sha256": "",
+        "vram_min_gb": 2,
+        "vram_rec_gb": 4,
+        "file_size_gb": 0.3,
+        "recommended": False,
+    },
 ]
+
+
+def _get_models() -> List[Dict]:
+    """Return sovereign-safe models only. Filters out any blocked entries."""
+    try:
+        # Add phantom_core to path when running from installer tree (matches config_writer pattern)
+        _pc = Path(__file__).resolve().parent.parent.parent / "phantom_core"
+        if _pc.exists() and str(_pc) not in __import__("sys").path:
+            __import__("sys").path.insert(0, str(_pc))
+        from llm_taskmaster.sovereign_compliance import filter_models
+        return filter_models(_MODELS_RAW)
+    except ImportError:
+        # Fallback if phantom_core not on path (e.g. during installer tests)
+        return _MODELS_RAW
+
+
+# Public API: always filtered
+MODELS: List[Dict] = _get_models()
 
 
 class DownloadError(Exception):
@@ -94,6 +173,18 @@ class ModelDownloader:
             status_cb:   Called with human-readable status strings.
             progress_cb: Called with (bytes_downloaded, bytes_total).
         """
+        # Sovereign compliance: never download blocked models
+        mid = model.get("id", "")
+        name = model.get("name", "")
+        try:
+            _pc = Path(__file__).resolve().parent.parent.parent / "phantom_core"
+            if _pc.exists() and str(_pc) not in __import__("sys").path:
+                __import__("sys").path.insert(0, str(_pc))
+            from llm_taskmaster.sovereign_compliance import is_model_allowed
+            if not is_model_allowed(mid, name):
+                raise DownloadError("Model not allowed by sovereign compliance policy.")
+        except ImportError:
+            pass  # Allow when compliance module unavailable (tests)
         dest = self.models_dir / model["filename"]
 
         # Skip download if the file already exists and checksum matches.

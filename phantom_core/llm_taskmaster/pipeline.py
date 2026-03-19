@@ -249,14 +249,17 @@ class MemoryGuard:
         model_name = model_cfg.get("default_model", "phi-3.5-mini").lower()
         quant = model_cfg.get("default_quant", "Q4_K_M").upper()
 
-        # Known model sizes (approximate, conservative)
+        # Known model sizes (approximate, conservative) — sovereign-safe models only
         known_models = {
             "phi-3.5-mini": 2400,  # 3.8B params, Q4_K_M ≈ 2.3GB
             "phi-3-mini": 2200,  # 3.8B params
             "llama-3.2-1b": 800,  # 1B params
             "llama-3.2-3b": 2000,  # 3B params
+            "llama-3.1-8b": 5000,  # 8B params
             "mistral-7b": 4500,  # 7B params
-            "gemma-2b": 1500,  # 2B params
+            "gemma-2": 1500,  # 2B params
+            "gemma-2b": 1500,
+            "smollm": 400,  # 360M params
         }
 
         for name, footprint in known_models.items():
@@ -678,6 +681,20 @@ class ModelRouter:
         ctx.selected_model = self.config.get("model", {}).get(
             "default_model", "phi-3.5-mini"
         )
+
+        # Sovereign compliance: never load or execute blocked (e.g. Chinese-origin) models
+        try:
+            from .sovereign_compliance import validate_model_before_use
+            if not validate_model_before_use(ctx.selected_model, ""):
+                ctx.final_verdict = PipelineVerdict.REJECT
+                ctx.audit(
+                    "ModelRouter", "REJECT",
+                    f"Model '{ctx.selected_model}' blocked by sovereign compliance policy. "
+                    "Chinese-origin and PRC-origin LLMs are not supported.",
+                )
+                return ctx
+        except ImportError:
+            pass  # Compliance module unavailable — allow (e.g. tests)
 
         # Calculate confidence
         ctx.confidence = self._calculate_confidence(

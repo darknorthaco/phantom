@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Allow import from phantom_core when running from the installer tree.
-_phantom_core_dir = Path(__file__).parent.parent.parent / "phantom_core"
+_phantom_core_dir = Path(__file__).resolve().parent.parent.parent / "phantom_core"
 if _phantom_core_dir.exists() and str(_phantom_core_dir) not in sys.path:
     sys.path.insert(0, str(_phantom_core_dir))
 
@@ -45,7 +45,21 @@ class ConfigWriter:
 
         Returns:
             Path to the written config file.
+
+        Raises:
+            ValueError: If model is blocked by sovereign compliance policy.
         """
+        mid = model_info.get("id", "")
+        name = model_info.get("name", "")
+        try:
+            from llm_taskmaster.sovereign_compliance import is_model_allowed
+            if not is_model_allowed(mid, name):
+                raise ValueError(
+                    "Model not allowed by sovereign compliance policy. "
+                    "Chinese-origin and PRC-origin LLMs are not supported."
+                )
+        except ImportError:
+            pass  # Compliance module unavailable
         config = {
             "model_path": str(model_path),
             "model_name": model_info.get("name", "Unknown"),
