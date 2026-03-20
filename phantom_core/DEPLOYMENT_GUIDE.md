@@ -43,6 +43,13 @@ curl http://192.168.1.103:8080/stats
 
 ## Detailed Deployment
 
+### Task lifecycle (controller ↔ workers)
+
+Distributed tasks use **worker callbacks** for authoritative completion/failure. The controller persists state in `tasks.json` (`QUEUED` → `RUNNING` → `COMPLETED` | `FAILED`). See:
+
+- [`deployment/worker_lifecycle.md`](../deployment/worker_lifecycle.md)
+- [`controller/task_ledger.md`](../controller/task_ledger.md)
+
 ### Prerequisites
 
 #### Fedora Server Requirements

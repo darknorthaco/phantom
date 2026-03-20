@@ -11,6 +11,8 @@ from pathlib import Path
 installer_path = Path(__file__).parent
 sys.path.insert(0, str(installer_path))
 
+from legacy_installer_gate import exit_if_legacy_installer_disabled
+
 from modules.system_check import SystemChecker
 from modules.component_manager import ComponentManager
 from modules.worker_discovery import WorkerDiscovery
@@ -134,6 +136,7 @@ def demo_progress_display():
 
 def main():
     """Run all demos"""
+    exit_if_legacy_installer_disabled()
     prompts = Prompts()
     prompts.welcome()
 

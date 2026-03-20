@@ -5,9 +5,18 @@ Phantom Linux Worker - Enhanced GPU-aware worker implementation
 import asyncio
 import logging
 import json
+import os
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, Optional
+
+# Phase 4 — controller URL scheme + cert pin (engine root on path)
+_phantom_core_root = Path(__file__).resolve().parent.parent.parent
+if str(_phantom_core_root) not in sys.path:
+    sys.path.insert(0, str(_phantom_core_root))
+from worker_tls import controller_base_url, httpx_verify_for_worker
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
@@ -65,11 +74,15 @@ class PhantomLinuxWorker:
         controller_host: str = "localhost",
         controller_port: int = 8080,
         worker_port: int = 8090,
+        tls_enabled: bool = False,
+        tls_controller_cert_path: str = "",
     ):
         self.worker_id = worker_id or f"linux-worker-{uuid.uuid4().hex[:8]}"
         self.controller_host = controller_host
         self.controller_port = controller_port
         self.worker_port = worker_port
+        self.tls_enabled = bool(tls_enabled)
+        self.tls_controller_cert_path = str(tls_controller_cert_path or "")
 
         # Initialize components
         self.gpu_detector = GPUDetector()
@@ -95,6 +108,19 @@ class PhantomLinuxWorker:
         # Background tasks
         self.heartbeat_task = None
         self.monitoring_task = None
+
+    def _controller_api(self, path: str) -> str:
+        """HTTPS or HTTP base + path — no scheme downgrade."""
+        base = controller_base_url(
+            self.controller_host, self.controller_port, self.tls_enabled
+        )
+        return f"{base}{path}" if path.startswith("/") else f"{base}/{path}"
+
+    def _http_client(self, timeout: float = 30.0):
+        verify = httpx_verify_for_worker(
+            self.tls_enabled, self.tls_controller_cert_path
+        )
+        return httpx.AsyncClient(verify=verify, timeout=timeout)
 
     def setup_routes(self):
         """Setup FastAPI routes"""
@@ -232,9 +258,9 @@ class PhantomLinuxWorker:
                 "max_concurrent_tasks": self.max_concurrent_tasks,
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with self._http_client(30.0) as client:
                 response = await client.post(
-                    f"http://{self.controller_host}:{self.controller_port}/workers/register",
+                    self._controller_api("/workers/register"),
                     json=registration_data,
                 )
 
@@ -291,9 +317,9 @@ class PhantomLinuxWorker:
                     "memory_available": self._get_available_memory(),
                 }
 
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with self._http_client(5.0) as client:
                     await client.post(
-                        f"http://{self.controller_host}:{self.controller_port}/workers/{self.worker_id}/heartbeat",
+                        self._controller_api(f"/workers/{self.worker_id}/heartbeat"),
                         json=heartbeat_data,
                     )
 
@@ -442,22 +468,54 @@ class PhantomLinuxWorker:
         return {"status": "cancelled", "task_id": task_id}
 
     async def notify_controller_completion(self, task_id: str, result: Dict[str, Any]):
-        """Notify controller of task completion"""
+        """POST authoritative completion to controller (/api/worker/completion)."""
+        url = self._controller_api("/api/worker/completion")
+        payload = {
+            "task_id": task_id,
+            "worker_id": self.worker_id,
+            "timestamp": datetime.now().isoformat(),
+            "result": result if result is not None else {},
+        }
+        headers = {}
+        secret = os.environ.get("PHANTOM_WORKER_CALLBACK_SECRET")
+        if secret:
+            headers["X-Phantom-Callback-Key"] = secret
         try:
-            # This would typically be handled by the controller polling or webhooks
-            # For now, we'll just log it
-            logger.debug(f"Task {task_id} completed, result ready for controller")
+            async with self._http_client(30.0) as client:
+                r = await client.post(url, json=payload, headers=headers)
+                if r.status_code not in (200, 201, 204):
+                    logger.warning(
+                        "Controller completion callback HTTP %s: %s",
+                        r.status_code,
+                        r.text[:500],
+                    )
         except Exception as e:
-            logger.warning(f"Failed to notify controller of completion: {e}")
+            logger.warning("Failed to notify controller of completion: %s", e)
 
     async def notify_controller_failure(self, task_id: str, error: str):
-        """Notify controller of task failure"""
+        """POST authoritative failure to controller (/api/worker/failure)."""
+        url = self._controller_api("/api/worker/failure")
+        payload = {
+            "task_id": task_id,
+            "worker_id": self.worker_id,
+            "timestamp": datetime.now().isoformat(),
+            "error": error[:16384],
+        }
+        headers = {}
+        secret = os.environ.get("PHANTOM_WORKER_CALLBACK_SECRET")
+        if secret:
+            headers["X-Phantom-Callback-Key"] = secret
         try:
-            # This would typically be handled by the controller polling or webhooks
-            # For now, we'll just log it
-            logger.debug(f"Task {task_id} failed, error reported to controller")
+            async with self._http_client(30.0) as client:
+                r = await client.post(url, json=payload, headers=headers)
+                if r.status_code not in (200, 201, 204):
+                    logger.warning(
+                        "Controller failure callback HTTP %s: %s",
+                        r.status_code,
+                        r.text[:500],
+                    )
         except Exception as e:
-            logger.warning(f"Failed to notify controller of failure: {e}")
+            logger.warning("Failed to notify controller of failure: %s", e)
 
     def get_gpu_utilization(self) -> float:
         """Get current GPU utilization"""
@@ -523,9 +581,9 @@ class PhantomLinuxWorker:
 
         # Unregister from controller
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._http_client(10.0) as client:
                 await client.delete(
-                    f"http://{self.controller_host}:{self.controller_port}/workers/{self.worker_id}"
+                    self._controller_api(f"/workers/{self.worker_id}")
                 )
         except Exception as e:
             logger.warning(f"Failed to unregister from controller: {e}")
@@ -541,4 +599,6 @@ def create_worker(config: Dict[str, Any]) -> PhantomLinuxWorker:
         controller_host=config.get("controller_host", "localhost"),
         controller_port=config.get("controller_port", 8080),
         worker_port=config.get("worker_port", 8090),
+        tls_enabled=bool(config.get("tls_enabled", False)),
+        tls_controller_cert_path=str(config.get("tls_controller_cert_path", "") or ""),
     )

@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react';
-import { getIdentity, getTrustLedger, approvePeer, rejectPeer, generateCertificate } from '../utils/tauri';
+import {
+  getIdentity,
+  getTrustLedger,
+  approvePeer,
+  rejectPeer,
+  generateSelfSignedCert,
+  importTlsCert,
+  validateTlsCert,
+  savePhantomTlsSettings,
+} from '../utils/tauri';
 
 interface TrustedPeer {
   peer_id: string;
@@ -23,9 +32,16 @@ export default function ExperimentalAOL() {
   const [loadingIdentity, setLoadingIdentity] = useState(false);
   const [loadingLedger, setLoadingLedger] = useState(false);
   const [identityError, setIdentityError] = useState<string | null>(null);
-  const [certPaths, setCertPaths] = useState<Record<string, unknown> | null>(null);
-  const [generatingCert, setGeneratingCert] = useState(false);
-  const [certError, setCertError] = useState<string | null>(null);
+  const [tlsCertPath, setTlsCertPath] = useState('');
+  const [tlsKeyPath, setTlsKeyPath] = useState('');
+  const [importCertPath, setImportCertPath] = useState('');
+  const [importKeyPath, setImportKeyPath] = useState('');
+  const [tlsCommonName, setTlsCommonName] = useState('phantom-controller.local');
+  const [wanMode, setWanMode] = useState(false);
+  const [tlsEnabled, setTlsEnabled] = useState(false);
+  const [tlsBusy, setTlsBusy] = useState(false);
+  const [tlsStatus, setTlsStatus] = useState<string | null>(null);
+  const [tlsError, setTlsError] = useState<string | null>(null);
 
   const loadIdentity = async () => {
     setLoadingIdentity(true);
@@ -70,16 +86,78 @@ export default function ExperimentalAOL() {
     }
   };
 
-  const handleGenerateCert = async () => {
-    setGeneratingCert(true);
-    setCertError(null);
+  const applyPathsFromResult = (paths: Record<string, unknown>) => {
+    const c = paths.cert;
+    const k = paths.key;
+    const certStr = typeof c === 'string' ? c : c != null ? String(c) : '';
+    const keyStr = typeof k === 'string' ? k : k != null ? String(k) : '';
+    if (certStr) setTlsCertPath(certStr);
+    if (keyStr) setTlsKeyPath(keyStr);
+  };
+
+  const handleGenerateSelfSigned = async () => {
+    setTlsBusy(true);
+    setTlsError(null);
+    setTlsStatus(null);
     try {
-      const paths = await generateCertificate();
-      setCertPaths(paths);
+      const cn = tlsCommonName.trim() || null;
+      const paths = await generateSelfSignedCert(cn);
+      applyPathsFromResult(paths);
+      setTlsStatus('Self-signed PEM written under app state/tls/. Paths filled below.');
     } catch (e) {
-      setCertError(String(e));
+      setTlsError(String(e));
     } finally {
-      setGeneratingCert(false);
+      setTlsBusy(false);
+    }
+  };
+
+  const handleImportTls = async () => {
+    setTlsBusy(true);
+    setTlsError(null);
+    setTlsStatus(null);
+    try {
+      const paths = await importTlsCert(importCertPath.trim(), importKeyPath.trim());
+      applyPathsFromResult(paths);
+      setImportCertPath('');
+      setImportKeyPath('');
+      setTlsStatus('Certificate and key copied to state/tls/ (imported.crt / imported.key).');
+    } catch (e) {
+      setTlsError(String(e));
+    } finally {
+      setTlsBusy(false);
+    }
+  };
+
+  const handleValidateCert = async () => {
+    setTlsBusy(true);
+    setTlsError(null);
+    setTlsStatus(null);
+    try {
+      await validateTlsCert(tlsCertPath.trim());
+      setTlsStatus('Certificate PEM validated (local read).');
+    } catch (e) {
+      setTlsError(String(e));
+    } finally {
+      setTlsBusy(false);
+    }
+  };
+
+  const handleSaveTlsSettings = async () => {
+    setTlsBusy(true);
+    setTlsError(null);
+    setTlsStatus(null);
+    try {
+      await savePhantomTlsSettings(
+        wanMode,
+        tlsEnabled,
+        tlsCertPath.trim(),
+        tlsKeyPath.trim()
+      );
+      setTlsStatus('phantom_config.json updated (WAN/TLS fields). Restart controller to apply HTTPS.');
+    } catch (e) {
+      setTlsError(String(e));
+    } finally {
+      setTlsBusy(false);
     }
   };
 
@@ -207,46 +285,125 @@ export default function ExperimentalAOL() {
         )}
       </div>
 
-      {/* TLS Section */}
+      {/* TLS Section — Phase 4 controller API (WAN requires TLS; LAN may stay HTTP) */}
       <div className="card">
-        <div className="card-title">TLS / Secure Transport</div>
+        <div className="card-title">TLS — Controller API (Phase 4)</div>
         <p style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>
-          WAN communication requires QUIC/TLS. Certificates are generated locally and
-          never leave your controller. Each peer must explicitly approve the other's
-          certificate before a secure channel is established.
+          <strong>LAN default:</strong> plaintext HTTP unchanged. <strong>WAN / cross-household:</strong>{' '}
+          <code>wan_mode</code> requires <code>tls_enabled</code> and valid PEM paths — no silent HTTPS→HTTP
+          fallback. Certs are local/self-signed or imported; nothing is sent to a public CA.
         </p>
 
-        {certPaths ? (
-          <div>
-            <span className="status-badge active" style={{ marginBottom: 8, display: 'inline-block' }}>
-              Certificate Generated
-            </span>
-            <pre style={{
-              color: 'var(--text-secondary)',
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              marginTop: 8,
-            }}>
-              {JSON.stringify(certPaths, null, 2)}
-            </pre>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={wanMode}
+            onChange={(e) => {
+              const v = e.target.checked;
+              setWanMode(v);
+              if (v) setTlsEnabled(true);
+            }}
+          />
+          WAN mode (requires TLS)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={tlsEnabled}
+            onChange={(e) => setTlsEnabled(e.target.checked)}
+            disabled={wanMode}
+          />
+          Enable TLS (HTTPS on controller API)
+          {wanMode ? (
+            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(forced on for WAN)</span>
+          ) : null}
+        </label>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Controller cert path</div>
+          <input
+            className="console-input"
+            style={{ width: '100%', marginBottom: 8 }}
+            value={tlsCertPath}
+            onChange={(e) => setTlsCertPath(e.target.value)}
+            placeholder="e.g. .../state/tls/phantom.crt"
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Controller key path</div>
+          <input
+            className="console-input"
+            style={{ width: '100%' }}
+            value={tlsKeyPath}
+            onChange={(e) => setTlsKeyPath(e.target.value)}
+            placeholder="e.g. .../state/tls/phantom.key"
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <input
+            className="console-input"
+            style={{ minWidth: 200, flex: 1 }}
+            value={tlsCommonName}
+            onChange={(e) => setTlsCommonName(e.target.value)}
+            placeholder="Common name / SAN hint"
+          />
+          <button
+            className="console-send-btn"
+            onClick={handleGenerateSelfSigned}
+            disabled={tlsBusy}
+          >
+            Generate certificate
+          </button>
+          <button
+            className="console-send-btn"
+            onClick={handleValidateCert}
+            disabled={tlsBusy || !tlsCertPath.trim()}
+          >
+            Validate cert PEM
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Import PEM (absolute paths)</div>
+        <input
+          className="console-input"
+          style={{ width: '100%', marginBottom: 6 }}
+          value={importCertPath}
+          onChange={(e) => setImportCertPath(e.target.value)}
+          placeholder="Source .crt / .pem"
+        />
+        <input
+          className="console-input"
+          style={{ width: '100%', marginBottom: 8 }}
+          value={importKeyPath}
+          onChange={(e) => setImportKeyPath(e.target.value)}
+          placeholder="Source .key"
+        />
+        <button
+          className="console-send-btn"
+          onClick={handleImportTls}
+          disabled={tlsBusy || !importCertPath.trim() || !importKeyPath.trim()}
+          style={{ marginBottom: 12 }}
+        >
+          Import certificate
+        </button>
+
+        <button
+          className="console-send-btn"
+          onClick={handleSaveTlsSettings}
+          disabled={tlsBusy}
+          style={{ background: 'var(--accent-amber)', color: '#111' }}
+        >
+          Save to phantom_config.json
+        </button>
+
+        {tlsError && (
+          <div style={{ color: 'var(--accent-crimson)', fontSize: 11, marginTop: 10 }}>
+            {tlsError}
           </div>
-        ) : (
-          <>
-            {certError && (
-              <div style={{ color: 'var(--accent-crimson)', fontSize: 11, marginBottom: 8 }}>
-                {certError}
-              </div>
-            )}
-            <button
-              className="console-send-btn"
-              onClick={handleGenerateCert}
-              disabled={generatingCert}
-            >
-              {generatingCert ? 'Generating…' : 'Generate Certificate'}
-            </button>
-          </>
+        )}
+        {tlsStatus && (
+          <div style={{ color: 'var(--accent-green)', fontSize: 11, marginTop: 10, fontFamily: 'var(--font-mono)' }}>
+            {tlsStatus}
+          </div>
         )}
       </div>
     </div>

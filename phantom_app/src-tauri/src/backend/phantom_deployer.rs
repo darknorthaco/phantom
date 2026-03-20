@@ -8,7 +8,7 @@ use std::os::windows::process::CommandExt;
 use super::discovery::{
     self, base_to_broadcast, discover_workers_with_log, DEFAULT_DISCOVERY_TOTAL_TIMEOUT_MS,
 };
-use super::discovery_log::{DependencyInitEntry, DiscoveryLog, FullDeployLogEntry};
+use super::discovery_log::{DependencyInitEntry, DiscoveryLog, DiscoveryLogBuilder, FullDeployLogEntry};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -41,6 +41,9 @@ pub struct DeploymentPreScanResult {
     pub discovery_log: DiscoveryLog,
     /// True when worker_count == 0; blocks progression to TOC.
     pub discovery_failed: bool,
+    /// True when deploy used an offline bundle (no PyPI, no LAN discovery).
+    #[serde(default)]
+    pub offline_mode: bool,
 }
 
 /// Worker selection for registration (from frontend).
@@ -72,6 +75,8 @@ pub struct PhantomDeployer {
     /// Result of the local worker readiness probe: (attempts, success).
     /// Written by start_local_worker(), read by run_pre_scan_deployment().
     readiness_result: std::sync::Mutex<(u32, bool)>,
+    /// When set, deploy uses wheelhouse + bundled engine; skips LAN discovery and remote-only steps.
+    offline_bundle_path: Option<PathBuf>,
 }
 
 impl PhantomDeployer {
@@ -85,7 +90,22 @@ impl PhantomDeployer {
             engine_source: engine_source.to_path_buf(),
             scan_log_emitter,
             readiness_result: std::sync::Mutex::new((0, false)),
+            offline_bundle_path: None,
         }
+    }
+
+    /// Attach an offline bundle root (must contain manifest.json, wheelhouse/, engine/, …).
+    #[must_use]
+    pub fn with_offline_bundle(mut self, path: Option<PathBuf>) -> Self {
+        if path.is_some() {
+            log::warn!("PHANTOM OFFLINE MODE ENABLED — using offline bundle (no PyPI / no LAN discovery)");
+        }
+        self.offline_bundle_path = path;
+        self
+    }
+
+    fn is_offline(&self) -> bool {
+        self.offline_bundle_path.is_some()
     }
 
     fn emit_scan_log(&self, line: &str) {
@@ -183,6 +203,49 @@ impl PhantomDeployer {
 
     async fn install_python_deps(&self) -> Result<(), String> {
         let pip = venv_pip(&self.phantom_root);
+
+        if let Some(ref bundle) = self.offline_bundle_path {
+            let wheelhouse = bundle.join("wheelhouse");
+            let req = bundle.join("requirements-deploy.txt");
+            if !wheelhouse.is_dir() {
+                return Err(format!(
+                    "Offline bundle missing wheelhouse/: {:?}",
+                    wheelhouse
+                ));
+            }
+            if !req.is_file() {
+                return Err(format!(
+                    "Offline bundle missing requirements-deploy.txt under {:?}",
+                    bundle
+                ));
+            }
+            log::info!(
+                "Installing Python deps from offline wheelhouse (no network): {:?}",
+                wheelhouse
+            );
+            let find_links = format!("--find-links={}", wheelhouse.to_string_lossy());
+            let req_s = req.to_string_lossy().to_string();
+            let output = Command::new(pip.to_string_lossy().as_ref())
+                .args([
+                    "install",
+                    "--no-index",
+                    &find_links,
+                    "-r",
+                    &req_s,
+                ])
+                .output()
+                .await
+                .map_err(|e| format!("pip install (offline) failed: {e}"))?;
+
+            if !output.status.success() {
+                return Err(format!(
+                    "pip install (offline) failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            return Ok(());
+        }
+
         let req = self.engine_source.join("requirements.txt");
 
         if !req.exists() {
@@ -216,18 +279,26 @@ impl PhantomDeployer {
             return Ok(());
         }
 
-        // If engine_source is the same path as the destination, nothing to do.
-        if self.engine_source == dest {
+        let src: PathBuf = if let Some(ref bundle) = self.offline_bundle_path {
+            let be = bundle.join("engine");
+            if be.join("run.py").is_file() {
+                log::info!("Using Phantom engine from offline bundle at {:?}", be);
+                be
+            } else {
+                self.engine_source.clone()
+            }
+        } else {
+            self.engine_source.clone()
+        };
+
+        // If source is the same path as the destination, nothing to do.
+        if src == dest {
             return Ok(());
         }
 
-        log::info!(
-            "Copying Phantom engine from {:?} → {:?}",
-            self.engine_source,
-            dest
-        );
+        log::info!("Copying Phantom engine from {:?} → {:?}", src, dest);
 
-        copy_dir_all(&self.engine_source, &dest)
+        copy_dir_all(&src, &dest)
             .await
             .map_err(|e| format!("Failed to install Phantom engine: {e}"))?;
 
@@ -258,7 +329,7 @@ impl PhantomDeployer {
     }
 
     async fn install_service(&self) -> Result<(), String> {
-        let python    = venv_python(&self.phantom_root);
+        let _python   = venv_python(&self.phantom_root);
         let run_py    = self.engine_source.join("run.py");
         let state_dir = self.phantom_root.join("state");
 
@@ -404,6 +475,10 @@ impl PhantomDeployer {
             "execution_modes": {
                 "default_mode": "manual"
             },
+            "wan_mode": false,
+            "tls_enabled": false,
+            "tls_cert_path": "",
+            "tls_key_path": "",
             "config_version":  "1.0",
             "written_at":      now,
             "written_by_step": "4.5"
@@ -644,6 +719,27 @@ impl PhantomDeployer {
         Ok(())
     }
 
+    /// TLS flags for local worker JSON (mirrors ``phantom_config.json`` Phase 4 fields).
+    async fn read_phantom_tls_for_local_worker(&self) -> (bool, String) {
+        let p = self.phantom_root.join("phantom_config.json");
+        let Ok(raw) = tokio::fs::read_to_string(&p).await else {
+            return (false, String::new());
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return (false, String::new());
+        };
+        let tls_enabled = v
+            .get("tls_enabled")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        let cert = v
+            .get("tls_cert_path")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        (tls_enabled, cert)
+    }
+
     #[cfg(target_os = "linux")]
     async fn start_local_worker(&self) -> Result<(), String> {
         let engine = self.phantom_root.join("engine");
@@ -655,11 +751,15 @@ impl PhantomDeployer {
         }
 
         let config_path = self.phantom_root.join("local_worker_config.json");
+        let (tls_enabled, tls_controller_cert_path) =
+            self.read_phantom_tls_for_local_worker().await;
         let config = serde_json::json!({
             "worker_id": "local-worker",
             "controller_host": "127.0.0.1",
             "controller_port": 8080,
             "worker_port": 8090,
+            "tls_enabled": tls_enabled,
+            "tls_controller_cert_path": tls_controller_cert_path,
         });
         tokio::fs::write(
             &config_path,
@@ -702,11 +802,15 @@ impl PhantomDeployer {
         }
 
         let config_path = self.phantom_root.join("local_worker_config.json");
+        let (tls_enabled, tls_controller_cert_path) =
+            self.read_phantom_tls_for_local_worker().await;
         let config = serde_json::json!({
             "worker_id": "local-worker",
             "controller_host": "127.0.0.1",
             "controller_port": 8080,
             "worker_port": 8090,
+            "tls_enabled": tls_enabled,
+            "tls_controller_cert_path": tls_controller_cert_path,
         });
         tokio::fs::write(
             &config_path,
@@ -756,6 +860,15 @@ impl PhantomDeployer {
     /// This is non-blocking to the deploy flow — if the probe times out the
     /// worker may still respond during the broadcast scan.
     async fn run_readiness_probe(&self) {
+        if self.is_offline() {
+            log::info!("Skipping UDP readiness probe (offline mode — local worker assumed reachable)");
+            self.emit_scan_log("PHANTOM OFFLINE MODE — skipping readiness probe; assuming local worker");
+            if let Ok(mut r) = self.readiness_result.lock() {
+                *r = (0, true);
+            }
+            return;
+        }
+
         let config_path = self.phantom_root.join("phantom_config.json");
         let probe_interval_ms =
             read_nested_config(&config_path, &["worker", "readiness_probe_interval_ms"])
@@ -826,6 +939,12 @@ impl PhantomDeployer {
     }
 
     async fn scan_lan(&self) -> Result<(), String> {
+        if self.is_offline() {
+            log::info!("Skipping LAN scan and worker registration (offline mode)");
+            self.emit_scan_log("PHANTOM OFFLINE MODE — skipping LAN scan and remote registration");
+            return Ok(());
+        }
+
         let base_ips = local_ip_bases();
         let broadcast_addrs: Vec<String> = base_ips
             .iter()
@@ -978,40 +1097,75 @@ impl PhantomDeployer {
             error_message: None,
         });
 
-        let net_start = std::time::Instant::now();
-        let base_ips = local_ip_bases();
-        let broadcast_addrs: Vec<String> = base_ips
-            .iter()
-            .filter_map(|b| base_to_broadcast(b))
-            .collect();
-        let net_duration = net_start.elapsed().as_millis() as u64;
-        dependency_init_entries.push(DependencyInitEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            item: "network_interface_enumeration".to_string(),
-            success: !broadcast_addrs.is_empty(),
-            duration_ms: net_duration,
-        });
-        step_idx += 1;
-        full_deploy_entries.push(FullDeployLogEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            step_index: step_idx,
-            step_name: "network_interface_enumeration".to_string(),
-            success: !broadcast_addrs.is_empty(),
-            duration_ms: net_duration,
-            metadata: Some(serde_json::json!({"bases": base_ips, "broadcast_count": broadcast_addrs.len()})),
-            error_message: None,
-        });
+        let broadcast_addrs: Vec<String> = if self.is_offline() {
+            if let Some(ref bp) = self.offline_bundle_path {
+                log::warn!("Using offline bundle at: {}", bp.display());
+            }
+            self.emit_scan_log("PHANTOM OFFLINE MODE — skipping network interface broadcast enumeration");
+            dependency_init_entries.push(DependencyInitEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                item: "network_interface_enumeration (skipped offline)".to_string(),
+                success: true,
+                duration_ms: 0,
+            });
+            step_idx += 1;
+            full_deploy_entries.push(FullDeployLogEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                step_index: step_idx,
+                step_name: "network_interface_enumeration".to_string(),
+                success: true,
+                duration_ms: 0,
+                metadata: Some(serde_json::json!({"skipped": "offline"})),
+                error_message: None,
+            });
+            step_idx += 1;
+            full_deploy_entries.push(FullDeployLogEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                step_index: step_idx,
+                step_name: "broadcast_address_calculation".to_string(),
+                success: true,
+                duration_ms: 0,
+                metadata: Some(serde_json::json!({"skipped": "offline"})),
+                error_message: None,
+            });
+            Vec::new()
+        } else {
+            let net_start = std::time::Instant::now();
+            let base_ips = local_ip_bases();
+            let addrs: Vec<String> = base_ips
+                .iter()
+                .filter_map(|b| base_to_broadcast(b))
+                .collect();
+            let net_duration = net_start.elapsed().as_millis() as u64;
+            dependency_init_entries.push(DependencyInitEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                item: "network_interface_enumeration".to_string(),
+                success: !addrs.is_empty(),
+                duration_ms: net_duration,
+            });
+            step_idx += 1;
+            full_deploy_entries.push(FullDeployLogEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                step_index: step_idx,
+                step_name: "network_interface_enumeration".to_string(),
+                success: !addrs.is_empty(),
+                duration_ms: net_duration,
+                metadata: Some(serde_json::json!({"bases": base_ips, "broadcast_count": addrs.len()})),
+                error_message: None,
+            });
 
-        step_idx += 1;
-        full_deploy_entries.push(FullDeployLogEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            step_index: step_idx,
-            step_name: "broadcast_address_calculation".to_string(),
-            success: !broadcast_addrs.is_empty(),
-            duration_ms: 0,
-            metadata: Some(serde_json::json!({"broadcast_addrs": &broadcast_addrs})),
-            error_message: None,
-        });
+            step_idx += 1;
+            full_deploy_entries.push(FullDeployLogEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                step_index: step_idx,
+                step_name: "broadcast_address_calculation".to_string(),
+                success: !addrs.is_empty(),
+                duration_ms: 0,
+                metadata: Some(serde_json::json!({"broadcast_addrs": &addrs})),
+                error_message: None,
+            });
+            addrs
+        };
 
         let (probe_attempts, probe_success) = self
             .readiness_result
@@ -1046,49 +1200,83 @@ impl PhantomDeployer {
             error_message: if probe_success { None } else { Some("readiness probe timed out".to_string()) },
         });
 
-        self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
-        self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
-        for addr in &broadcast_addrs {
-            self.emit_scan_log(&format!("Broadcasting DISCOVER_WORKERS on {addr}/24…"));
-        }
-        self.emit_scan_log("Waiting for worker manifests…");
-
-        self.emit_scan_log(&format!(
-            "Discovery window: {} ms (early_exit={})",
-            total_timeout_ms, early_exit
-        ));
-
-        let addrs = broadcast_addrs.clone();
-        let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || {
-            discover_workers_with_log(
-                &addrs,
-                total_timeout_ms,
-                early_exit,
-                dependency_init_entries,
-                full_deploy_entries,
-            )
-        })
-        .await
-        .map_err(|e| format!("Discovery task panicked: {e}"))?;
-
-        // Enrich the discovery log with readiness probe results (set by step 9).
-        discovery_log.set_readiness_result(probe_attempts, probe_success);
-
-        self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
-
-        let discovered_workers: Vec<DiscoveredWorkerForCeremony> = manifests
-            .iter()
-            .map(|m| DiscoveredWorkerForCeremony {
-                worker_id: m.manifest.worker_id.clone(),
-                host: m.registration_host(),
-                port: m.port,
-                gpu_info: m.manifest.capabilities.clone(),
-                source_ip: m.source_ip.clone(),
-                signature_verified: m.signature_verified,
-                fingerprint: m.fingerprint.clone(),
-                public_key_b64: m.manifest.public_key_b64.clone(),
+        let (discovered_workers, mut discovery_log) = if self.is_offline() {
+            self.emit_scan_log("PHANTOM OFFLINE MODE — skipping network operations (UDP discovery)");
+            let tt = total_timeout_ms;
+            let deps = dependency_init_entries.clone();
+            let full = full_deploy_entries.clone();
+            let (mut dlog, synthetic) = tokio::task::spawn_blocking(move || {
+                let mut log = DiscoveryLogBuilder::new(vec!["offline".to_string()], 8095);
+                for e in deps {
+                    log.add_dependency_init_entry(e);
+                }
+                log.add_full_deploy_entries(full);
+                log.push_raw("PHANTOM OFFLINE MODE — LAN discovery skipped (synthetic local-worker)");
+                let ts = chrono::Utc::now().to_rfc3339();
+                log.set_discovery_timing(&ts, &ts, 0, tt, 0);
+                let discovery_log = log.build(1);
+                let w = DiscoveredWorkerForCeremony {
+                    worker_id: "local-worker".to_string(),
+                    host: "127.0.0.1".to_string(),
+                    port: 8090,
+                    gpu_info: serde_json::json!({}),
+                    source_ip: "127.0.0.1".to_string(),
+                    signature_verified: false,
+                    fingerprint: String::new(),
+                    public_key_b64: String::new(),
+                };
+                (discovery_log, w)
             })
-            .collect();
+            .await
+            .map_err(|e| format!("Offline discovery task panicked: {e}"))?;
+            dlog.set_readiness_result(probe_attempts, probe_success);
+            self.emit_scan_log("Received 1 synthetic manifest (offline local-worker)");
+            (vec![synthetic], dlog)
+        } else {
+            self.emit_scan_log(&format!("Subnets to broadcast: {:?}", broadcast_addrs));
+            self.emit_scan_log("Broadcasting DISCOVER_WORKERS on 127.0.0.1…");
+            for addr in &broadcast_addrs {
+                self.emit_scan_log(&format!("Broadcasting DISCOVER_WORKERS on {addr}/24…"));
+            }
+            self.emit_scan_log("Waiting for worker manifests…");
+
+            self.emit_scan_log(&format!(
+                "Discovery window: {} ms (early_exit={})",
+                total_timeout_ms, early_exit
+            ));
+
+            let addrs = broadcast_addrs.clone();
+            let (manifests, mut discovery_log) = tokio::task::spawn_blocking(move || {
+                discover_workers_with_log(
+                    &addrs,
+                    total_timeout_ms,
+                    early_exit,
+                    dependency_init_entries,
+                    full_deploy_entries,
+                )
+            })
+            .await
+            .map_err(|e| format!("Discovery task panicked: {e}"))?;
+
+            discovery_log.set_readiness_result(probe_attempts, probe_success);
+
+            self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
+
+            let discovered_workers: Vec<DiscoveredWorkerForCeremony> = manifests
+                .iter()
+                .map(|m| DiscoveredWorkerForCeremony {
+                    worker_id: m.manifest.worker_id.clone(),
+                    host: m.registration_host(),
+                    port: m.port,
+                    gpu_info: m.manifest.capabilities.clone(),
+                    source_ip: m.source_ip.clone(),
+                    signature_verified: m.signature_verified,
+                    fingerprint: m.fingerprint.clone(),
+                    public_key_b64: m.manifest.public_key_b64.clone(),
+                })
+                .collect();
+            (discovered_workers, discovery_log)
+        };
 
         let discovery_failed = discovery_log.worker_count == 0;
 
@@ -1109,11 +1297,36 @@ impl PhantomDeployer {
             );
         }
 
+        let offline_mode = self.is_offline();
+        if offline_mode {
+            self.persist_offline_install_marker().await?;
+        }
+
         Ok(DeploymentPreScanResult {
             discovered_workers,
             discovery_log,
             discovery_failed,
+            offline_mode,
         })
+    }
+
+    /// Writes ``state/offline_install.json`` so later sessions can skip WAN discovery helpers.
+    async fn persist_offline_install_marker(&self) -> Result<(), String> {
+        let state_dir = self.phantom_root.join("state");
+        tokio::fs::create_dir_all(&state_dir)
+            .await
+            .map_err(|e| format!("Failed to create state dir: {e}"))?;
+        let path = state_dir.join("offline_install.json");
+        let payload = serde_json::json!({
+            "offline": true,
+            "bundle_path": self.offline_bundle_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            "written_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        tokio::fs::write(&path, body)
+            .await
+            .map_err(|e| format!("Failed to write offline_install.json: {e}"))?;
+        Ok(())
     }
 
     /// Register selected workers and run step 11 (load execution modes).
@@ -1191,6 +1404,18 @@ pub async fn scan_and_register_workers(
     controller_url: &str,
     scan_log_emitter: Option<tauri::AppHandle>,
 ) -> Result<ScanResult, String> {
+    if phantom_root.join("state/offline_install.json").is_file() {
+        emit_scan_log_opt(
+            &scan_log_emitter,
+            "PHANTOM OFFLINE MODE — scan skipped (no remote LAN discovery)",
+        );
+        return Ok(ScanResult {
+            scanned: 0,
+            registered: 0,
+            nodes: Vec::new(),
+        });
+    }
+
     let base_ips = local_ip_bases();
     let broadcast_addrs: Vec<String> = base_ips
         .iter()
@@ -1340,6 +1565,198 @@ impl PhantomDeployer {
         }
 
         Ok(())
+    }
+
+    // ── Phase 2: Canonical lifecycle (uninstall / upgrade) ─────────────
+
+    /// Stop Phantom OS services (best effort).
+    async fn stop_phantom_services(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", "phantom"])
+                .output()
+                .await;
+            let _ = Command::new("systemctl")
+                .args(["--user", "disable", "phantom"])
+                .output()
+                .await;
+            let unit = home_dir()
+                .join(".config/systemd/user/phantom.service");
+            let _ = tokio::fs::remove_file(&unit).await;
+            let _ = Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output()
+                .await;
+            log::info!("Linux user systemd phantom service stopped and unit removed (if present)");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("sc")
+                .args(["stop", "phantom"])
+                .output()
+                .await;
+            if let Err(e) = super::windows::service_installer::uninstall_service("phantom").await {
+                log::warn!("Windows service remove: {e}");
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            log::info!("stop_phantom_services: no-op on this platform");
+        }
+    }
+
+    /// Remove Windows firewall rules created by open_ports (best effort).
+    async fn remove_windows_firewall_phantom_rules(&self) {
+        #[cfg(target_os = "windows")]
+        for name in [
+            "PhantomController",
+            "PhantomWorker",
+            "PhantomDiscovery",
+            "PhantomSocket",
+        ] {
+            let _ = Command::new("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={name}"),
+                ])
+                .output()
+                .await;
+        }
+    }
+
+    /// Delete all content under `phantom_root` (identity, engine, venv, state, config).
+    pub async fn uninstall_deployment(&self) -> Result<serde_json::Value, String> {
+        log::info!("Uninstall: stopping services");
+        self.stop_phantom_services().await;
+        self.remove_windows_firewall_phantom_rules().await;
+
+        let root = &self.phantom_root;
+        if !root.exists() {
+            return Ok(serde_json::json!({
+                "status": "nothing_to_remove",
+                "phantom_root": root.to_string_lossy(),
+            }));
+        }
+
+        log::info!("Uninstall: removing {:?}", root);
+        tokio::fs::remove_dir_all(root)
+            .await
+            .map_err(|e| format!("Failed to remove phantom root {:?}: {e}", root))?;
+
+        Ok(serde_json::json!({
+            "status": "removed",
+            "phantom_root": root.to_string_lossy(),
+        }))
+    }
+
+    /// Copy `config/` and `state/` plus key JSON files into `stash` for upgrade restore.
+    async fn stash_config_for_upgrade(&self, stash: &Path) -> Result<(), String> {
+        tokio::fs::create_dir_all(stash)
+            .await
+            .map_err(|e| format!("stash mkdir: {e}"))?;
+        for name in [
+            "phantom_config.json",
+            "controller_placement.json",
+            "local_worker_config.json",
+        ] {
+            let p = self.phantom_root.join(name);
+            if p.exists() {
+                tokio::fs::copy(&p, stash.join(name))
+                    .await
+                    .map_err(|e| format!("stash copy {name}: {e}"))?;
+            }
+        }
+        for dir in ["config", "state"] {
+            let src = self.phantom_root.join(dir);
+            if src.is_dir() {
+                let dst = stash.join(dir);
+                copy_dir_all(&src, &dst)
+                    .await
+                    .map_err(|e| format!("stash dir {dir}: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore_stashed_config(&self, stash: &Path) -> Result<(), String> {
+        for name in [
+            "phantom_config.json",
+            "controller_placement.json",
+            "local_worker_config.json",
+        ] {
+            let sf = stash.join(name);
+            if sf.exists() {
+                let dst = self.phantom_root.join(name);
+                tokio::fs::copy(&sf, &dst)
+                    .await
+                    .map_err(|e| format!("restore {name}: {e}"))?;
+            }
+        }
+        for dir in ["config", "state"] {
+            let src = stash.join(dir);
+            if src.is_dir() {
+                let dst = self.phantom_root.join(dir);
+                if dst.exists() {
+                    tokio::fs::remove_dir_all(&dst)
+                        .await
+                        .map_err(|e| format!("restore rm old {dir}: {e}"))?;
+                }
+                copy_dir_all(&src, &dst)
+                    .await
+                    .map_err(|e| format!("restore dir {dir}: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Replace `engine/` from bundled `engine_source` while preserving config and controller state.
+    pub async fn upgrade_engine_preserve_state(&self) -> Result<serde_json::Value, String> {
+        let stash = self.phantom_root.join(".upgrade_stash");
+        if stash.exists() {
+            let _ = tokio::fs::remove_dir_all(&stash).await;
+        }
+
+        log::info!("Upgrade: stopping services");
+        self.stop_phantom_services().await;
+
+        self.stash_config_for_upgrade(&stash)
+            .await
+            .map_err(|e| format!("upgrade stash failed: {e}"))?;
+
+        let engine = self.phantom_root.join("engine");
+        if engine.exists() {
+            tokio::fs::remove_dir_all(&engine)
+                .await
+                .map_err(|e| format!("remove engine: {e}"))?;
+        }
+
+        self.install_phantom_core()
+            .await
+            .map_err(|e| format!("upgrade copy engine: {e}"))?;
+
+        self.restore_stashed_config(&stash)
+            .await
+            .map_err(|e| format!("upgrade restore failed: {e}"))?;
+
+        let _ = tokio::fs::remove_dir_all(&stash).await;
+
+        log::info!("Upgrade: restarting controller process");
+        self.start_controller()
+            .await
+            .map_err(|e| format!("upgrade start_controller: {e}"))?;
+
+        self.install_service()
+            .await
+            .map_err(|e| format!("upgrade service: {e}"))?;
+
+        Ok(serde_json::json!({
+            "status": "upgraded",
+            "preserved": ["phantom_config.json", "controller_placement.json", "config/", "state/"],
+        }))
     }
 }
 

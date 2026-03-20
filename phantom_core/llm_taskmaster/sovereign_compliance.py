@@ -116,3 +116,34 @@ def validate_model_before_use(model_id: str, model_name: str = "") -> bool:
     Returns True if allowed, False if blocked.
     """
     return is_model_allowed(model_id, model_name)
+
+
+def validate_tls_policy(
+    wan_mode: bool,
+    tls_enabled: bool,
+    tls_cert_path: str,
+    tls_key_path: str,
+) -> None:
+    """
+    Phase 4 — transport policy for controller / workers.
+
+    Rules:
+    - WAN (``wan_mode``) requires TLS; plaintext is not allowed across households.
+    - LAN may use plaintext when ``tls_enabled`` is false (Phases 1–3 unchanged).
+    - When ``tls_enabled`` is true, cert and key paths must be configured (no
+      silent fallback to HTTP on the controller).
+    """
+    if wan_mode and not tls_enabled:
+        raise ValueError(
+            "Sovereign transport policy: wan_mode requires tls_enabled "
+            "(encrypted controller API). Enable TLS or disable wan_mode."
+        )
+    if tls_enabled:
+        if not (tls_cert_path and str(tls_cert_path).strip()):
+            raise ValueError(
+                "tls_enabled requires a non-empty tls_cert_path (no mixed plaintext/TLS)."
+            )
+        if not (tls_key_path and str(tls_key_path).strip()):
+            raise ValueError(
+                "tls_enabled requires a non-empty tls_key_path (no mixed plaintext/TLS)."
+            )

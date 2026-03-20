@@ -4,6 +4,14 @@
 >
 > Version: 1.0.0 | Last Updated: 2026-02-23 | Maintainer: Dark North Co.
 
+### Canonical install (Phase 2)
+
+| Path | Notes |
+|------|--------|
+| **`phantom_app/`** (Tauri) | **Supported** end-user install, deploy ceremony, **`uninstall_phantom`** / **`upgrade_phantom_deployment`** invokes — see root **`INSTALL.md`** |
+| **`installer/*.py`**, **`package/install.*`** | **Deprecated** by default; require **`PHANTOM_ALLOW_LEGACY_INSTALLER=1`** or **`PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1`** |
+| **`installer/offline_bundle.py`** | **Phase 3** — build/verify air-gap bundles (`generate`, `verify`); see **`docs/offline_install.md`** |
+
 ---
 
 ## Quick Reference Index
@@ -32,7 +40,10 @@
 
 | Task | Windows (CMD) | Windows (PS1) | Windows (GUI) | Linux / macOS | Python (Cross-platform) |
 |------|--------------|---------------|---------------|---------------|-------------------------|
-| **Install Phantom** | `package/install.bat` | `installer/phantom_installer.ps1` | `installer/windows_gui_installer.py` | `package/install.sh` | `installer/phantom_installer.py` |
+| **Install Phantom (canonical)** | — | — | — | — | Build/run **`phantom_app`** per **`INSTALL.md`** |
+| **Install Phantom (legacy, opt-in)** | `package/install.bat`¹ | `installer/phantom_installer.ps1` | `installer/windows_gui_installer.py`² | `package/install.sh`¹ | `installer/phantom_installer.py`² |
+
+¹ Requires `PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1`. ² Requires `PHANTOM_ALLOW_LEGACY_INSTALLER=1`.
 | **Uninstall Phantom (Linux, recommended)** | — | — | — | `rm-phantom` (external) | `installer/phantom_uninstaller.py` |
 | **Uninstall Phantom (built-in)** | `package/uninstall.bat` | `installer/phantom_uninstaller.ps1` | — | `package/uninstall.sh` | `installer/phantom_uninstaller.py` |
 | **Build package** | `package/build_complete.bat` | — | — | `package/build_complete.sh` | — |

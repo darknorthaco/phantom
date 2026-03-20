@@ -1,5 +1,16 @@
 # Phantom Unified Installation Wizard
 
+> **Canonical install path:** Use the **Tauri desktop app** (`phantom_app/`). See **[INSTALL.md](../INSTALL.md)** in the repository root.  
+> This Python/shell tree is **deprecated** for end users. Entry points exit unless **`PHANTOM_ALLOW_LEGACY_INSTALLER=1`**. Policy: [CANONICAL_INSTALL_TAURI.md](CANONICAL_INSTALL_TAURI.md).
+
+### Offline bundle (Phase 3, maintainer / air-gap)
+
+- **Generator:** [`offline_bundle.py`](offline_bundle.py) — `generate` / `verify` subcommands; produces `wheelhouse/`, `engine/`, `models/model_catalogue.json`, `manifest.json` (SHA-256 for all files).  
+- **Verification helpers:** [`offline_bundle_lib.py`](offline_bundle_lib.py) — shared with tests.  
+- **Pip helper:** [`offline_install_helper.py`](offline_install_helper.py) — `--no-index` install from a bundle.  
+- **Deploy requirements pin:** [`requirements-deploy.txt`](requirements-deploy.txt) — must match Tauri `install_python_deps`.  
+- **Documentation:** [../docs/offline_install.md](../docs/offline_install.md)
+
 ## Overview
 
 The Phantom Unified Installation Wizard is a modular, cross-platform installer that enables both Linux and Windows users to install the complete Phantom ecosystem with a single execution flow.

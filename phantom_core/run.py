@@ -62,6 +62,20 @@ def main():
             ssl_kwargs["ssl_certfile"] = args.tls_cert
             ssl_kwargs["ssl_keyfile"] = args.tls_key
             print(f"🔒 TLS enabled (cert={args.tls_cert})")
+        else:
+            try:
+                from config_schema import locate_phantom_config
+                from tls_runtime import uvicorn_ssl_kwargs
+
+                cfgp = locate_phantom_config()
+                ssl_kwargs = uvicorn_ssl_kwargs(cfgp)
+                if ssl_kwargs:
+                    print(
+                        f"🔒 TLS from phantom_config.json (cert={ssl_kwargs.get('ssl_certfile')})"
+                    )
+            except (ValueError, FileNotFoundError) as e:
+                print(f"❌ TLS configuration error: {e}")
+                sys.exit(1)
 
         uvicorn.run(
             "controller_api:app",

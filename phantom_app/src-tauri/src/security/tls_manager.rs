@@ -130,6 +130,10 @@ impl TlsManager {
         &self,
         common_name: &str,
     ) -> Result<CertPaths, String> {
+        tokio::fs::create_dir_all(&self.cert_dir)
+            .await
+            .map_err(|e| format!("Failed to create tls dir: {e}"))?;
+
         let key_pair = KeyPair::generate()
             .map_err(|e| format!("Failed to generate key pair: {e}"))?;
 
@@ -163,6 +167,29 @@ impl TlsManager {
         })
     }
 
+    /// Copy operator-supplied PEM files into the local TLS directory (sovereign import).
+    pub async fn import_tls_cert_pair(
+        &self,
+        cert_src: &Path,
+        key_src: &Path,
+    ) -> Result<CertPaths, String> {
+        tokio::fs::create_dir_all(&self.cert_dir)
+            .await
+            .map_err(|e| format!("Failed to create tls dir: {e}"))?;
+        let cert_path = self.cert_dir.join("imported.crt");
+        let key_path = self.cert_dir.join("imported.key");
+        tokio::fs::copy(cert_src, &cert_path)
+            .await
+            .map_err(|e| format!("Failed to copy certificate: {e}"))?;
+        tokio::fs::copy(key_src, &key_path)
+            .await
+            .map_err(|e| format!("Failed to copy private key: {e}"))?;
+        Ok(CertPaths {
+            cert: cert_path,
+            key: key_path,
+        })
+    }
+
     pub fn load_certificate(&self) -> Result<CertPaths, String> {
         let cert_path = self.cert_dir.join("phantom.crt");
         let key_path = self.cert_dir.join("phantom.key");
@@ -182,4 +209,24 @@ impl TlsManager {
 pub struct CertPaths {
     pub cert: PathBuf,
     pub key: PathBuf,
+}
+
+/// Local PEM sanity check (no network, no CA).
+pub fn validate_tls_cert_pem(path: &Path) -> Result<(), String> {
+    let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    if !(s.contains("BEGIN CERTIFICATE") || s.contains("BEGIN TRUSTED CERTIFICATE")) {
+        return Err(
+            "File is not a PEM certificate (expected BEGIN CERTIFICATE).".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Local PEM private key sanity check.
+pub fn validate_tls_key_pem(path: &Path) -> Result<(), String> {
+    let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    if !s.contains("BEGIN") || !s.contains("PRIVATE KEY") {
+        return Err("File is not a PEM private key.".to_string());
+    }
+    Ok(())
 }

@@ -3,7 +3,9 @@ Phantom Distributed Controller API
 Enhanced version with socket integration support
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import asyncio
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from typing import Dict, Any, Optional, List
@@ -17,6 +19,18 @@ from phantom_core.orchestrator import (
 )
 from phantom_core.state import StateManager
 from phantom_core.trust_store import TrustStore, TrustLevel
+from phantom_core.task_ledger import (
+    TASK_QUEUED,
+    TASK_RUNNING,
+    TASK_COMPLETED,
+    TASK_FAILED,
+    TASK_CANCELLED,
+    normalize_task_status,
+    apply_worker_completion,
+    apply_worker_failure,
+    reconcile_stale_running_tasks,
+    default_running_timeout_sec,
+)
 from phantom_core.config_schema import ConfigSchema, locate_phantom_config
 import httpx
 import logging
@@ -138,6 +152,9 @@ trust_store: TrustStore | None = None
 queue_paused = False
 mode_audit_log: deque = deque(maxlen=1000)
 
+# Serialize task dict mutations (callbacks, dispatch, reconciliation)
+_task_mutation_lock = asyncio.Lock()
+
 
 class ExecutionMode(str, Enum):
     AUTO = "AUTO"
@@ -193,7 +210,10 @@ async def startup_event():
     trust_store = TrustStore(str(state_manager.state_dir))
     workers.update(state_manager.load_workers())
     tasks.update(state_manager.load_tasks())
+    _normalize_all_task_statuses()
     logger.info("💾 State restored (%d workers, %d tasks)", len(workers), len(tasks))
+
+    asyncio.create_task(_task_reconciliation_loop())
 
     # Initialize socket manager if integrated mode
     if SOCKET_AVAILABLE and os.getenv("PHANTOM_INTEGRATED") == "true":
@@ -305,6 +325,36 @@ class TaskResponse(BaseModel):
     error: Optional[str] = None
 
 
+class WorkerCompletionPayload(BaseModel):
+    """POST /api/worker/completion — worker reports successful task execution."""
+
+    task_id: str = Field(..., max_length=128)
+    worker_id: str = Field(..., max_length=128)
+    timestamp: str = Field(..., max_length=64)
+    result: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_result_size(self) -> "WorkerCompletionPayload":
+        if len(json.dumps(self.result)) > _MAX_PAYLOAD_BYTES:
+            raise ValueError("result payload exceeds maximum allowed size")
+        return self
+
+
+class WorkerFailurePayload(BaseModel):
+    """POST /api/worker/failure — worker reports task execution failure."""
+
+    task_id: str = Field(..., max_length=128)
+    worker_id: str = Field(..., max_length=128)
+    timestamp: str = Field(..., max_length=64)
+    error: str = Field(..., max_length=16_384)
+
+    @model_validator(mode="after")
+    def validate_error_size(self) -> "WorkerFailurePayload":
+        if len(self.error) > 16_384:
+            raise ValueError("error message too long")
+        return self
+
+
 # NEW: Heartbeat request model
 class HeartbeatRequest(BaseModel):
     gpu_status: Dict[str, Any]
@@ -330,6 +380,39 @@ async def get_current_user(request):
     if security_manager:
         return await security_manager.authenticate_request(request)
     return {"user_id": "anonymous", "permissions": ["all"]}
+
+
+def _verify_worker_callback(request: Request) -> None:
+    """Optional shared secret for worker → controller callbacks (WAN-hardening)."""
+    secret = os.getenv("PHANTOM_WORKER_CALLBACK_SECRET")
+    if not secret:
+        return
+    if request.headers.get("X-Phantom-Callback-Key") != secret:
+        raise HTTPException(status_code=403, detail="Invalid callback credentials")
+
+
+def _normalize_all_task_statuses() -> None:
+    for rec in tasks.values():
+        if isinstance(rec, dict) and "status" in rec:
+            rec["status"] = normalize_task_status(rec["status"])
+
+
+async def _task_reconciliation_loop() -> None:
+    """Periodic scan for RUNNING tasks that never received completion/failure."""
+    while True:
+        try:
+            await asyncio.sleep(30)
+            async with _task_mutation_lock:
+                updated = reconcile_stale_running_tasks(
+                    tasks,
+                    timeout_sec=default_running_timeout_sec(),
+                )
+                if updated and state_manager:
+                    state_manager.save_tasks(tasks)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Task reconciliation loop error: %s", exc)
 
 
 def _record_audit(event_type: str, payload: Dict[str, Any]):
@@ -402,8 +485,12 @@ def _task_status_counts() -> Dict[str, int]:
     counts = {"running": 0, "queued": 0, "pending_approval": 0}
     for task_record in tasks.values():
         status = task_record.get("status")
-        if status in counts:
-            counts[status] += 1
+        if status == TASK_RUNNING:
+            counts["running"] += 1
+        elif status == TASK_QUEUED:
+            counts["queued"] += 1
+        elif status == "pending_approval":
+            counts["pending_approval"] += 1
     return counts
 
 
@@ -448,7 +535,7 @@ def _build_impact_report(
         [
             t
             for t in tasks.values()
-            if worker_id and t["worker_id"] == worker_id and t["status"] == "running"
+            if worker_id and t["worker_id"] == worker_id and t["status"] == TASK_RUNNING
         ]
     )
     return {
@@ -484,7 +571,7 @@ async def health_check():
         "execution_mode": execution_mode.value,
         "queue_paused": queue_paused,
         "workers_count": len(workers),
-        "active_tasks": len([t for t in tasks.values() if t["status"] == "running"]),
+        "active_tasks": len([t for t in tasks.values() if t["status"] == TASK_RUNNING]),
     }
 
 
@@ -724,7 +811,7 @@ async def submit_task(task: TaskRequest, background_tasks: BackgroundTasks):
                 "parameters": task.parameters,
                 "priority": task.priority,
                 "worker_id": task.target_worker,
-                "status": "queued",
+                "status": TASK_QUEUED,
                 "created_at": datetime.now().isoformat(),
                 "eta_seconds": eta_seconds,
             }
@@ -747,7 +834,7 @@ async def submit_task(task: TaskRequest, background_tasks: BackgroundTasks):
 
             return {
                 "task_id": task_id,
-                "status": "queued",
+                "status": TASK_QUEUED,
                 "worker_id": task.target_worker,
                 "eta_seconds": eta_seconds,
             }
@@ -795,7 +882,7 @@ async def submit_task(task: TaskRequest, background_tasks: BackgroundTasks):
             "parameters": task.parameters,
             "priority": task.priority,
             "worker_id": selected_worker,
-            "status": "queued",
+            "status": TASK_QUEUED,
             "created_at": datetime.now().isoformat(),
             "eta_seconds": eta_seconds,
         }
@@ -819,7 +906,7 @@ async def submit_task(task: TaskRequest, background_tasks: BackgroundTasks):
         logger.info(f"Task {task_id} queued, assigned to {selected_worker}")
         return {
             "task_id": task_id,
-            "status": "queued",
+            "status": TASK_QUEUED,
             "worker_id": selected_worker,
             "eta_seconds": eta_seconds,
         }
@@ -846,7 +933,7 @@ async def cancel_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     task_record = tasks[task_id]
-    if task_record["status"] in ["completed", "failed", "cancelled"]:
+    if task_record["status"] in (TASK_COMPLETED, TASK_FAILED, TASK_CANCELLED):
         raise HTTPException(status_code=400, detail="Task cannot be cancelled")
 
     # Cancel task on worker
@@ -861,13 +948,83 @@ async def cancel_task(task_id: str):
         except Exception as e:
             logger.warning(f"Failed to cancel task on worker: {e}")
 
-    task_record["status"] = "cancelled"
+    task_record["status"] = TASK_CANCELLED
 
     # Notify socket clients if available
     if socket_manager:
         await socket_manager.broadcast({"type": "task_cancelled", "task_id": task_id})
 
-    return {"status": "cancelled"}
+    return {"status": TASK_CANCELLED}
+
+
+@app.post("/api/worker/completion")
+async def worker_task_completion(
+    request: Request, payload: WorkerCompletionPayload
+):
+    """Worker callback: task finished successfully (authoritative completion)."""
+    _verify_worker_callback(request)
+    async with _task_mutation_lock:
+        ok, reason = apply_worker_completion(
+            tasks,
+            payload.task_id,
+            payload.worker_id,
+            payload.result,
+            payload.timestamp,
+        )
+        if not ok:
+            code = 404 if reason == "unknown_task" else 403 if reason == "worker_mismatch" else 400
+            raise HTTPException(status_code=code, detail=reason)
+        if state_manager:
+            state_manager.save_tasks(tasks)
+    if socket_manager:
+        await socket_manager.broadcast(
+            {
+                "type": "task_completed",
+                "task_id": payload.task_id,
+                "worker_id": payload.worker_id,
+                "result": payload.result,
+            }
+        )
+    logger.info(
+        "Task %s completed via worker callback (%s)", payload.task_id, payload.worker_id
+    )
+    return {"status": "recorded", "task_id": payload.task_id}
+
+
+@app.post("/api/worker/failure")
+async def worker_task_failure(request: Request, payload: WorkerFailurePayload):
+    """Worker callback: task failed on worker (authoritative failure)."""
+    _verify_worker_callback(request)
+    async with _task_mutation_lock:
+        ok, reason = apply_worker_failure(
+            tasks,
+            payload.task_id,
+            payload.worker_id,
+            payload.error,
+            payload.timestamp,
+            reason_code="worker_reported",
+        )
+        if not ok:
+            code = 404 if reason == "unknown_task" else 403 if reason == "worker_mismatch" else 400
+            raise HTTPException(status_code=code, detail=reason)
+        if state_manager:
+            state_manager.save_tasks(tasks)
+    if socket_manager:
+        await socket_manager.broadcast(
+            {
+                "type": "task_failed",
+                "task_id": payload.task_id,
+                "worker_id": payload.worker_id,
+                "error": payload.error,
+            }
+        )
+    logger.warning(
+        "Task %s failed via worker callback (%s): %s",
+        payload.task_id,
+        payload.worker_id,
+        payload.error[:200],
+    )
+    return {"status": "recorded", "task_id": payload.task_id}
 
 
 # Socket infrastructure endpoints
@@ -973,7 +1130,7 @@ def smart_worker_selection(task: TaskRequest, active_workers: Dict) -> str:
             [
                 t
                 for t in tasks.values()
-                if t["worker_id"] == worker_id and t["status"] == "running"
+                if t["worker_id"] == worker_id and t["status"] == TASK_RUNNING
             ]
         )
         load_penalty = current_tasks * 0.1
@@ -989,55 +1146,115 @@ def smart_worker_selection(task: TaskRequest, active_workers: Dict) -> str:
 
 
 async def execute_task(task_id: str, worker_id: str, task: TaskRequest):
-    """Execute task on selected worker"""
-    try:
-        tasks[task_id]["status"] = "running"
+    """Dispatch task to worker. Completion/failure are authoritative via worker callbacks."""
+    worker = workers.get(worker_id)
+    if not worker:
+        async with _task_mutation_lock:
+            if task_id in tasks:
+                tasks[task_id]["status"] = TASK_FAILED
+                tasks[task_id]["error"] = "worker not registered"
+                tasks[task_id]["failed_at"] = datetime.now().isoformat()
+                if state_manager:
+                    state_manager.save_tasks(tasks)
+        logger.error("Task %s: worker %s not found", task_id, worker_id)
+        return
 
-        # Notify socket clients if available
-        if socket_manager:
+    dispatch_url = f"http://{worker['host']}:{worker['port']}/tasks/execute"
+    dispatch_body = {
+        "task_id": task_id,
+        "task_type": task.task_type,
+        "parameters": task.parameters,
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=15.0)
+        ) as client:
+            response = await client.post(dispatch_url, json=dispatch_body)
+
+        dispatch_err: Optional[str] = None
+        final_status: Optional[str] = None
+        async with _task_mutation_lock:
+            if task_id not in tasks:
+                return
+            if response.status_code not in (200, 202):
+                err = f"worker HTTP {response.status_code}: {response.text[:500]}"
+                tasks[task_id]["status"] = TASK_FAILED
+                tasks[task_id]["error"] = err
+                tasks[task_id]["failed_at"] = datetime.now().isoformat()
+                tasks[task_id]["failure_reason"] = "dispatch_rejected"
+                if state_manager:
+                    state_manager.save_tasks(tasks)
+                logger.error("Task %s dispatch failed: HTTP %s", task_id, response.status_code)
+                dispatch_err = err
+                final_status = TASK_FAILED
+            else:
+                body: Dict[str, Any] = {}
+                try:
+                    if response.content:
+                        body = response.json()
+                except json.JSONDecodeError:
+                    body = {}
+
+                st = str(body.get("status", "")).lower()
+                if st == "failed":
+                    tasks[task_id]["status"] = TASK_FAILED
+                    tasks[task_id]["error"] = body.get("error") or "worker rejected task"
+                    tasks[task_id]["failed_at"] = datetime.now().isoformat()
+                    tasks[task_id]["failure_reason"] = "worker_rejected"
+                    final_status = TASK_FAILED
+                else:
+                    # Workers run asynchronously; RUNNING until /api/worker/completion|failure
+                    tasks[task_id]["status"] = TASK_RUNNING
+                    tasks[task_id]["started_at"] = datetime.now().isoformat()
+                    tasks[task_id].pop("result", None)
+                    final_status = TASK_RUNNING
+
+                if state_manager:
+                    state_manager.save_tasks(tasks)
+
+        if dispatch_err and socket_manager:
+            await socket_manager.broadcast(
+                {
+                    "type": "task_failed",
+                    "task_id": task_id,
+                    "error": dispatch_err,
+                }
+            )
+            return
+
+        if socket_manager and final_status == TASK_RUNNING:
             await socket_manager.broadcast(
                 {"type": "task_started", "task_id": task_id, "worker_id": worker_id}
             )
-
-        worker = workers[worker_id]
-
-        # Send task to worker
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                f"http://{worker['host']}:{worker['port']}/tasks/execute",
-                json={
+        elif socket_manager and final_status == TASK_FAILED:
+            await socket_manager.broadcast(
+                {
+                    "type": "task_failed",
                     "task_id": task_id,
-                    "task_type": task.task_type,
-                    "parameters": task.parameters,
-                },
+                    "error": tasks[task_id].get("error", ""),
+                }
             )
 
-            if response.status_code == 200:
-                result = response.json()
-                tasks[task_id]["status"] = "completed"
-                tasks[task_id]["result"] = result
-
-                # Notify socket clients if available
-                if socket_manager:
-                    await socket_manager.broadcast(
-                        {"type": "task_completed", "task_id": task_id, "result": result}
-                    )
-
-                logger.info(f"Task {task_id} completed successfully")
-            else:
-                raise Exception(f"Worker returned status {response.status_code}")
+        if final_status == TASK_RUNNING:
+            logger.info(
+                "Task %s dispatched to %s; awaiting worker callback", task_id, worker_id
+            )
 
     except Exception as e:
-        tasks[task_id]["status"] = "failed"
-        tasks[task_id]["error"] = str(e)
-
-        # Notify socket clients if available
+        async with _task_mutation_lock:
+            if task_id in tasks:
+                tasks[task_id]["status"] = TASK_FAILED
+                tasks[task_id]["error"] = str(e)
+                tasks[task_id]["failed_at"] = datetime.now().isoformat()
+                tasks[task_id]["failure_reason"] = "dispatch_error"
+                if state_manager:
+                    state_manager.save_tasks(tasks)
         if socket_manager:
             await socket_manager.broadcast(
                 {"type": "task_failed", "task_id": task_id, "error": str(e)}
             )
-
-        logger.error(f"Task {task_id} failed: {e}")
+        logger.error("Task %s dispatch error: %s", task_id, e)
 
 
 # Execution mode endpoints
@@ -1115,7 +1332,7 @@ async def approve_proposal(
         )
 
     # Update task record
-    task_record["status"] = "queued"
+    task_record["status"] = TASK_QUEUED
     task_record["worker_id"] = approved_worker
     task_record["approved_at"] = datetime.now().isoformat()
     task_record["approved_by"] = approval.approver
@@ -1342,8 +1559,8 @@ async def get_stats():
     total_workers = len(workers)
     active_workers = len([w for w in workers.values() if w["status"] == "active"])
     total_tasks = len(tasks)
-    completed_tasks = len([t for t in tasks.values() if t["status"] == "completed"])
-    running_tasks = len([t for t in tasks.values() if t["status"] == "running"])
+    completed_tasks = len([t for t in tasks.values() if t["status"] == TASK_COMPLETED])
+    running_tasks = len([t for t in tasks.values() if t["status"] == TASK_RUNNING])
 
     return {
         "workers": {"total": total_workers, "active": active_workers},

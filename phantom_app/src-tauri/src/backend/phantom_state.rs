@@ -33,6 +33,8 @@ pub struct AppState {
     pub phase: Mutex<AppPhase>,
     pub phantom_root: PathBuf,
     pub controller_url: Mutex<String>,
+    /// Active offline bundle root for subsequent deploy / pre-scan (optional).
+    pub offline_bundle_path: Mutex<Option<PathBuf>>,
 }
 
 impl AppState {
@@ -44,6 +46,7 @@ impl AppState {
             phase: Mutex::new(AppPhase::FrontPorch),
             phantom_root,
             controller_url: Mutex::new("http://127.0.0.1:8080".to_string()),
+            offline_bundle_path: Mutex::new(None),
         }
     }
 

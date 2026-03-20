@@ -3,15 +3,13 @@ mod security;
 
 use backend::phantom_api::PhantomApiClient;
 use backend::phantom_deployer::{
-    PhantomDeployer,
-    DeploymentPreScanResult,
-    CompleteDeploymentRequest,
+    CompleteDeploymentRequest, DeploymentPreScanResult, PhantomDeployer,
 };
 use backend::phantom_state::{AppPhase, AppState, DeploymentProgress, PhantomMetrics};
 use security::audit_logger::AuditLogger;
 use security::identity_manager::IdentityManager;
 use security::tls_manager::TlsManager;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -20,6 +18,70 @@ pub struct ManagedState {
     identity: AsyncMutex<IdentityManager>,
     tls: AsyncMutex<TlsManager>,
     audit: AuditLogger,
+}
+
+/// Phase 4 — payload for ``save_phantom_tls_settings`` (camelCase from UI).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhantomTlsSettings {
+    pub wan_mode: bool,
+    pub tls_enabled: bool,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
+}
+
+/// Optional flags for deployment pre-scan (Phase 3 offline / air-gap).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentPreScanOptions {
+    #[serde(default)]
+    pub offline: Option<bool>,
+    #[serde(default)]
+    pub offline_bundle_path: Option<String>,
+}
+
+/// Resolve whether to use an offline bundle for deploy / pre-scan.
+async fn resolve_deploy_offline_bundle(
+    phantom_root: &PathBuf,
+    state: &ManagedState,
+    options: &Option<DeploymentPreScanOptions>,
+) -> Result<Option<PathBuf>, String> {
+    let invoke_path = options
+        .as_ref()
+        .and_then(|o| o.offline_bundle_path.clone());
+    let explicit = options.as_ref().and_then(|o| o.offline).unwrap_or(false);
+    let state_path = state
+        .app
+        .offline_bundle_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let candidate = backend::offline_bundle::resolve_offline_bundle_candidate(
+        phantom_root,
+        invoke_path,
+        state_path,
+    );
+    let network_ok = backend::offline_bundle::network_reachable_for_deploy().await;
+
+    // Online + not explicit → never force wheelhouse. No WAN or explicit `--offline` → require bundle.
+    let use_offline = explicit || !network_ok;
+    if !use_offline {
+        return Ok(None);
+    }
+
+    candidate
+        .ok_or_else(|| {
+            if explicit {
+                "Offline install requested but no valid bundle found (manifest.json missing). \
+                 Use install_offline_bundle, set PHANTOM_OFFLINE_BUNDLE, or place a bundle at ~/.phantom/offline_bundle."
+                    .to_string()
+            } else {
+                "Network unreachable and no offline bundle found. Provide a bundle with manifest.json."
+                    .to_string()
+            }
+        })
+        .map(Some)
 }
 
 // ── Phase 1: Identity ──────────────────────────────────────────────
@@ -117,6 +179,124 @@ async fn generate_certificate(
         .await
         .ok();
     serde_json::to_value(paths).map_err(|e| e.to_string())
+}
+
+/// Phase 4 — generate self-signed PEM (rcgen); optional ``common_name`` for SAN/CN.
+#[tauri::command]
+async fn generate_self_signed_cert(
+    state: tauri::State<'_, ManagedState>,
+    common_name: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let cn = common_name.unwrap_or_else(|| "phantom-controller.local".to_string());
+    let paths = {
+        let mgr = state.tls.lock().await;
+        mgr.generate_self_signed_cert(&cn).await?
+    };
+    state
+        .audit
+        .log_event(
+            "tls_self_signed_generated",
+            serde_json::json!({"cert": paths.cert.to_string_lossy()}),
+        )
+        .await
+        .ok();
+    serde_json::to_value(&paths).map_err(|e| e.to_string())
+}
+
+/// Phase 4 — copy PEM cert/key into local ``state/tls/`` (never uploaded).
+#[tauri::command]
+async fn import_tls_cert(
+    state: tauri::State<'_, ManagedState>,
+    cert_source: String,
+    key_source: String,
+) -> Result<serde_json::Value, String> {
+    let cert = PathBuf::from(&cert_source);
+    let key = PathBuf::from(&key_source);
+    security::tls_manager::validate_tls_cert_pem(&cert)?;
+    security::tls_manager::validate_tls_key_pem(&key)?;
+    let paths = {
+        let mgr = state.tls.lock().await;
+        mgr.import_tls_cert_pair(&cert, &key).await?
+    };
+    state
+        .audit
+        .log_event(
+            "tls_cert_imported",
+            serde_json::json!({"cert": paths.cert.to_string_lossy()}),
+        )
+        .await
+        .ok();
+    serde_json::to_value(&paths).map_err(|e| e.to_string())
+}
+
+/// Phase 4 — validate a PEM certificate file (local read only).
+#[tauri::command]
+fn validate_tls_cert(path: String) -> Result<serde_json::Value, String> {
+    security::tls_manager::validate_tls_cert_pem(Path::new(&path))?;
+    Ok(serde_json::json!({"ok": true, "path": path}))
+}
+
+/// Phase 4 — merge WAN/TLS fields into ``phantom_config.json`` (WAN requires TLS).
+#[tauri::command]
+async fn save_phantom_tls_settings(
+    state: tauri::State<'_, ManagedState>,
+    settings: PhantomTlsSettings,
+) -> Result<(), String> {
+    let PhantomTlsSettings {
+        wan_mode,
+        tls_enabled,
+        tls_cert_path,
+        tls_key_path,
+    } = settings;
+    if wan_mode && !tls_enabled {
+        return Err(
+            "WAN mode requires tls_enabled (encrypted controller API).".to_string(),
+        );
+    }
+    if tls_enabled && (tls_cert_path.is_empty() || tls_key_path.is_empty()) {
+        return Err(
+            "tls_cert_path and tls_key_path are required when tls_enabled is true.".to_string(),
+        );
+    }
+    if tls_enabled {
+        let cp = PathBuf::from(&tls_cert_path);
+        let kp = PathBuf::from(&tls_key_path);
+        if !cp.is_file() || !kp.is_file() {
+            return Err("tls_cert_path or tls_key_path does not exist on disk.".to_string());
+        }
+    }
+    let cfg_path = state.app.phantom_root.join("phantom_config.json");
+    if !cfg_path.is_file() {
+        return Err(
+            "phantom_config.json not found — complete deploy Step 4.5 first.".to_string(),
+        );
+    }
+    let raw = tokio::fs::read_to_string(&cfg_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    v["wan_mode"] = serde_json::json!(wan_mode);
+    v["tls_enabled"] = serde_json::json!(tls_enabled);
+    v["tls_cert_path"] = serde_json::json!(tls_cert_path);
+    v["tls_key_path"] = serde_json::json!(tls_key_path);
+    let body = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    let tmp = state.app.phantom_root.join("phantom_config.json.tls.tmp");
+    tokio::fs::write(&tmp, body)
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::fs::rename(&tmp, &cfg_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .audit
+        .log_event(
+            "phantom_tls_settings_saved",
+            serde_json::json!({ "wan_mode": wan_mode, "tls_enabled": tls_enabled }),
+        )
+        .await
+        .ok();
+    Ok(())
 }
 
 // ── Phase 3: Trust ─────────────────────────────────────────────────
@@ -321,6 +501,7 @@ async fn get_deployment_status(
 async fn run_deployment_pre_scan(
     app: tauri::AppHandle,
     state: tauri::State<'_, ManagedState>,
+    options: Option<DeploymentPreScanOptions>,
 ) -> Result<DeploymentPreScanResult, String> {
     {
         let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
@@ -335,7 +516,9 @@ async fn run_deployment_pre_scan(
 
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+    let offline_bundle = resolve_deploy_offline_bundle(&phantom_root, &state, &options).await?;
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()))
+        .with_offline_bundle(offline_bundle);
 
     let result = deployer.run_pre_scan_deployment().await?;
 
@@ -392,6 +575,7 @@ async fn complete_deployment_with_selection(
 async fn deploy_phantom(
     app: tauri::AppHandle,
     state: tauri::State<'_, ManagedState>,
+    options: Option<DeploymentPreScanOptions>,
 ) -> Result<(), String> {
     {
         let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
@@ -406,7 +590,9 @@ async fn deploy_phantom(
 
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+    let offline_bundle = resolve_deploy_offline_bundle(&phantom_root, &state, &options).await?;
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()))
+        .with_offline_bundle(offline_bundle);
     let steps = PhantomDeployer::steps();
     let total = steps.len();
 
@@ -517,6 +703,115 @@ async fn submit_task(
     serde_json::to_value(r).map_err(|e| e.to_string())
 }
 
+/// Remove Phantom services, firewall rules (Windows), and delete `~/.phantom` (or `%USERPROFILE%\.phantom`).
+#[tauri::command]
+async fn uninstall_phantom(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    let engine_source = find_engine_source(&app);
+    let phantom_root = state.app.phantom_root.clone();
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+
+    // Audit before removing ~/.phantom (audit log lives under that tree).
+    state
+        .audit
+        .log_event(
+            "phantom_uninstall_started",
+            serde_json::json!({ "phantom_root": phantom_root.to_string_lossy() }),
+        )
+        .await
+        .ok();
+
+    let summary = deployer.uninstall_deployment().await?;
+
+    {
+        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
+        *phase = AppPhase::FrontPorch;
+    }
+
+    Ok(summary)
+}
+
+/// Refresh bundled engine under `.phantom/engine` while preserving `phantom_config.json`, placement, `config/`, `state/`.
+#[tauri::command]
+async fn upgrade_phantom_deployment(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    let engine_source = find_engine_source(&app);
+    let phantom_root = state.app.phantom_root.clone();
+    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
+
+    let summary = deployer.upgrade_engine_preserve_state().await?;
+
+    state
+        .audit
+        .log_event("phantom_upgrade_complete", summary.clone())
+        .await
+        .ok();
+
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn verify_offline_bundle(path: String) -> Result<serde_json::Value, String> {
+    let root = PathBuf::from(path);
+    let report = backend::offline_bundle::verify_offline_bundle_root(&root).await?;
+    serde_json::to_value(&report).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn load_offline_model_catalogue(path: String) -> Result<serde_json::Value, String> {
+    let root = PathBuf::from(path);
+    backend::offline_bundle::load_offline_catalogue_value(&root).await
+}
+
+/// Verify bundle integrity, cache model catalogue under ``state/``, and pin bundle for deploy.
+#[tauri::command]
+async fn install_offline_bundle(
+    state: tauri::State<'_, ManagedState>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let root = PathBuf::from(path);
+    let report = backend::offline_bundle::verify_offline_bundle_root(&root).await?;
+    if !report.ok {
+        return Err(report.errors.join("; "));
+    }
+    let catalogue = backend::offline_bundle::load_offline_catalogue_value(&root).await?;
+    let phantom_root = state.app.phantom_root.clone();
+    let state_dir = phantom_root.join("state");
+    tokio::fs::create_dir_all(&state_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::fs::write(
+        state_dir.join("model_catalogue_offline.json"),
+        serde_json::to_string_pretty(&catalogue).map_err(|e| e.to_string())?,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    tokio::fs::write(
+        state_dir.join("pending_offline_bundle_path.txt"),
+        root.to_string_lossy().as_ref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    {
+        let mut g = state
+            .app
+            .offline_bundle_path
+            .lock()
+            .map_err(|e| e.to_string())?;
+        *g = Some(root.clone());
+    }
+    Ok(serde_json::json!({
+        "verified": true,
+        "checked_files": report.checked_files,
+        "bundle": root.to_string_lossy(),
+        "catalogue_cached": "state/model_catalogue_offline.json",
+    }))
+}
+
 #[tauri::command]
 async fn scan_and_register_workers(
     app: tauri::AppHandle,
@@ -586,6 +881,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_identity, sign_message, verify_signature, confirm_controller_placement,
             generate_certificate,
+            generate_self_signed_cert,
+            import_tls_cert,
+            validate_tls_cert,
+            save_phantom_tls_settings,
             get_trust_ledger, approve_peer, reject_peer,
             get_audit_log,
             set_execution_mode, load_llm_config,
@@ -594,8 +893,10 @@ pub fn run() {
             get_deployment_status,
             run_deployment_pre_scan, complete_deployment_with_selection,
             deploy_phantom,
+            verify_offline_bundle, load_offline_model_catalogue, install_offline_bundle,
             get_phantom_health, get_workers, get_stats,
             submit_task, scan_and_register_workers,
+            uninstall_phantom, upgrade_phantom_deployment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Phantom application");

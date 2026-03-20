@@ -1,4 +1,17 @@
 @echo off
+REM DEPRECATED: Canonical install is the Phantom Tauri app — see INSTALL.md.
+REM To force this legacy script: set PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1
+
+if not "%PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL%"=="1" (
+    echo ================================================================================
+    echo DEPRECATED: Phantom's canonical installer is the Phantom desktop app (Tauri).
+    echo   Build: cd phantom_app ^&^& npm install ^&^& npm run tauri build
+    echo   Docs: INSTALL.md at the repository root.
+    echo To run this legacy installer: set PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1
+    echo ================================================================================
+    exit /b 2
+)
+
 REM Professional installation wizard for Windows
 
 setlocal enabledelayedexpansion

@@ -25,8 +25,8 @@ Read the full philosophy: [PHANTOM_ETHOS.md](PHANTOM_ETHOS.md) | [PHANTOM_TEN_CO
 - **Distributed Task Processing** — Intelligent routing across heterogeneous GPU/CPU nodes
 - **LLM Task Master** — AI-powered task scheduling with AUTO, HYBRID, and MANUAL execution modes
 - **Swappable UI Framework** — Plug-and-play UI architecture with RedBlue Matrix as the default professional interface
-- **Enterprise Installer Suite** — Cross-platform GUI and CLI installers with wizard-level UX
-- **Bulletproof Uninstaller** — Complete system cleanup with process termination, port verification, and rollback
+- **Stone-Home Desktop App (Tauri)** — Canonical install, deploy, uninstall, and upgrade path for `~/.phantom` / `%USERPROFILE%\.phantom`
+- **Legacy installer suite** — Python/shell installers retained for CI and maintenance only (opt-in via environment variables)
 - **LAN-First / Privacy-First** — No cloud dependencies, no telemetry without consent, no external control
 - **Dual-License Model** — MIT for open-source use, commercial license for enterprise deployment
 
@@ -34,31 +34,18 @@ Read the full philosophy: [PHANTOM_ETHOS.md](PHANTOM_ETHOS.md) | [PHANTOM_TEN_CO
 
 ## Quick Start
 
-### Prerequisites
+### Supported path: Phantom app (Tauri)
 
-- Python 3.8+
-- Network ports 8765, 8082, 8080 available
-- Administrator/root privileges for service installation
+See **[INSTALL.md](INSTALL.md)** for prerequisites, `npm run tauri dev` / `tauri build`, uninstall (`uninstall_phantom`), and upgrade (`upgrade_phantom_deployment`).
 
-### Windows (GUI Installer)
+### Legacy scripts (CI / maintenance only)
 
-```cmd
-python installer\windows_gui_installer.py
-```
+`installer/*.py` and `package/install.*` are gated by default. To run them explicitly:
 
-### Windows (CLI)
+- `PHANTOM_ALLOW_LEGACY_INSTALLER=1` — Python installer entry points  
+- `PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1` — `package/install.sh` / `package/install.bat`
 
-```cmd
-package\install.bat
-```
-
-### Linux / macOS
-
-```bash
-sudo ./package/install.sh
-```
-
-For detailed instructions, see [INSTALLATION.md](INSTALLATION.md).
+Additional historical detail: [INSTALLATION.md](INSTALLATION.md).
 
 ---
 
@@ -71,8 +58,9 @@ phantom/
 │   ├── redblue_matrix/ # Default professional UI (Matrix-inspired cyberpunk aesthetic)
 │   ├── ui_framework/   # Swappable UI base classes and protocol adapters
 │   └── examples/       # Reference UI implementations (web, terminal)
-├── installer/          # Installation modules (process cleanup, port verification)
-├── package/            # Build scripts and cross-platform installers
+├── phantom_app/        # Stone-Home Tauri + React app (canonical install path)
+├── installer/          # Legacy Python installers (deprecated; opt-in env)
+├── package/            # Build scripts and legacy package installers (opt-in env)
 ├── docs/               # Architecture, UI framework, and audit documentation
 └── governance/         # Licensing, contributing, and commercial terms
 ```

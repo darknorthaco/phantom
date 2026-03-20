@@ -32,6 +32,10 @@ class StateManager:
         self._save(self._workers_file, workers)
 
     # -- tasks ----------------------------------------------------------
+    # Task records are keyed by task_id. Authoritative execution states are
+    # QUEUED, RUNNING, COMPLETED, FAILED (see phantom_core.task_ledger and
+    # controller/task_ledger.md). Optional fields include started_at,
+    # completed_at, failed_at, result, error, failure_reason.
 
     def load_tasks(self) -> Dict[str, Any]:
         return self._load(self._tasks_file)

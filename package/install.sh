@@ -1,5 +1,18 @@
 #!/bin/bash
 # Professional installation wizard for Linux
+#
+# DEPRECATED: Canonical install is the Phantom Tauri app (see INSTALL.md).
+# To force this legacy script: PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1 ./install.sh
+
+if [ "${PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL}" != "1" ]; then
+    echo "=================================================================================="
+    echo "DEPRECATED: Phantom's canonical installer is the Phantom desktop app (Tauri)."
+    echo "  Build from source: cd phantom_app && npm install && npm run tauri build"
+    echo "  Docs: INSTALL.md at the repository root."
+    echo "To run this legacy package installer: PHANTOM_ALLOW_LEGACY_PACKAGE_INSTALL=1 $0"
+    echo "=================================================================================="
+    exit 2
+fi
 
 set -e
 

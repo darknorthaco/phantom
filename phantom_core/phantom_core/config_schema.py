@@ -94,6 +94,11 @@ class ConfigSchema:
     config_version: str = CONFIG_VERSION
     written_at: str = ""
     written_by_step: str = "4.5"
+    # Phase 4 — WAN / TLS (explicit; LAN plaintext default unchanged)
+    wan_mode: bool = False
+    tls_enabled: bool = False
+    tls_cert_path: str = ""
+    tls_key_path: str = ""
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -108,6 +113,10 @@ class ConfigSchema:
             "config_version": self.config_version,
             "written_at": self.written_at,
             "written_by_step": self.written_by_step,
+            "wan_mode": self.wan_mode,
+            "tls_enabled": self.tls_enabled,
+            "tls_cert_path": self.tls_cert_path,
+            "tls_key_path": self.tls_key_path,
         }
 
     @classmethod
@@ -121,6 +130,10 @@ class ConfigSchema:
             config_version=d.get("config_version", CONFIG_VERSION),
             written_at=d.get("written_at", ""),
             written_by_step=d.get("written_by_step", "4.5"),
+            wan_mode=bool(d.get("wan_mode", False)),
+            tls_enabled=bool(d.get("tls_enabled", False)),
+            tls_cert_path=str(d.get("tls_cert_path", "") or ""),
+            tls_key_path=str(d.get("tls_key_path", "") or ""),
         )
 
     # ------------------------------------------------------------------
@@ -134,7 +147,7 @@ class ConfigSchema:
             ValueError: with a human-readable description of the first
                 failing constraint.
         """
-        valid_security = {"disabled", "basic", "full"}
+        valid_security = {"disabled", "basic", "full", "enhanced", "enterprise"}
         if self.controller.security not in valid_security:
             raise ValueError(
                 f"controller.security must be one of {valid_security!r}; "
@@ -164,6 +177,19 @@ class ConfigSchema:
             raise ValueError(
                 f"worker block is missing required keys: {missing_worker!r}"
             )
+
+        from llm_taskmaster.sovereign_compliance import validate_tls_policy
+
+        validate_tls_policy(
+            self.wan_mode,
+            self.tls_enabled,
+            self.tls_cert_path,
+            self.tls_key_path,
+        )
+        if self.tls_enabled:
+            from .tls_runtime import validate_tls_paths
+
+            validate_tls_paths(self.tls_cert_path, self.tls_key_path)
 
     # ------------------------------------------------------------------
     # File I/O helpers

@@ -12,6 +12,11 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
+_installer_dir = Path(__file__).resolve().parent
+if str(_installer_dir) not in sys.path:
+    sys.path.insert(0, str(_installer_dir))
+from legacy_installer_gate import exit_if_legacy_installer_disabled
+
 try:
     from PyQt6.QtWidgets import (
         QApplication, QWizard, QWizardPage, QLabel, QVBoxLayout,
@@ -587,6 +592,7 @@ class PhantomInstaller(QWizard):
 
 def main():
     """Main entry point"""
+    exit_if_legacy_installer_disabled()
     app = QApplication(sys.argv)
 
     # Set application properties

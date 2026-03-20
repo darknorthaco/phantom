@@ -38,6 +38,14 @@ export interface DeploymentPreScanResult {
   discoveredWorkers: DiscoveredWorker[];
   discoveryLog: DiscoveryLog;
   discoveryFailed: boolean;
+  /** Phase 3 — deploy used an offline bundle (no PyPI / no LAN discovery). */
+  offlineMode?: boolean;
+}
+
+/** Phase 3 — optional flags for run_deployment_pre_scan / deploy_phantom. */
+export interface DeploymentPreScanOptions {
+  offline?: boolean | null;
+  offlineBundlePath?: string | null;
 }
 
 export interface ControllerConfig {

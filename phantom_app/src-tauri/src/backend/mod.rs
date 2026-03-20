@@ -1,5 +1,6 @@
 pub mod discovery;
 pub mod discovery_log;
+pub mod offline_bundle;
 pub mod phantom_api;
 pub mod phantom_deployer;
 pub mod phantom_state;

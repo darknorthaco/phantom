@@ -28,6 +28,8 @@ _here = Path(__file__).parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
+from legacy_installer_gate import exit_if_legacy_installer_disabled
+
 try:
     import tkinter  # noqa: F401 — verify Tkinter is available before importing wizard
 except ModuleNotFoundError:
@@ -58,6 +60,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    exit_if_legacy_installer_disabled()
     args = _parse_args()
     resume_idx = None
 

@@ -15,6 +15,8 @@ installer_dir = Path(__file__).parent
 if str(installer_dir) not in sys.path:
     sys.path.insert(0, str(installer_dir))
 
+from legacy_installer_gate import exit_if_legacy_installer_disabled
+
 # Import after path setup
 from modules.venv_setup import VenvSetup
 
@@ -92,6 +94,8 @@ def verify_installation(install_dir: Path) -> bool:
 
 def main():
     """Main entry point for installer"""
+    exit_if_legacy_installer_disabled()
+
     import argparse
 
     parser = argparse.ArgumentParser(

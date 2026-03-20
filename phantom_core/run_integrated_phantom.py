@@ -150,11 +150,21 @@ async def start_llm_taskmaster(controller_host: str, socket_port: int):
 async def start_main_controller(host: str, port: int, reload: bool):
     """Start the main FastAPI controller"""
     try:
-        # Import and start the enhanced controller
-        from controller_api import app
+        import controller_api  # noqa: F401 — ensure app module loadable by uvicorn
+        from config_schema import locate_phantom_config
+        from tls_runtime import log_tls_state, uvicorn_ssl_kwargs
+
+        cfgp = locate_phantom_config()
+        log_tls_state(cfgp)
+        ssl_kw = uvicorn_ssl_kwargs(cfgp)
 
         config = uvicorn.Config(
-            "controller_api:app", host=host, port=port, reload=reload, log_level="info"
+            "controller_api:app",
+            host=host,
+            port=port,
+            reload=reload,
+            log_level="info",
+            **ssl_kw,
         )
 
         server = uvicorn.Server(config)

@@ -10,6 +10,11 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+_installer_dir = Path(__file__).resolve().parent
+if str(_installer_dir) not in sys.path:
+    sys.path.insert(0, str(_installer_dir))
+from legacy_installer_gate import exit_if_legacy_installer_disabled
+
 
 class WindowsInstaller:
     """Windows-specific installation logic"""
@@ -113,6 +118,7 @@ class WindowsInstaller:
 
 def main():
     """Main entry point for Windows-specific setup"""
+    exit_if_legacy_installer_disabled()
     if len(sys.argv) > 1:
         install_dir = Path(sys.argv[1])
     else:
