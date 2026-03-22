@@ -103,13 +103,13 @@ class PhantomOrchestrator:
 
         if _enable:
             try:
-                from phantom_core.adaptive_router import AdaptiveRouter
+                from phantom_core.adaptive_router import TaskTypeRouter
                 _state_dir = state_dir or os.getenv("PHANTOM_STATE_DIR")
-                self.adaptive_router = AdaptiveRouter(
+                self.adaptive_router = TaskTypeRouter(
                     state_dir=_state_dir,
                     discount=0.995,  # Slow decay — worker pool changes slowly
                 )
-                logger.info("Adaptive routing ENABLED (Thompson Sampling)")
+                logger.info("Adaptive routing ENABLED (per-task-type Thompson Sampling)")
             except Exception as e:
                 logger.warning("Failed to initialize adaptive router: %s", e)
 
@@ -272,13 +272,13 @@ class PhantomOrchestrator:
         # Select routing strategy (adaptive or fixed)
         strategy = None
         if self.adaptive_router:
-            strategy = self.adaptive_router.select_strategy()
+            strategy = self.adaptive_router.select_strategy(task.task_type)
 
         # Calculate scores for each worker
         worker_scores = {}
 
         for worker_id, worker in available_workers.items():
-            if strategy:
+            if strategy and self.adaptive_router:
                 score = self._score_worker_adaptive(task, worker, strategy)
             else:
                 score = await self.calculate_worker_score(task, worker)
@@ -293,6 +293,7 @@ class PhantomOrchestrator:
                 self._active_strategies[task.task_id] = strategy
                 self.adaptive_router.log_decision(
                     task_id=task.task_id,
+                    task_type=task.task_type,
                     strategy=strategy,
                     worker_id=best_worker[0],
                     worker_scores=worker_scores,
@@ -359,7 +360,7 @@ class PhantomOrchestrator:
     ) -> float:
         """Score a worker using the adaptive router's learned weights."""
         factors = self._compute_factor_scores(task, worker)
-        score = self.adaptive_router.score_worker(strategy, factors)
+        score = self.adaptive_router.score_worker(task.task_type, strategy, factors)
 
         logger.debug(
             "Worker %s adaptive score: strategy=%s, factors=%s, final=%.4f",
@@ -530,13 +531,13 @@ class PhantomOrchestrator:
             duration_seconds=duration,
         )
 
-        self.adaptive_router.update(strategy, reward)
-        self.adaptive_router.record_outcome(task.task_id, reward)
+        self.adaptive_router.update(task.task_type, strategy, reward)
+        self.adaptive_router.record_outcome(task.task_type, task.task_id, reward)
 
         logger.debug(
-            "Adaptive router updated: task=%s, strategy=%s, "
+            "Adaptive router updated: task=%s, type=%s, strategy=%s, "
             "success=%s, duration=%.1fs, reward=%.3f",
-            task.task_id, strategy, success, duration, reward,
+            task.task_id, task.task_type, strategy, success, duration, reward,
         )
 
     async def record_task_performance(self, task: Task, success: bool = True):

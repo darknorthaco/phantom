@@ -380,3 +380,141 @@ class AdaptiveRouter:
             }
             for d in reversed(recent)
         ]
+
+
+class TaskTypeRouter:
+    """Per-task-type adaptive routing.
+
+    Maintains a separate Thompson Sampling bandit for each task type
+    (ml_inference, training, data_processing, etc.). Each bandit learns
+    independently which routing strategy works best for its workload.
+
+    Falls back to a shared "default" bandit for unknown task types,
+    so new task types get reasonable routing from episode 1.
+
+    Usage:
+        router = TaskTypeRouter(state_dir="/var/lib/phantom/state")
+        strategy = router.select_strategy("ml_inference")
+        score = router.score_worker("ml_inference", strategy, factors)
+        router.update("ml_inference", strategy, reward=0.85)
+    """
+
+    def __init__(
+        self,
+        state_dir: Optional[str] = None,
+        presets: Optional[Dict[str, Dict[str, float]]] = None,
+        discount: Optional[float] = None,
+        seed: Optional[int] = None,
+    ):
+        self._state_dir = state_dir
+        self._presets = presets or ROUTING_PRESETS
+        self._discount = discount
+        self._seed = seed
+        self._routers: Dict[str, AdaptiveRouter] = {}
+        self._decisions: List[Dict] = []
+        self._max_decisions = 500
+
+        # Eagerly create the default fallback router
+        self._get_router("default")
+
+        logger.info("TaskTypeRouter initialized (per-task-type bandits)")
+
+    def _get_router(self, task_type: str) -> AdaptiveRouter:
+        """Get or create the bandit for a specific task type."""
+        if task_type not in self._routers:
+            # Each task type gets its own state file
+            type_state_dir = None
+            if self._state_dir:
+                type_dir = Path(self._state_dir) / "routing"
+                type_dir.mkdir(parents=True, exist_ok=True)
+                type_state_dir = str(type_dir)
+
+            # Derive a deterministic seed per task type for reproducibility
+            type_seed = None
+            if self._seed is not None:
+                type_seed = self._seed + hash(task_type) % (2**31)
+
+            router = AdaptiveRouter(
+                state_dir=type_state_dir,
+                presets=self._presets,
+                discount=self._discount,
+                seed=type_seed,
+            )
+            # Override the state filename to include the task type
+            if type_state_dir:
+                router._state_path = (
+                    Path(type_state_dir) / f"adaptive_router_{task_type}.json"
+                )
+                router._load_state()
+
+            self._routers[task_type] = router
+            logger.debug("Created bandit for task type '%s'", task_type)
+
+        return self._routers[task_type]
+
+    def select_strategy(self, task_type: str) -> str:
+        """Select a routing strategy for the given task type."""
+        router = self._get_router(task_type)
+        return router.select_strategy()
+
+    def score_worker(
+        self, task_type: str, strategy: str, factor_scores: Dict[str, float],
+    ) -> float:
+        """Score a worker using the task-type-specific bandit."""
+        router = self._get_router(task_type)
+        return router.score_worker(strategy, factor_scores)
+
+    def update(self, task_type: str, strategy: str, reward: float):
+        """Update the bandit for the given task type."""
+        router = self._get_router(task_type)
+        router.update(strategy, reward)
+
+    def log_decision(
+        self,
+        task_id: str,
+        task_type: str,
+        strategy: str,
+        worker_id: str,
+        worker_scores: Dict[str, float],
+    ):
+        """Record a routing decision across the multi-bandit system."""
+        router = self._get_router(task_type)
+        router.log_decision(task_id, strategy, worker_id, worker_scores)
+
+    def record_outcome(self, task_type: str, task_id: str, reward: float):
+        """Attach reward to a logged decision."""
+        router = self._get_router(task_type)
+        router.record_outcome(task_id, reward)
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Summary across all task-type bandits."""
+        total_pulls = 0
+        task_types = {}
+
+        for task_type, router in sorted(self._routers.items()):
+            summary = router.get_summary()
+            total_pulls += summary["total_pulls"]
+            task_types[task_type] = summary
+
+        return {
+            "total_pulls": total_pulls,
+            "task_types": task_types,
+            "active_task_types": len(self._routers),
+        }
+
+    def get_recent_decisions(self, limit: int = 20) -> List[Dict]:
+        """Aggregate recent decisions across all task-type bandits."""
+        all_decisions = []
+        for task_type, router in self._routers.items():
+            for d in router.decisions:
+                all_decisions.append({
+                    "task_id": d.task_id,
+                    "task_type": task_type,
+                    "strategy": d.strategy,
+                    "worker_id": d.worker_id,
+                    "reward": d.reward,
+                    "timestamp": d.timestamp,
+                })
+        # Sort by timestamp descending, take most recent
+        all_decisions.sort(key=lambda d: d["timestamp"], reverse=True)
+        return all_decisions[:limit]

@@ -1,5 +1,6 @@
 """Tests for the adaptive routing module (Thompson Sampling over routing strategies)."""
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -10,7 +11,16 @@ import pytest
 from phantom_core.adaptive_router import (
     AdaptiveRouter,
     ArmState,
+    TaskTypeRouter,
     ROUTING_PRESETS,
+)
+from phantom_core.orchestrator import (
+    PhantomOrchestrator,
+    GPUInfo,
+    WorkerInfo,
+    WorkerStatus,
+    Task,
+    TaskStatus,
 )
 
 
@@ -271,3 +281,229 @@ class TestSummary:
         summary = router.get_summary()
         means = [arm["mean"] for arm in summary["arms"]]
         assert means == sorted(means, reverse=True)
+
+
+# ── TaskTypeRouter Tests ───────────────────────────────────────────────
+
+
+class TestTaskTypeRouter:
+    def test_creates_separate_bandits_per_type(self):
+        router = TaskTypeRouter(seed=42)
+
+        router.select_strategy("ml_inference")
+        router.select_strategy("data_processing")
+        router.select_strategy("training")
+
+        assert "ml_inference" in router._routers
+        assert "data_processing" in router._routers
+        assert "training" in router._routers
+
+    def test_types_learn_independently(self):
+        router = TaskTypeRouter(seed=42)
+
+        # ml_inference: gpu_affinity is best
+        for _ in range(50):
+            router.update("ml_inference", "gpu_affinity", reward=0.9)
+            router.update("ml_inference", "balanced", reward=0.3)
+
+        # data_processing: load_balanced is best
+        for _ in range(50):
+            router.update("data_processing", "load_balanced", reward=0.9)
+            router.update("data_processing", "balanced", reward=0.3)
+
+        ml_summary = router._get_router("ml_inference").get_summary()
+        dp_summary = router._get_router("data_processing").get_summary()
+
+        assert ml_summary["best_strategy"] == "gpu_affinity"
+        assert dp_summary["best_strategy"] == "load_balanced"
+
+    def test_unknown_type_gets_own_bandit(self):
+        router = TaskTypeRouter(seed=42)
+        strategy = router.select_strategy("never_seen_before")
+        assert strategy in ROUTING_PRESETS
+        assert "never_seen_before" in router._routers
+
+    def test_summary_shows_all_types(self):
+        router = TaskTypeRouter(seed=42)
+        router.update("ml_inference", "balanced", reward=0.5)
+        router.update("training", "gpu_affinity", reward=0.8)
+
+        summary = router.get_summary()
+        assert summary["active_task_types"] >= 3  # default + 2 types
+        assert "ml_inference" in summary["task_types"]
+        assert "training" in summary["task_types"]
+
+    def test_persistence_per_type(self, tmp_path):
+        router1 = TaskTypeRouter(state_dir=str(tmp_path), seed=42)
+        router1.update("ml_inference", "gpu_affinity", reward=0.9)
+        router1.update("training", "load_balanced", reward=0.7)
+
+        # New router from same state dir
+        router2 = TaskTypeRouter(state_dir=str(tmp_path), seed=42)
+        # Force loading by accessing the task types
+        router2.select_strategy("ml_inference")
+        router2.select_strategy("training")
+
+        ml_arm = router2._get_router("ml_inference").arms["gpu_affinity"]
+        assert ml_arm.pulls == 1
+
+    def test_recent_decisions_aggregated(self):
+        router = TaskTypeRouter(seed=42)
+        router.log_decision("t1", "ml_inference", "balanced", "w1", {})
+        router.log_decision("t2", "training", "gpu_affinity", "w2", {})
+
+        recent = router.get_recent_decisions(10)
+        assert len(recent) == 2
+        task_types = {d["task_type"] for d in recent}
+        assert task_types == {"ml_inference", "training"}
+
+
+# ── Orchestrator Integration Tests ─────────────────────────────────────
+
+
+def _make_worker(worker_id, gpu_name, mem_total, mem_free, util=10.0):
+    """Helper to build a WorkerInfo with realistic GPU data."""
+    gpu = GPUInfo(
+        name=gpu_name,
+        memory_total=mem_total,
+        memory_free=mem_free,
+        compute_capability="9.0",
+        driver_version="560.0",
+        utilization=util,
+    )
+    return WorkerInfo(
+        worker_id=worker_id,
+        host="localhost",
+        port=8090,
+        gpu_info=gpu,
+        status=WorkerStatus.ACTIVE,
+        performance_score=1.0,
+    )
+
+
+class TestOrchestratorIntegration:
+    """Test the full cycle: submit → adaptive select → complete → bandit update."""
+
+    def test_adaptive_orchestrator_selects_worker(self):
+        """With adaptive routing on, select_optimal_worker uses the bandit."""
+        orch = PhantomOrchestrator(adaptive_routing=True)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000))
+        orch.register_worker(_make_worker("w2", "GTX 1080", 8000, 6000))
+
+        task = Task("t1", "ml_inference", {}, 5, TaskStatus.PENDING)
+
+        selected = asyncio.run(orch.select_optimal_worker(task))
+        assert selected in ("w1", "w2")
+        # Strategy should be tracked for this task
+        assert "t1" in orch._active_strategies
+
+    def test_completion_updates_bandit(self):
+        """Task completion feeds reward back to the bandit."""
+        orch = PhantomOrchestrator(adaptive_routing=True)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000))
+
+        task = Task("t1", "ml_inference", {}, 5, TaskStatus.PENDING)
+        # Register task with orchestrator so handle_task_completion can find it
+        orch.tasks[task.task_id] = task
+
+        # Select worker (sets up strategy tracking)
+        asyncio.run(orch.select_optimal_worker(task))
+        strategy_used = orch._active_strategies.get("t1")
+        assert strategy_used is not None
+
+        # Simulate task lifecycle
+        from datetime import datetime, timedelta
+        task.status = TaskStatus.RUNNING
+        task.worker_id = "w1"
+        task.started_at = datetime.now() - timedelta(seconds=30)
+
+        asyncio.run(orch.handle_task_completion("t1", {"output": "done"}))
+
+        # Strategy should be consumed
+        assert "t1" not in orch._active_strategies
+        # Bandit should have 1 pull on ml_inference
+        ml_router = orch.adaptive_router._get_router("ml_inference")
+        assert ml_router.arms[strategy_used].pulls == 1
+
+    def test_failure_gives_zero_reward(self):
+        """Task failure feeds reward=0.0 to the bandit."""
+        orch = PhantomOrchestrator(adaptive_routing=True)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000))
+
+        task = Task("t1", "training", {}, 5, TaskStatus.PENDING)
+        orch.tasks[task.task_id] = task
+
+        asyncio.run(orch.select_optimal_worker(task))
+        strategy_used = orch._active_strategies.get("t1")
+
+        from datetime import datetime, timedelta
+        task.status = TaskStatus.RUNNING
+        task.worker_id = "w1"
+        task.started_at = datetime.now() - timedelta(seconds=10)
+
+        asyncio.run(orch.handle_task_failure("t1", "OOM killed"))
+
+        training_router = orch.adaptive_router._get_router("training")
+        arm = training_router.arms[strategy_used]
+        assert arm.pulls == 1
+        assert arm.total_reward == 0.0  # Failure = 0 reward
+
+    def test_different_task_types_use_different_bandits(self):
+        """ml_inference and data_processing get separate bandits."""
+        orch = PhantomOrchestrator(adaptive_routing=True)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000))
+
+        for task_type in ("ml_inference", "data_processing", "training"):
+            task = Task(f"t_{task_type}", task_type, {}, 5, TaskStatus.PENDING)
+            asyncio.run(orch.select_optimal_worker(task))
+
+        summary = orch.adaptive_router.get_summary()
+        assert summary["active_task_types"] >= 3
+
+    def test_legacy_scoring_when_adaptive_off(self):
+        """Default orchestrator (no adaptive) uses legacy multiplicative scoring."""
+        orch = PhantomOrchestrator(adaptive_routing=False)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000))
+
+        task = Task("t1", "ml_inference", {}, 5, TaskStatus.PENDING)
+        selected = asyncio.run(orch.select_optimal_worker(task))
+
+        assert selected == "w1"
+        assert orch.adaptive_router is None
+        assert len(orch._active_strategies) == 0
+
+    def test_convergence_through_orchestrator(self):
+        """Over many tasks, the bandit converges to the best strategy.
+
+        Simulates a workload where gpu_affinity routing leads to faster
+        completions for ml_inference tasks.
+        """
+        orch = PhantomOrchestrator(adaptive_routing=True)
+        orch.register_worker(_make_worker("w1", "RTX 5080", 24000, 20000, util=10))
+        orch.register_worker(_make_worker("w2", "GTX 1080", 8000, 6000, util=50))
+
+        rng = np.random.default_rng(99)
+
+        from datetime import datetime, timedelta
+
+        for i in range(100):
+            task = Task(f"t{i}", "ml_inference", {}, 5, TaskStatus.PENDING)
+            orch.tasks[task.task_id] = task
+            selected = asyncio.run(orch.select_optimal_worker(task))
+            strategy = orch._active_strategies.get(f"t{i}")
+
+            # Simulate: gpu_affinity picks RTX 5080 → fast completion
+            # Other strategies sometimes pick GTX 1080 → slower
+            task.status = TaskStatus.RUNNING
+            task.worker_id = selected
+            if strategy == "gpu_affinity":
+                task.started_at = datetime.now() - timedelta(seconds=20 + rng.uniform(0, 10))
+            else:
+                task.started_at = datetime.now() - timedelta(seconds=50 + rng.uniform(0, 30))
+
+            asyncio.run(orch.handle_task_completion(f"t{i}", {}))
+
+        ml_router = orch.adaptive_router._get_router("ml_inference")
+        summary = ml_router.get_summary()
+        # gpu_affinity should have the highest mean (best strategy)
+        assert summary["best_strategy"] == "gpu_affinity"
