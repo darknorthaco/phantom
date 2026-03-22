@@ -32,7 +32,7 @@ try:
     from phantom_protocol_schemas import task_pb2, task_pb2_grpc
     from phantom_protocol.serializers.protobuf_serializer import ProtobufSerializer
     from phantom_protocol.transports.grpc_transport import GRPCTransport
-except ImportError:
+except (ImportError, RuntimeError):
     grpc_available = False
 
 requires_grpc = pytest.mark.skipif(

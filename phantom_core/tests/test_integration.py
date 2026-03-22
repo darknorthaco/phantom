@@ -86,7 +86,7 @@ class TestSocketIntegration(unittest.TestCase):
     """Unit tests for SocketManager using mock WebSocket objects."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def _make_socket_manager(self):
         from phantom_core.socket_integration import SocketManager
