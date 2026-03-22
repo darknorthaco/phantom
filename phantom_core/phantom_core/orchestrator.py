@@ -1,10 +1,15 @@
 """
 Phantom Distributed Orchestrator
-Enhanced version with intelligent task routing and GPU optimization
+Enhanced version with intelligent task routing and GPU optimization.
+
+Supports adaptive routing via Thompson Sampling when enabled.
+Set PHANTOM_ADAPTIVE_ROUTING=true to activate online learning
+over worker-selection strategies.
 """
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import httpx
@@ -71,9 +76,15 @@ class Task:
 
 
 class PhantomOrchestrator:
-    """Enhanced orchestrator with intelligent task routing and GPU optimization"""
+    """Enhanced orchestrator with intelligent task routing and GPU optimization.
 
-    def __init__(self):
+    When PHANTOM_ADAPTIVE_ROUTING=true (or adaptive_routing=True is passed),
+    the orchestrator uses Thompson Sampling to learn which worker-scoring
+    strategy produces the best task outcomes. Otherwise, falls back to the
+    original multiplicative scoring.
+    """
+
+    def __init__(self, adaptive_routing: Optional[bool] = None, state_dir: Optional[str] = None):
         self.workers: Dict[str, WorkerInfo] = {}
         self.tasks: Dict[str, Task] = {}
         self.task_queue: List[str] = []
@@ -82,6 +93,25 @@ class PhantomOrchestrator:
         # Performance tracking
         self.task_history: List[Dict] = []
         self.worker_performance: Dict[str, List[float]] = {}
+
+        # Adaptive routing (Thompson Sampling)
+        _enable = adaptive_routing if adaptive_routing is not None else (
+            os.getenv("PHANTOM_ADAPTIVE_ROUTING", "").lower() in ("true", "1", "yes")
+        )
+        self.adaptive_router = None
+        self._active_strategies: Dict[str, str] = {}  # task_id -> strategy_name
+
+        if _enable:
+            try:
+                from phantom_core.adaptive_router import AdaptiveRouter
+                _state_dir = state_dir or os.getenv("PHANTOM_STATE_DIR")
+                self.adaptive_router = AdaptiveRouter(
+                    state_dir=_state_dir,
+                    discount=0.995,  # Slow decay — worker pool changes slowly
+                )
+                logger.info("Adaptive routing ENABLED (Thompson Sampling)")
+            except Exception as e:
+                logger.warning("Failed to initialize adaptive router: %s", e)
 
         # GPU performance profiles — capability lookup table used to score
         # auto-discovered hardware. The orchestrator matches discovered GPU names
@@ -219,7 +249,12 @@ class PhantomOrchestrator:
                 self.task_queue.remove(task_id)
 
     async def select_optimal_worker(self, task: Task) -> Optional[str]:
-        """Select the optimal worker for a task using enhanced algorithms"""
+        """Select the optimal worker for a task.
+
+        When adaptive routing is enabled, Thompson Sampling selects the
+        scoring strategy and the router applies learned weights. Otherwise,
+        falls back to the original multiplicative scoring.
+        """
 
         # Filter available workers
         available_workers = {
@@ -234,71 +269,125 @@ class PhantomOrchestrator:
         if not available_workers:
             return None
 
+        # Select routing strategy (adaptive or fixed)
+        strategy = None
+        if self.adaptive_router:
+            strategy = self.adaptive_router.select_strategy()
+
         # Calculate scores for each worker
         worker_scores = {}
 
         for worker_id, worker in available_workers.items():
-            score = await self.calculate_worker_score(task, worker)
+            if strategy:
+                score = self._score_worker_adaptive(task, worker, strategy)
+            else:
+                score = await self.calculate_worker_score(task, worker)
             worker_scores[worker_id] = score
 
         # Select worker with highest score
         if worker_scores:
             best_worker = max(worker_scores.items(), key=lambda x: x[1])
+
+            # Log decision for the adaptive router
+            if strategy and self.adaptive_router:
+                self._active_strategies[task.task_id] = strategy
+                self.adaptive_router.log_decision(
+                    task_id=task.task_id,
+                    strategy=strategy,
+                    worker_id=best_worker[0],
+                    worker_scores=worker_scores,
+                )
+
             logger.debug(
-                f"Selected worker {best_worker[0]} with score {best_worker[1]:.2f} for task {task.task_id}"
+                "Selected worker %s with score %.2f for task %s%s",
+                best_worker[0], best_worker[1], task.task_id,
+                f" (strategy: {strategy})" if strategy else "",
             )
             return best_worker[0]
 
         return None
 
-    async def calculate_worker_score(self, task: Task, worker: WorkerInfo) -> float:
-        """Calculate a score for how suitable a worker is for a task"""
+    def _compute_factor_scores(self, task: Task, worker: WorkerInfo) -> Dict[str, float]:
+        """Compute normalized scoring factors for a worker.
 
-        # Base score from GPU performance profile
+        Returns a dict with keys {gpu, load, perf, memory, util}, each
+        a float typically in [0, 1]. Used by both adaptive and legacy scoring.
+        """
+        # GPU capability from profile
         gpu_name = worker.gpu_info.name
-        base_score = 1.0
+        gpu_score = 1.0
+        max_profile_score = 10.0  # Normalize against max possible
 
-        # Find matching GPU profile
         for profile_name, profile in self.gpu_profiles.items():
             if profile_name in gpu_name:
-                task_type_score = profile.get(task.task_type, 1.0)
-                base_score = task_type_score
+                gpu_score = profile.get(task.task_type, 1.0) / max_profile_score
                 break
+        else:
+            gpu_score = 1.0 / max_profile_score  # Unknown GPU gets baseline
 
-        # Adjust for current load
-        load_factor = 1.0 - (worker.current_tasks / worker.max_concurrent_tasks)
+        # Load factor
+        if worker.max_concurrent_tasks > 0:
+            load_score = 1.0 - (worker.current_tasks / worker.max_concurrent_tasks)
+        else:
+            load_score = 0.0
 
-        # Adjust for historical performance
-        performance_factor = worker.performance_score
+        # Historical performance
+        perf_score = min(1.0, worker.performance_score)
 
-        # Adjust for memory requirements
-        memory_factor = 1.0
+        # Memory availability
+        memory_score = 1.0
         if task.parameters.get("memory_required"):
             required_memory = task.parameters["memory_required"]
             if worker.gpu_info.memory_free < required_memory:
-                memory_factor = 0.1  # Heavily penalize insufficient memory
+                memory_score = 0.1
             else:
-                memory_factor = min(1.0, worker.gpu_info.memory_free / required_memory)
+                memory_score = min(1.0, worker.gpu_info.memory_free / required_memory)
 
-        # Adjust for GPU utilization
-        utilization_factor = 1.0 - (worker.gpu_info.utilization / 100.0)
+        # GPU utilization headroom
+        util_score = 1.0 - (worker.gpu_info.utilization / 100.0)
 
-        # Calculate final score
+        return {
+            "gpu": gpu_score,
+            "load": load_score,
+            "perf": perf_score,
+            "memory": memory_score,
+            "util": util_score,
+        }
+
+    def _score_worker_adaptive(
+        self, task: Task, worker: WorkerInfo, strategy: str,
+    ) -> float:
+        """Score a worker using the adaptive router's learned weights."""
+        factors = self._compute_factor_scores(task, worker)
+        score = self.adaptive_router.score_worker(strategy, factors)
+
+        logger.debug(
+            "Worker %s adaptive score: strategy=%s, factors=%s, final=%.4f",
+            worker.worker_id, strategy,
+            {k: f"{v:.2f}" for k, v in factors.items()}, score,
+        )
+        return score
+
+    async def calculate_worker_score(self, task: Task, worker: WorkerInfo) -> float:
+        """Legacy multiplicative scoring (used when adaptive routing is off)."""
+        factors = self._compute_factor_scores(task, worker)
+
+        # Original multiplicative formula (denormalize gpu back to raw scale)
+        base_score = factors["gpu"] * 10.0  # Reverse the normalization
         final_score = (
             base_score
-            * load_factor
-            * performance_factor
-            * memory_factor
-            * utilization_factor
+            * factors["load"]
+            * factors["perf"]
+            * factors["memory"]
+            * factors["util"]
         )
 
         logger.debug(
-            f"Worker {worker.worker_id} score: base={base_score:.2f}, "
-            f"load={load_factor:.2f}, perf={performance_factor:.2f}, "
-            f"mem={memory_factor:.2f}, util={utilization_factor:.2f}, "
-            f"final={final_score:.2f}"
+            "Worker %s legacy score: base=%.2f, load=%.2f, perf=%.2f, "
+            "mem=%.2f, util=%.2f, final=%.2f",
+            worker.worker_id, base_score, factors["load"], factors["perf"],
+            factors["memory"], factors["util"], final_score,
         )
-
         return final_score
 
     async def assign_task_to_worker(self, task: Task, worker_id: str):
@@ -385,7 +474,10 @@ class PhantomOrchestrator:
         # Record performance metrics
         await self.record_task_performance(task)
 
-        logger.info(f"✅ Task {task_id} completed successfully")
+        # Update adaptive router with success signal
+        self._update_adaptive_router(task, success=True)
+
+        logger.info(f"Task {task_id} completed successfully")
 
     async def handle_task_failure(self, task_id: str, error: str):
         """Handle task failure from worker"""
@@ -413,7 +505,39 @@ class PhantomOrchestrator:
         # Record performance metrics (negative impact)
         await self.record_task_performance(task, success=False)
 
-        logger.error(f"❌ Task {task_id} failed: {error}")
+        # Update adaptive router with failure signal
+        self._update_adaptive_router(task, success=False)
+
+        logger.error(f"Task {task_id} failed: {error}")
+
+    def _update_adaptive_router(self, task: Task, success: bool):
+        """Feed task outcome back to the adaptive router's bandit."""
+        if not self.adaptive_router:
+            return
+
+        strategy = self._active_strategies.pop(task.task_id, None)
+        if not strategy:
+            return
+
+        # Compute duration
+        duration = 60.0  # default baseline
+        if task.started_at and task.completed_at:
+            duration = (task.completed_at - task.started_at).total_seconds()
+
+        from phantom_core.adaptive_router import AdaptiveRouter
+        reward = AdaptiveRouter.compute_reward(
+            success=success,
+            duration_seconds=duration,
+        )
+
+        self.adaptive_router.update(strategy, reward)
+        self.adaptive_router.record_outcome(task.task_id, reward)
+
+        logger.debug(
+            "Adaptive router updated: task=%s, strategy=%s, "
+            "success=%s, duration=%.1fs, reward=%.3f",
+            task.task_id, strategy, success, duration, reward,
+        )
 
     async def record_task_performance(self, task: Task, success: bool = True):
         """Record task performance metrics"""

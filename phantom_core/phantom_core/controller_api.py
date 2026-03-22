@@ -1574,7 +1574,29 @@ async def get_stats():
             "security_framework": security_manager is not None,
             "execution_mode": execution_mode.value,
             "queue_paused": queue_paused,
+            "adaptive_routing": orchestrator is not None
+            and getattr(orchestrator, "adaptive_router", None) is not None,
         },
+    }
+
+
+@app.get("/routing/stats")
+async def get_routing_stats():
+    """Get adaptive routing statistics (Thompson Sampling bandit state).
+
+    Returns the current posterior estimates for each routing strategy,
+    including which strategy the system has learned works best.
+    """
+    if not orchestrator or not getattr(orchestrator, "adaptive_router", None):
+        return {
+            "enabled": False,
+            "message": "Adaptive routing not enabled. Set PHANTOM_ADAPTIVE_ROUTING=true.",
+        }
+
+    return {
+        "enabled": True,
+        "summary": orchestrator.adaptive_router.get_summary(),
+        "recent_decisions": orchestrator.adaptive_router.get_recent_decisions(20),
     }
 
 
