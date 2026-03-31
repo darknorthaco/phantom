@@ -47,7 +47,29 @@ python installer/offline_bundle.py verify --bundle ./dist/phantom_offline_bundle
    - Log **`PHANTOM OFFLINE MODE ENABLED`**
 4. Complete the ceremony and **`complete_deployment_with_selection`** as usual.
 
-**Trust note:** The offline synthetic `local-worker` row may carry an empty `public_key_b64` until real worker keys are wired; `approve_worker` may log warnings. Prefer registering workers with valid keys when policy requires §5 trust records.
+**Trust note:** The offline synthetic `local-worker` row may carry an empty `public_key_b64` until real worker keys are wired; `approve_worker` may log warnings. Prefer registering workers with valid keys when policy requires explicit trust records (TrustRecord approved).
+
+## After install: discovery telemetry and Workers panel
+
+| Path | Meaning |
+|------|---------|
+| Deploy with a bundle | UDP LAN discovery is **not** run; the UI receives one **synthetic** `local-worker` row (`discovery_mode: offline_synthetic` in the discovery log). The ceremony **pre-selects** that row so you can continue without a verified signature. |
+| `state/offline_install.json` | Written after a successful offline pre-scan. Marks the profile as offline/air-gap. **`scan_and_register_workers` (Workers panel “Scan LAN”)** skips UDP discovery and returns `lanScanSkipped` with an explanatory reason — this is intentional, not a silent failure. |
+| `workers_panel_lan_udp` | Field in `offline_install.json` (currently `false`): documents that LAN UDP from the Workers panel is disabled while the marker exists. Delete `offline_install.json` only if you deliberately want LAN scans from this machine again. |
+
+Online deploys use **`discovery_mode: lan_udp`** and only pre-select workers whose manifests have **verified** signatures.
+
+## Platform behavior (Windows / Linux / macOS)
+
+| Area | Linux | Windows | macOS |
+|------|-------|---------|-------|
+| **Local worker (deploy step)** | `engine/linux-worker` via venv Python | `engine/windows-worker` | Same **linux-worker** tree as Linux (Unix venv); GPU naming may differ; readiness UDP probe runs like Linux |
+| **GPU pre-check (deploy)** | NVIDIA probe | Windows GPU probe | Logged skip — worker still probes at runtime |
+| **Service install (deploy)** | User systemd unit | `sc`/NSSM path | Skipped — use app or your own **launchctl** plist |
+| **Firewall (deploy)** | ufw / iptables attempt | `netsh` rules | **No auto rules** — open controller / worker TCP and discovery UDP in **System Settings** (or **pf**) using ports from `phantom_config.json` |
+| **Uninstall / stop services** | systemctl user unit | `sc stop` + rule cleanup | No bundled service — stop processes manually |
+
+Other Unix-like OS builds skip the bundled local worker and log a **scan-log** line; use LAN discovery for workers.
 
 Explicit flags (frontend / invoke payload):
 

@@ -3,9 +3,9 @@ mod security;
 
 use backend::phantom_api::PhantomApiClient;
 use backend::phantom_deployer::{
-    CompleteDeploymentRequest, DeploymentPreScanResult, PhantomDeployer,
+    CompleteDeploymentRequest, DeploymentPreScanResult, PhantomDeployer, WorkerRegistrationSummary,
 };
-use backend::phantom_state::{AppPhase, AppState, DeploymentProgress, PhantomMetrics};
+use backend::phantom_state::{AppPhase, AppState, DeployFailureInfo, DeploymentProgress, PhantomMetrics};
 use security::audit_logger::AuditLogger;
 use security::identity_manager::IdentityManager;
 use security::tls_manager::TlsManager;
@@ -18,6 +18,41 @@ pub struct ManagedState {
     identity: AsyncMutex<IdentityManager>,
     tls: AsyncMutex<TlsManager>,
     audit: AuditLogger,
+}
+
+fn emit_deploy_failed(
+    app: &tauri::AppHandle,
+    message: String,
+    step_index: Option<usize>,
+    step_label: Option<String>,
+) {
+    let payload = DeployFailureInfo {
+        message,
+        step_index,
+        step_label,
+    };
+    let _ = app.emit("deploy-failed", &payload);
+}
+
+/// Refresh ``controller_url`` from ``phantom_config.json`` (scheme, host, port, ``tls_enabled``).
+fn sync_controller_url_mutex(app: &AppState) {
+    let cfg = app.phantom_root.join("phantom_config.json");
+    if let Ok((url, _)) = PhantomApiClient::controller_base_url_from_config(&cfg) {
+        if let Ok(mut g) = app.controller_url.lock() {
+            *g = url;
+        }
+    }
+}
+
+/// Controller API client: reads ``phantom_config.json`` when present (scheme, port, TLS);
+/// otherwise uses the mutex default URL (pre-bootstrap).
+fn phantom_api_for_app(app: &AppState) -> PhantomApiClient {
+    let fallback = app
+        .controller_url
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    PhantomApiClient::from_phantom_root_or_fallback(&app.phantom_root, &fallback)
 }
 
 /// Phase 4 — payload for ``save_phantom_tls_settings`` (camelCase from UI).
@@ -94,9 +129,8 @@ async fn get_identity(state: tauri::State<'_, ManagedState>) -> Result<serde_jso
     };
     state
         .audit
-        .log_event("identity_loaded", serde_json::to_value(&info).unwrap())
-        .await
-        .ok();
+        .log_event_best_effort("identity_loaded", serde_json::to_value(&info).unwrap())
+        .await;
     serde_json::to_value(info).map_err(|e| e.to_string())
 }
 
@@ -151,12 +185,11 @@ async fn confirm_controller_placement(
         .map_err(|e| format!("Failed to persist controller_placement.json: {e}"))?;
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "controller_placement_confirmed",
             serde_json::json!({"host": host, "port": port}),
         )
-        .await
-        .ok();
+        .await;
     Ok(())
 }
 
@@ -172,12 +205,11 @@ async fn generate_certificate(
     };
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "tls_cert_generated",
             serde_json::json!({"cert": paths.cert.to_string_lossy()}),
         )
-        .await
-        .ok();
+        .await;
     serde_json::to_value(paths).map_err(|e| e.to_string())
 }
 
@@ -194,12 +226,11 @@ async fn generate_self_signed_cert(
     };
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "tls_self_signed_generated",
             serde_json::json!({"cert": paths.cert.to_string_lossy()}),
         )
-        .await
-        .ok();
+        .await;
     serde_json::to_value(&paths).map_err(|e| e.to_string())
 }
 
@@ -220,12 +251,11 @@ async fn import_tls_cert(
     };
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "tls_cert_imported",
             serde_json::json!({"cert": paths.cert.to_string_lossy()}),
         )
-        .await
-        .ok();
+        .await;
     serde_json::to_value(&paths).map_err(|e| e.to_string())
 }
 
@@ -288,14 +318,16 @@ async fn save_phantom_tls_settings(
     tokio::fs::rename(&tmp, &cfg_path)
         .await
         .map_err(|e| e.to_string())?;
+
+    sync_controller_url_mutex(&state.app);
+
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "phantom_tls_settings_saved",
             serde_json::json!({ "wan_mode": wan_mode, "tls_enabled": tls_enabled }),
         )
-        .await
-        .ok();
+        .await;
     Ok(())
 }
 
@@ -327,9 +359,8 @@ async fn approve_peer(
     }
     state
         .audit
-        .log_event("trust_approved", serde_json::json!({"peer_id": peer_id}))
-        .await
-        .ok();
+        .log_event_best_effort("trust_approved", serde_json::json!({"peer_id": peer_id}))
+        .await;
     Ok(())
 }
 
@@ -345,9 +376,8 @@ async fn reject_peer(
     }
     state
         .audit
-        .log_event("trust_rejected", serde_json::json!({"peer_id": peer_id}))
-        .await
-        .ok();
+        .log_event_best_effort("trust_rejected", serde_json::json!({"peer_id": peer_id}))
+        .await;
     Ok(())
 }
 
@@ -365,29 +395,42 @@ async fn get_audit_log(
 // ── Phase 5: Execution modes ───────────────────────────────────────
 
 #[tauri::command]
+async fn get_execution_mode(state: tauri::State<'_, ManagedState>) -> Result<serde_json::Value, String> {
+    let client = phantom_api_for_app(&state.app);
+    client.get_execution_mode().await
+}
+
+#[tauri::command]
+async fn get_controller_base_url(state: tauri::State<'_, ManagedState>) -> Result<String, String> {
+    let g = state
+        .app
+        .controller_url
+        .lock()
+        .map_err(|e| e.to_string())?;
+    Ok((*g).clone())
+}
+
+#[tauri::command]
+async fn get_task_status(
+    state: tauri::State<'_, ManagedState>,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    let client = phantom_api_for_app(&state.app);
+    client.get_task(&task_id).await
+}
+
+#[tauri::command]
 async fn set_execution_mode(
     state: tauri::State<'_, ManagedState>,
     mode: String,
 ) -> Result<serde_json::Value, String> {
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{url}/mode"))
-        .json(&serde_json::json!({"mode": mode}))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to set mode: {e}"))?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Parse error: {e}"))?;
+    let client = phantom_api_for_app(&state.app);
+    let resp = client.post_execution_mode(mode.clone()).await?;
 
     state
         .audit
-        .log_event("mode_changed", serde_json::json!({"mode": mode}))
-        .await
-        .ok();
+        .log_event_best_effort("mode_changed", serde_json::json!({"mode": mode}))
+        .await;
 
     Ok(resp)
 }
@@ -406,7 +449,14 @@ async fn load_llm_config(
             "confidence_threshold": 0.85
         });
         let data = serde_json::to_string_pretty(&default).map_err(|e| e.to_string())?;
-        tokio::fs::create_dir_all(&state.app.phantom_root).await.ok();
+        if let Err(e) = tokio::fs::create_dir_all(&state.app.phantom_root).await {
+            log::warn!(
+                target: "phantom_app",
+                "create_dir_all phantom_root failed path={} error={}",
+                state.app.phantom_root.display(),
+                e
+            );
+        }
         tokio::fs::write(&config_path, data)
             .await
             .map_err(|e| format!("Failed to write llm_config.json: {e}"))?;
@@ -438,10 +488,7 @@ async fn get_system_metrics(
     };
 
     // Worker count and active tasks from the live controller health endpoint
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = PhantomApiClient::new(&url);
+    let client = phantom_api_for_app(&state.app);
 
     let (workers_count, active_tasks) = match client.health().await {
         Ok(h) => (h.workers_count, h.active_tasks),
@@ -471,9 +518,8 @@ async fn check_integrity(
 
     state
         .audit
-        .log_event("integrity_check", serde_json::to_value(&result).unwrap())
-        .await
-        .ok();
+        .log_event_best_effort("integrity_check", serde_json::to_value(&result).unwrap())
+        .await;
 
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
@@ -510,9 +556,8 @@ async fn run_deployment_pre_scan(
 
     state
         .audit
-        .log_event("deployment_pre_scan_started", serde_json::json!({}))
-        .await
-        .ok();
+        .log_event_best_effort("deployment_pre_scan_started", serde_json::json!({}))
+        .await;
 
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
@@ -520,7 +565,33 @@ async fn run_deployment_pre_scan(
     let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()))
         .with_offline_bundle(offline_bundle);
 
-    let result = deployer.run_pre_scan_deployment().await?;
+    let result = match deployer.run_pre_scan_deployment().await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("deployment pre-scan failed: {e}");
+            emit_deploy_failed(
+                &app,
+                e.clone(),
+                None,
+                Some("Deployment pre-scan".to_string()),
+            );
+            {
+                let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
+                *phase = AppPhase::FrontPorch;
+            }
+            return Err(e);
+        }
+    };
+
+    sync_controller_url_mutex(&state.app);
+
+    log::info!(
+        target: "phantom_deploy",
+        "deployment_pre_scan_ok discovery_failed={} workers={} offline_mode={}",
+        result.discovery_failed,
+        result.discovered_workers.len(),
+        result.offline_mode
+    );
 
     let _ = app.emit("deploy-discovery-result", &result);
 
@@ -533,17 +604,30 @@ async fn complete_deployment_with_selection(
     app: tauri::AppHandle,
     state: tauri::State<'_, ManagedState>,
     request: CompleteDeploymentRequest,
-) -> Result<(), String> {
+) -> Result<WorkerRegistrationSummary, String> {
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
     let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
 
-    deployer
+    let summary = match deployer
         .complete_deployment_with_selection(
             request.worker_pool,
             request.run_controller_llm,
         )
-        .await?;
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("complete_deployment_with_selection failed: {e}");
+            emit_deploy_failed(
+                &app,
+                e.clone(),
+                None,
+                Some("Registration & finalize deployment".to_string()),
+            );
+            return Err(e);
+        }
+    };
 
     let steps = PhantomDeployer::steps();
     let total = steps.len();
@@ -559,16 +643,36 @@ async fn complete_deployment_with_selection(
 
     state
         .audit
-        .log_event("deployment_complete", serde_json::json!({}))
-        .await
-        .ok();
+        .log_event_best_effort(
+            "deployment_complete",
+            serde_json::json!({
+                "selectedCount": summary.selected_count,
+                "trustFailedCount": summary.trust_failed_count,
+                "registeredCount": summary.registered_count,
+                "registrationFailedCount": summary.registration_failed_count,
+                "poolFullyRegistered": summary.pool_fully_registered(),
+            }),
+        )
+        .await;
+
+    log::info!(
+        target: "phantom_deploy",
+        "ceremony_registration_ok selected={} registered={} trust_failed={} registration_failed={} pool_complete={}",
+        summary.selected_count,
+        summary.registered_count,
+        summary.trust_failed_count,
+        summary.registration_failed_count,
+        summary.pool_fully_registered()
+    );
 
     {
         let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
         *phase = AppPhase::Deployed;
     }
 
-    Ok(())
+    sync_controller_url_mutex(&state.app);
+
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -584,9 +688,8 @@ async fn deploy_phantom(
 
     state
         .audit
-        .log_event("deployment_started", serde_json::json!({}))
-        .await
-        .ok();
+        .log_event_best_effort("deployment_started", serde_json::json!({}))
+        .await;
 
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
@@ -607,23 +710,32 @@ async fn deploy_phantom(
 
         state
             .audit
-            .log_event(
+            .log_event_best_effort(
                 "deployment_step",
                 serde_json::json!({"step": i, "label": label}),
             )
-            .await
-            .ok();
+            .await;
 
         if let Err(e) = deployer.run_step(i).await {
-            log::warn!("Step {} ({}) failed: {}", i, label, e);
+            log::error!("Step {} ({}) failed: {}", i, label, e);
             state
                 .audit
-                .log_event(
+                .log_event_best_effort(
                     "deployment_step_failed",
-                    serde_json::json!({"step": i, "error": e}),
+                    serde_json::json!({"step": i, "label": label, "error": &e}),
                 )
-                .await
-                .ok();
+                .await;
+            emit_deploy_failed(
+                &app,
+                e.clone(),
+                Some(i),
+                Some((*label).to_string()),
+            );
+            {
+                let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
+                *phase = AppPhase::FrontPorch;
+            }
+            return Err(e);
         }
     }
 
@@ -637,14 +749,21 @@ async fn deploy_phantom(
 
     state
         .audit
-        .log_event("deployment_complete", serde_json::json!({}))
-        .await
-        .ok();
+        .log_event_best_effort("deployment_complete", serde_json::json!({}))
+        .await;
 
     {
         let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
         *phase = AppPhase::Deployed;
     }
+
+    sync_controller_url_mutex(&state.app);
+
+    log::info!(
+        target: "phantom_deploy",
+        "deploy_phantom_all_steps_ok total_steps={}",
+        total
+    );
 
     Ok(())
 }
@@ -653,10 +772,7 @@ async fn deploy_phantom(
 async fn get_phantom_health(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<serde_json::Value, String> {
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = PhantomApiClient::new(&url);
+    let client = phantom_api_for_app(&state.app);
     let health = client.health().await?;
     serde_json::to_value(health).map_err(|e| e.to_string())
 }
@@ -665,10 +781,7 @@ async fn get_phantom_health(
 async fn get_workers(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<serde_json::Value, String> {
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = PhantomApiClient::new(&url);
+    let client = phantom_api_for_app(&state.app);
     let w = client.list_workers().await?;
     serde_json::to_value(w).map_err(|e| e.to_string())
 }
@@ -677,10 +790,7 @@ async fn get_workers(
 async fn get_stats(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<serde_json::Value, String> {
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = PhantomApiClient::new(&url);
+    let client = phantom_api_for_app(&state.app);
     let s = client.get_stats().await?;
     serde_json::to_value(s).map_err(|e| e.to_string())
 }
@@ -692,10 +802,7 @@ async fn submit_task(
     parameters: serde_json::Value,
     priority: u32,
 ) -> Result<serde_json::Value, String> {
-    let url = {
-        state.app.controller_url.lock().map_err(|e| e.to_string())?.clone()
-    };
-    let client = PhantomApiClient::new(&url);
+    let client = phantom_api_for_app(&state.app);
     let task = backend::phantom_api::TaskSubmission {
         task_type, parameters, priority, target_worker: None,
     };
@@ -716,12 +823,11 @@ async fn uninstall_phantom(
     // Audit before removing ~/.phantom (audit log lives under that tree).
     state
         .audit
-        .log_event(
+        .log_event_best_effort(
             "phantom_uninstall_started",
             serde_json::json!({ "phantom_root": phantom_root.to_string_lossy() }),
         )
-        .await
-        .ok();
+        .await;
 
     let summary = deployer.uninstall_deployment().await?;
 
@@ -747,9 +853,8 @@ async fn upgrade_phantom_deployment(
 
     state
         .audit
-        .log_event("phantom_upgrade_complete", summary.clone())
-        .await
-        .ok();
+        .log_event_best_effort("phantom_upgrade_complete", summary.clone())
+        .await;
 
     Ok(summary)
 }
@@ -818,18 +923,81 @@ async fn scan_and_register_workers(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<backend::phantom_deployer::ScanResult, String> {
     let phantom_root = state.app.phantom_root.clone();
-    let url = state
+    backend::phantom_deployer::scan_and_register_workers(&phantom_root, Some(app)).await
+}
+
+/// Phase 4 — deterministic pre-deploy checklist (placement, engine, venv, TLS, optional /health).
+#[tauri::command]
+async fn run_pre_deploy_validation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<backend::pre_deploy_validator::PreDeployReport, String> {
+    let phantom_root = state.app.phantom_root.clone();
+    let engine_source = find_engine_source(&app);
+    let bundle = state
         .app
-        .controller_url
+        .offline_bundle_path
         .lock()
         .map_err(|e| e.to_string())?
         .clone();
-    backend::phantom_deployer::scan_and_register_workers(
+
+    let report = backend::pre_deploy_validator::validate_pre_deploy(
         &phantom_root,
-        &url,
-        Some(app),
+        &engine_source,
+        bundle.as_deref(),
     )
-    .await
+    .await;
+
+    let failed_checks: Vec<serde_json::Value> = report
+        .checks
+        .iter()
+        .filter(|c| c.status == "fail")
+        .map(|c| {
+            serde_json::json!({
+                "id": &c.id,
+                "name": &c.name,
+                "detail": &c.detail,
+            })
+        })
+        .collect();
+    let warn_checks: Vec<serde_json::Value> = report
+        .checks
+        .iter()
+        .filter(|c| c.status == "warn")
+        .map(|c| {
+            serde_json::json!({
+                "id": &c.id,
+                "name": &c.name,
+                "detail": &c.detail,
+            })
+        })
+        .collect();
+
+    state
+        .audit
+        .log_event_best_effort(
+            "pre_deploy_validation",
+            serde_json::json!({
+                "ok": report.ok,
+                "failCount": failed_checks.len(),
+                "warnCount": warn_checks.len(),
+                "failedChecks": failed_checks,
+                "warnChecks": warn_checks,
+                "phantomRoot": report.phantom_root,
+                "engineSource": report.engine_source,
+            }),
+        )
+        .await;
+
+    log::info!(
+        target: "phantom_deploy",
+        "pre_deploy_validation_ran ok={} fail_count={} warn_count={}",
+        report.ok,
+        failed_checks.len(),
+        warn_checks.len()
+    );
+
+    Ok(report)
 }
 
 fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
@@ -887,11 +1055,13 @@ pub fn run() {
             save_phantom_tls_settings,
             get_trust_ledger, approve_peer, reject_peer,
             get_audit_log,
+            get_execution_mode, get_controller_base_url, get_task_status,
             set_execution_mode, load_llm_config,
             get_system_metrics,
             check_integrity,
             get_deployment_status,
             run_deployment_pre_scan, complete_deployment_with_selection,
+            run_pre_deploy_validation,
             deploy_phantom,
             verify_offline_bundle, load_offline_model_catalogue, install_offline_bundle,
             get_phantom_health, get_workers, get_stats,

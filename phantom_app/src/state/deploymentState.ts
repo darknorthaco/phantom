@@ -32,6 +32,8 @@ export interface DiscoveryLog {
   readinessProbeAttempts: number;
   readinessProbeSuccess: boolean;
   diagnosticHints: string[];
+  /** ``lan_udp`` | ``offline_synthetic`` — set by deploy backend. */
+  discoveryMode?: string | null;
 }
 
 export interface DeploymentPreScanResult {
@@ -64,12 +66,83 @@ export interface WorkerSelectionForRegistration {
   publicKeyB64?: string;
 }
 
+/** Returned after ceremony registration (trust approve + register). */
+export interface WorkerRegistrationSummary {
+  selectedCount: number;
+  trustFailedCount: number;
+  registeredCount: number;
+  registrationFailedCount: number;
+}
+
+export function poolFullyRegistered(summary: WorkerRegistrationSummary): boolean {
+  return summary.selectedCount > 0 && summary.registeredCount === summary.selectedCount;
+}
+
+/** Phase 4 — `run_pre_deploy_validation` checklist item. */
+export interface PreDeployCheck {
+  id: string;
+  name: string;
+  status: 'pass' | 'fail' | 'warn' | 'skip' | string;
+  detail: string;
+}
+
+export interface PreDeployReport {
+  ok: boolean;
+  checks: PreDeployCheck[];
+  phantomRoot: string;
+  engineSource: string;
+}
+
+/** Backend ``deploy-failed`` event + invoke error context (deploy / registration). */
+export interface DeployFailureInfo {
+  message: string;
+  stepIndex?: number | null;
+  stepLabel?: string | null;
+}
+
+export function tauriInvokeErrorMessage(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const o = err as Record<string, unknown>;
+    if (typeof o.message === 'string') return o.message;
+    if (typeof o.error === 'string') return o.error;
+  }
+  return String(err);
+}
+
+const checkRank = (status: string): number => {
+  if (status === 'fail') return 0;
+  if (status === 'warn') return 1;
+  if (status === 'skip') return 2;
+  return 3;
+};
+
+/** Fail and warn first so operators see blockers without scrolling. */
+export function sortPreDeployChecksForDisplay(checks: PreDeployCheck[]): PreDeployCheck[] {
+  return [...checks].sort((a, b) => checkRank(a.status) - checkRank(b.status));
+}
+
+/** Manual LAN scan + register (Workers panel). */
+export interface LanScanRegistrationResult {
+  scanned: number;
+  registered: number;
+  registrationFailed: number;
+  partialRegistration: boolean;
+  /** Present when ``state/offline_install.json`` blocks Workers-panel LAN discovery. */
+  lanScanSkipped?: boolean;
+  lanScanSkipReason?: string | null;
+  nodes: Array<[string, number]>;
+}
+
 // ── Ceremony State ─────────────────────────────────────────────────────
 
 export interface DeploymentCeremonyState {
   discoveredWorkers: DiscoveredWorker[];
   discoveryLog: DiscoveryLog | null;
   discoveryFailed: boolean;
+  /** Deploy used an offline bundle (synthetic worker, no UDP discovery). */
+  offlineDeploy: boolean;
   controllerConfig: ControllerConfig | null;
   workerPool: DiscoveredWorker[];
 }
@@ -78,6 +151,7 @@ export const initialDeploymentCeremonyState: DeploymentCeremonyState = {
   discoveredWorkers: [],
   discoveryLog: null,
   discoveryFailed: false,
+  offlineDeploy: false,
   controllerConfig: null,
   workerPool: [],
 };
@@ -107,15 +181,19 @@ export function discoveryLogToSanitizedString(log: DiscoveryLog): string {
     `Manifest parse errors: ${log.manifestErrors}`,
     `Worker count: ${log.workerCount}`,
   ];
+  if (log.discoveryMode) {
+    lines.push(`Discovery mode: ${log.discoveryMode}`);
+  }
   if (log.readinessProbeAttempts > 0) {
     lines.push(
       `Readiness probe: ${log.readinessProbeSuccess ? 'succeeded' : `timed out after ${log.readinessProbeAttempts} attempt(s)`}`,
     );
   }
-  lines.push('--- Raw entries ---', ...log.rawEntries);
-  if (log.workerCount === 0 && log.diagnosticHints.length > 0) {
+  lines.push('--- Raw entries ---', ...(log.rawEntries ?? []));
+  const hints = log.diagnosticHints ?? [];
+  if (log.workerCount === 0 && hints.length > 0) {
     lines.push('--- Possible causes ---');
-    log.diagnosticHints.forEach((h) => lines.push(`  • ${h}`));
+    hints.forEach((h) => lines.push(`  • ${h}`));
   }
   return lines.join('\n');
 }

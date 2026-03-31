@@ -11,14 +11,25 @@ from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = os.getenv("PHANTOM_STATE_DIR", "/var/lib/phantom/state")
+
+def default_state_dir() -> str:
+    """Resolve state directory when ``PHANTOM_STATE_DIR`` is unset.
+
+    Desktop / Tauri: ``~/.phantom/state`` (same layout as the Stone-Home app).
+
+    Server or container: set ``PHANTOM_STATE_DIR`` explicitly (e.g. ``/var/lib/phantom/state``).
+    """
+    explicit = os.getenv("PHANTOM_STATE_DIR")
+    if explicit:
+        return explicit
+    return str(Path.home() / ".phantom" / "state")
 
 
 class StateManager:
     """Simple file-backed state persistence."""
 
     def __init__(self, state_dir: str | None = None):
-        self.state_dir = Path(state_dir or _DEFAULT_DIR)
+        self.state_dir = Path(state_dir or default_state_dir())
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._workers_file = self.state_dir / "workers.json"
         self._tasks_file = self.state_dir / "tasks.json"

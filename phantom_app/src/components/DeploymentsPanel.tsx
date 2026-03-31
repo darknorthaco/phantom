@@ -39,10 +39,11 @@ export default function DeploymentsPanel() {
     // Controller health via Tauri → REST
     try {
       const health = await getPhantomHealth() as Record<string, unknown>;
+      const h = health.status === 'healthy' || health.status === 'degraded';
       updated[0] = {
         name: 'Phantom Controller',
         version: typeof health.version === 'string' ? health.version : '2.0.0',
-        status: health.status === 'healthy' ? 'running' : 'error',
+        status: h ? 'running' : 'error',
         detail: typeof health.execution_mode === 'string'
           ? `${health.status} / mode: ${health.execution_mode}`
           : String(health.status ?? 'unknown'),
@@ -51,7 +52,7 @@ export default function DeploymentsPanel() {
       updated[0] = { ...updated[0], status: 'stopped', detail: 'Not reachable' };
     }
 
-    // Socket infrastructure — probe the standalone port
+    // Socket infrastructure — optional standalone listener (not the controller API URL from config).
     try {
       const resp = await fetch('http://127.0.0.1:8081/health', { signal: AbortSignal.timeout(1_500) });
       updated[1] = {

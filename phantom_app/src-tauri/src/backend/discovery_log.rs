@@ -61,6 +61,9 @@ pub struct DiscoveryLog {
     pub discovery_poll_cycles: u32,
     /// Full Deployment Initialization Log — every step from Deploy click to discovery (Phase 4).
     pub full_deploy_log: Vec<FullDeployLogEntry>,
+    /// ``lan_udp`` = real broadcast discovery; ``offline_synthetic`` = bundle deploy placeholder worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_mode: Option<String>,
 }
 
 impl DiscoveryLog {
@@ -75,6 +78,9 @@ impl DiscoveryLog {
         lines.push(format!("Signature failures: {}", self.signature_failures));
         lines.push(format!("Manifest parse errors: {}", self.manifest_errors));
         lines.push(format!("Worker count: {}", self.worker_count));
+        if let Some(ref m) = self.discovery_mode {
+            lines.push(format!("Discovery mode: {m}"));
+        }
         if self.readiness_probe_attempts > 0 {
             lines.push(format!(
                 "Readiness probe: {} (attempts: {})",
@@ -172,6 +178,7 @@ pub struct DiscoveryLogBuilder {
     discovery_poll_cycles: u32,
     full_deploy_log: Vec<FullDeployLogEntry>,
     step_index_counter: u32,
+    discovery_mode: Option<String>,
 }
 
 impl DiscoveryLogBuilder {
@@ -196,7 +203,12 @@ impl DiscoveryLogBuilder {
             discovery_poll_cycles: 0,
             full_deploy_log: Vec::new(),
             step_index_counter: 0,
+            discovery_mode: None,
         }
+    }
+
+    pub fn set_discovery_mode(&mut self, mode: Option<String>) {
+        self.discovery_mode = mode;
     }
 
     /// Add a Full Deployment Initialization Log entry. Step index auto-increments.
@@ -308,6 +320,7 @@ impl DiscoveryLogBuilder {
             discovery_total_timeout_ms: self.discovery_total_timeout_ms,
             discovery_poll_cycles: self.discovery_poll_cycles,
             full_deploy_log: self.full_deploy_log,
+            discovery_mode: self.discovery_mode,
         }
     }
 }

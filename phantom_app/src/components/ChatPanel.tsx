@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { getTaskStatus, submitTask } from '../utils/tauri';
 
 interface Message {
   id: string;
@@ -6,8 +7,6 @@ interface Message {
   content: string;
   timestamp: string;
 }
-
-const CONTROLLER = 'http://127.0.0.1:8080';
 
 function timestamp(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -49,29 +48,20 @@ export default function ChatPanel() {
     setLoading(true);
 
     try {
-      // Submit as an inference task to the Phantom controller.
-      // The LLM Task Master routes it to the best available worker.
-      const response = await fetch(`${CONTROLLER}/tasks/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_type: 'llm_inference',
-          parameters: {
-            model,
-            prompt: text,
-            max_tokens: 512,
-            temperature: 0.7,
-          },
-          priority: 1,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Controller returned ${response.status}`);
+      const data = await submitTask(
+        'llm_inference',
+        {
+          model,
+          prompt: text,
+          max_tokens: 512,
+          temperature: 0.7,
+        },
+        1
+      );
+      const taskId = String((data as { task_id?: string }).task_id ?? '');
+      if (!taskId) {
+        throw new Error('Controller did not return a task_id');
       }
-
-      const data = await response.json();
-      const taskId: string = data.task_id;
 
       // Poll for the result (simple approach — WebSocket streaming is a future upgrade)
       const result = await pollTaskResult(taskId);
@@ -239,16 +229,19 @@ async function pollTaskResult(taskId: string, maxWaitMs = 30_000): Promise<strin
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     await sleep(1_500);
-    const r = await fetch(`${CONTROLLER}/tasks/${taskId}`);
-    if (!r.ok) continue;
-    const data = await r.json();
+    let data: Record<string, unknown>;
+    try {
+      data = (await getTaskStatus(taskId)) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
     if (data.status === 'completed' && data.result) {
       return typeof data.result === 'string'
         ? data.result
         : JSON.stringify(data.result, null, 2);
     }
     if (data.status === 'failed') {
-      throw new Error(data.error ?? 'Task failed');
+      throw new Error(String(data.error ?? 'Task failed'));
     }
   }
   throw new Error('Model took too long to respond (30s timeout). Is a worker online?');

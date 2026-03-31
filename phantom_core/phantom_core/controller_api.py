@@ -146,6 +146,7 @@ workers = {}
 tasks = {}
 socket_manager = None
 orchestrator = None
+orchestrator_init_error: str | None = None
 security_manager = None
 state_manager: StateManager | None = None
 trust_store: TrustStore | None = None
@@ -202,7 +203,7 @@ MODE_SOCKET_SCHEMAS: Dict[ExecutionMode, Dict[str, Any]] = {
 # Initialize integrated components
 @app.on_event("startup")
 async def startup_event():
-    global socket_manager, security_manager, orchestrator, state_manager, trust_store
+    global socket_manager, security_manager, orchestrator, orchestrator_init_error, state_manager, trust_store
 
     # Restore persisted state
     state_dir = os.getenv("PHANTOM_STATE_DIR")
@@ -258,12 +259,19 @@ async def startup_event():
             await security_manager.initialize()
             logger.info(f"🔒 Security framework initialized (level: {security_level})")
 
-    # Initialize orchestrator
+    # Initialize orchestrator (optional routing layer — API stays up if this fails)
+    orchestrator_init_error = None
     try:
         orchestrator = Orchestrator()
-        logger.info("🎯 Orchestrator initialized")
+        logger.info("Orchestrator initialized")
     except Exception as e:
-        logger.error(f"Failed to initialize orchestrator: {e}")
+        orchestrator = None
+        orchestrator_init_error = str(e)
+        logger.error(
+            "Orchestrator failed to initialize — controller is DEGRADED (workers/tasks API OK; routing limited): %s",
+            e,
+            exc_info=True,
+        )
 
 
 @app.on_event("shutdown")
@@ -557,6 +565,7 @@ async def root():
         "features": {
             "socket_infrastructure": SOCKET_AVAILABLE and socket_manager is not None,
             "security_framework": SECURITY_AVAILABLE and security_manager is not None,
+            "orchestrator": orchestrator is not None,
             "integrated_mode": os.getenv("PHANTOM_INTEGRATED") == "true",
             "modes_supported": [mode.value for mode in ExecutionMode],
         },
@@ -565,14 +574,20 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
+    """Liveness + subsystem flags. ``status`` is ``degraded`` if the orchestrator failed to start."""
+    orch_ok = orchestrator is not None
+    body: Dict[str, Any] = {
+        "status": "healthy" if orch_ok else "degraded",
         "timestamp": datetime.now().isoformat(),
         "execution_mode": execution_mode.value,
         "queue_paused": queue_paused,
         "workers_count": len(workers),
         "active_tasks": len([t for t in tasks.values() if t["status"] == TASK_RUNNING]),
+        "orchestrator_ready": orch_ok,
     }
+    if orchestrator_init_error:
+        body["orchestrator_error"] = orchestrator_init_error
+    return body
 
 
 @app.get("/mode")

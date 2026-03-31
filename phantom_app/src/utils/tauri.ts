@@ -2,6 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   DeploymentPreScanOptions,
   DeploymentPreScanResult,
+  LanScanRegistrationResult,
+  PreDeployReport,
+  WorkerRegistrationSummary,
   WorkerSelectionForRegistration,
 } from '../state/deploymentState';
 
@@ -63,6 +66,7 @@ export const rejectPeer = (peerId: string) => invoke<void>('reject_peer', { peer
 export const getAuditLog = (limit: number) => invoke<Array<Record<string, unknown>>>('get_audit_log', { limit });
 
 // Execution modes (Phase 5)
+export const getExecutionMode = () => invoke<Record<string, unknown>>('get_execution_mode');
 export const setExecutionMode = (mode: string) => invoke<Record<string, unknown>>('set_execution_mode', { mode });
 export const loadLlmConfig = () => invoke<Record<string, unknown>>('load_llm_config');
 
@@ -76,11 +80,15 @@ export const checkIntegrity = () => invoke<Record<string, unknown>>('check_integ
 export const runDeploymentPreScan = (options?: DeploymentPreScanOptions | null) =>
   invoke<DeploymentPreScanResult>('run_deployment_pre_scan', { options: options ?? null });
 
+/** Phase 4 — deterministic checklist before deploy (placement, engine, venv, TLS, /health). */
+export const runPreDeployValidation = () =>
+  invoke<PreDeployReport>('run_pre_deploy_validation');
+
 export const completeDeploymentWithSelection = (
   workerPool: WorkerSelectionForRegistration[],
   runControllerLlm: boolean
 ) =>
-  invoke<void>('complete_deployment_with_selection', {
+  invoke<WorkerRegistrationSummary>('complete_deployment_with_selection', {
     workerPool,
     runControllerLlm,
   });
@@ -90,12 +98,15 @@ export const getDeploymentStatus = () => invoke<string>('get_deployment_status')
 export const deployPhantom = (options?: DeploymentPreScanOptions | null) =>
   invoke<void>('deploy_phantom', { options: options ?? null });
 export const getPhantomHealth = () => invoke<Record<string, unknown>>('get_phantom_health');
+export const getControllerBaseUrl = () => invoke<string>('get_controller_base_url');
 export const getWorkers = () => invoke<Record<string, unknown>>('get_workers');
 export const getStats = () => invoke<Record<string, unknown>>('get_stats');
+export const getTaskStatus = (taskId: string) =>
+  invoke<Record<string, unknown>>('get_task_status', { taskId });
 export const submitTask = (taskType: string, parameters: Record<string, unknown>, priority: number) =>
   invoke<Record<string, unknown>>('submit_task', { taskType, parameters, priority });
 export const scanAndRegisterWorkers = () =>
-  invoke<{ scanned: number; registered: number; nodes: Array<[string, number]> }>('scan_and_register_workers');
+  invoke<LanScanRegistrationResult>('scan_and_register_workers');
 
 // Phase 3 — offline bundle
 export const verifyOfflineBundle = (path: string) =>

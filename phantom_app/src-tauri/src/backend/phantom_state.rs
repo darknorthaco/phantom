@@ -1,3 +1,4 @@
+use super::phantom_api::PhantomApiClient;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -16,6 +17,15 @@ pub struct DeploymentProgress {
     pub total_steps: usize,
     pub label: String,
     pub fraction: f64,
+}
+
+/// Emitted as ``deploy-failed`` when a deploy step or registration fails (human-facing diagnostics).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployFailureInfo {
+    pub message: String,
+    pub step_index: Option<usize>,
+    pub step_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,11 +51,16 @@ impl AppState {
     pub fn new() -> Self {
         let home = dirs_next().unwrap_or_else(|| PathBuf::from("."));
         let phantom_root = home.join(".phantom");
+        let cfg_path = phantom_root.join("phantom_config.json");
+        let initial_controller_url =
+            PhantomApiClient::controller_base_url_from_config(&cfg_path)
+                .map(|(url, _)| url)
+                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
         Self {
             phase: Mutex::new(AppPhase::FrontPorch),
             phantom_root,
-            controller_url: Mutex::new("http://127.0.0.1:8080".to_string()),
+            controller_url: Mutex::new(initial_controller_url),
             offline_bundle_path: Mutex::new(None),
         }
     }

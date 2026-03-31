@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import ConsentModal from './ConsentModal';
+import { getExecutionMode, setExecutionMode } from '../utils/tauri';
+import { tauriInvokeErrorMessage } from '../state/deploymentState';
 
 export default function RoutingPanel() {
   const [mode, setMode] = useState<string>('MANUAL');
   const [schemas, setSchemas] = useState<Record<string, unknown>>({});
   const [pendingMode, setPendingMode] = useState<string | null>(null);
+  const [modeError, setModeError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('http://127.0.0.1:8080/mode')
-      .then((r) => r.json())
-      .then((d) => { setMode(d.mode); setSchemas(d.schemas || {}); })
+    getExecutionMode()
+      .then((d) => {
+        setMode(String(d.mode ?? 'MANUAL'));
+        setSchemas((d.schemas as Record<string, unknown>) ?? {});
+      })
       .catch(() => {});
   }, []);
 
@@ -20,15 +25,17 @@ export default function RoutingPanel() {
 
   const confirmModeSwitch = () => {
     if (!pendingMode) return;
-    fetch('http://127.0.0.1:8080/mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: pendingMode }),
-    })
-      .then((r) => r.json())
-      .then((d) => setMode(d.mode))
-      .catch(() => {});
-    setPendingMode(null);
+    const next = pendingMode;
+    setModeError(null);
+    setExecutionMode(next)
+      .then((d) => {
+        setMode(String((d as { mode?: string }).mode ?? next));
+        setPendingMode(null);
+      })
+      .catch((e) => {
+        setModeError(tauriInvokeErrorMessage(e));
+        setPendingMode(null);
+      });
   };
 
   const modes = ['AUTO', 'HYBRID', 'MANUAL'] as const;
@@ -43,6 +50,32 @@ export default function RoutingPanel() {
       <div className="panel-header">
         <span className="panel-title">Routing &amp; Execution Modes</span>
       </div>
+
+      {modeError && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 16,
+            padding: '10px 12px',
+            background: 'rgba(180, 60, 60, 0.12)',
+            border: '1px solid rgba(220, 90, 90, 0.4)',
+            borderRadius: 6,
+            fontSize: 12,
+            color: '#e8a0a0',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {modeError}
+          <button
+            type="button"
+            onClick={() => setModeError(null)}
+            className="deploy-btn ceremony-btn-secondary"
+            style={{ marginLeft: 12, fontSize: 10, padding: '4px 10px' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
         {modes.map((m) => (

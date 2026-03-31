@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tokio::process::Command;
 
@@ -10,6 +11,11 @@ use super::discovery::{
 };
 use super::discovery_log::{DependencyInitEntry, DiscoveryLog, DiscoveryLogBuilder, FullDeployLogEntry};
 use super::phantom_api::{PhantomApiClient, RegisterWorkerRequest};
+
+/// Deploy Step 6 — wall-clock budget for controller ``GET /health`` after spawn.
+const CONTROLLER_HEALTH_TIMEOUT_SECS: u64 = 90;
+const CONTROLLER_HEALTH_POLL_INTERVAL_MS: u64 = 500;
+const CONTROLLER_HEALTH_INITIAL_DELAY_MS: u64 = 400;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DeployStep {
@@ -65,6 +71,23 @@ pub struct WorkerSelectionForRegistration {
 pub struct CompleteDeploymentRequest {
     pub worker_pool: Vec<WorkerSelectionForRegistration>,
     pub run_controller_llm: bool,
+}
+
+/// Counts after ceremony registration (trust approve + `/workers/register`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerRegistrationSummary {
+    pub selected_count: usize,
+    pub trust_failed_count: usize,
+    pub registered_count: usize,
+    pub registration_failed_count: usize,
+}
+
+impl WorkerRegistrationSummary {
+    /// Every selected worker was approved and registered with the controller.
+    pub fn pool_fully_registered(&self) -> bool {
+        self.selected_count > 0 && self.registered_count == self.selected_count
+    }
 }
 
 pub struct PhantomDeployer {
@@ -325,6 +348,12 @@ impl PhantomDeployer {
                 log::info!("Detected {} GPU(s): {}", gpus.len(), gpus[0].name);
             }
         }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            log::info!(
+                "GPU pre-check skipped on this OS (Linux/Windows-only); local worker probes GPUs at runtime where supported"
+            );
+        }
         Ok(())
     }
 
@@ -394,7 +423,13 @@ impl PhantomDeployer {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            log::info!("Service installation skipped on this platform");
+            if cfg!(target_os = "macos") {
+                log::info!(
+                    "Service install skipped on macOS (no bundled launchd unit); run the controller from the app or a terminal, or use launchctl with your own plist"
+                );
+            } else {
+                log::info!("Service installation skipped on this platform");
+            }
             let _ = (&python, &run_py, &state_dir); // suppress unused warnings
         }
 
@@ -458,7 +493,7 @@ impl PhantomDeployer {
                 "socket_integrated": true
             },
             "ports": {
-                "controller_api": { "port": 8080, "protocol": "tcp", "required": true  },
+                "controller_api": { "port": port, "protocol": "tcp", "required": true  },
                 "worker_http":    { "port": 8090, "protocol": "tcp", "required": true  },
                 "discovery_udp":  { "port": 8095, "protocol": "udp", "required": true  },
                 "socket_infra":   { "port": 8081, "protocol": "tcp", "required": false }
@@ -501,6 +536,17 @@ impl PhantomDeployer {
     }
 
     async fn start_controller(&self) -> Result<(), String> {
+        if let Err(e) = super::pre_deploy_validator::assert_ready_for_controller_start(
+            &self.phantom_root,
+            &self.engine_source,
+        )
+        .await
+        {
+            log::error!("Pre-controller readiness gate failed: {e}");
+            self.emit_scan_log(&format!("Pre-controller gate: {e}"));
+            return Err(e);
+        }
+
         let python = venv_python(&self.phantom_root);
         let engine = self.phantom_root.join("engine");
         let deployed_run_py = engine.join("run.py");
@@ -517,14 +563,6 @@ impl PhantomDeployer {
         };
 
         let config_path = self.phantom_root.join("phantom_config.json");
-        if !config_path.exists() {
-            return Err(format!(
-                "phantom_config.json not found at {:?}. \
-                 Step 4.5 (Bootstrap config) must complete successfully before \
-                 the controller can start.",
-                config_path
-            ));
-        }
 
         let host = read_nested_config(&config_path, &["controller", "host"])
             .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -535,17 +573,6 @@ impl PhantomDeployer {
         let socket_integrated = read_nested_config(&config_path, &["controller", "socket_integrated"])
             .and_then(|s| s.parse::<bool>().ok())
             .unwrap_or(true);
-
-        if socket_integrated && !run_integrated_py.exists() {
-            return Err(format!(
-                "run_integrated_phantom.py not found at {:?}. \
-                 Socket integration enabled but integrated entrypoint missing.",
-                run_integrated_py
-            ));
-        }
-        if !socket_integrated && !run_py.exists() {
-            return Err(format!("run.py not found at {:?}", run_py));
-        }
 
         let entrypoint = if socket_integrated { run_integrated_py } else { run_py };
         if socket_integrated {
@@ -576,7 +603,57 @@ impl PhantomDeployer {
         cmd.spawn()
             .map_err(|e| format!("Failed to start controller: {e}"))?;
 
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let (base_url, tls_enabled) =
+            PhantomApiClient::controller_base_url_from_config(&config_path)?;
+        let api = PhantomApiClient::for_local_health_check(&base_url, tls_enabled)
+            .map_err(|e| format!("Failed to build health-check client: {e}"))?;
+
+        tokio::time::sleep(Duration::from_millis(CONTROLLER_HEALTH_INITIAL_DELAY_MS)).await;
+
+        let deadline = Instant::now() + Duration::from_secs(CONTROLLER_HEALTH_TIMEOUT_SECS);
+        // First iteration may succeed without ever assigning an error string.
+        #[allow(unused_assignments)]
+        let mut last_err: Option<String> = None;
+
+        loop {
+            match api.health().await {
+                Ok(h) if h.status == "healthy" || h.status == "degraded" => {
+                    if h.status == "degraded" {
+                        log::warn!(
+                            "Controller /health is degraded (orchestrator_ready={}); deploy gate passed — inspect /health and controller logs",
+                            h.orchestrator_ready
+                        );
+                    } else {
+                        log::info!(
+                            "Controller health gate passed ({base_url}/health, workers_count={})",
+                            h.workers_count
+                        );
+                    }
+                    break;
+                }
+                Ok(h) => {
+                    let msg = format!("unexpected /health status: {:?}", h.status);
+                    log::debug!("{msg}");
+                    last_err = Some(msg);
+                }
+                Err(e) => {
+                    log::debug!("Controller health check: {e}");
+                    last_err = Some(e);
+                }
+            }
+
+            if Instant::now() >= deadline {
+                let detail = last_err.unwrap_or_else(|| "no parseable /health response".to_string());
+                return Err(format!(
+                    "Controller did not report healthy within {CONTROLLER_HEALTH_TIMEOUT_SECS}s after start. \
+                     URL: {base_url}/health. Last error: {detail}. \
+                     Check controller logs, port conflicts, and TLS settings."
+                ));
+            }
+
+            tokio::time::sleep(Duration::from_millis(CONTROLLER_HEALTH_POLL_INTERVAL_MS)).await;
+        }
+
         Ok(())
     }
 
@@ -592,29 +669,42 @@ impl PhantomDeployer {
             .flatten()
             .unwrap_or(true);
 
+        let policy = read_firewall_port_policy(&self.phantom_root);
+        log::info!(
+            "Firewall ports from phantom_config.json: controller_api={}/tcp, worker_http={}/tcp, discovery_udp={}/udp{}",
+            policy.controller_tcp,
+            policy.worker_tcp,
+            policy.discovery_udp,
+            if socket_integrated {
+                format!(", socket_infra={}/tcp", policy.socket_tcp)
+            } else {
+                String::new()
+            }
+        );
+
         #[cfg(target_os = "linux")]
         {
-            let mut port_rules = vec![
-                ("8080", "tcp"),
-                ("8090", "tcp"),
-                ("8095", "udp"),
+            let mut port_rules: Vec<(String, &'static str)> = vec![
+                (policy.controller_tcp.to_string(), "tcp"),
+                (policy.worker_tcp.to_string(), "tcp"),
+                (policy.discovery_udp.to_string(), "udp"),
             ];
             if socket_integrated {
-                port_rules.push(("8081", "tcp"));
-                log::info!("Opening socket port 8081/tcp");
+                port_rules.push((policy.socket_tcp.to_string(), "tcp"));
             }
 
-            // Try ufw first (Ubuntu/Debian)
+            // Try ufw first (Ubuntu/Debian) — probe with controller API port from config.
+            let ufw_probe = format!("{}/tcp", policy.controller_tcp);
             let ufw_available = {
                 let ufw = Command::new("ufw")
-                    .args(["allow", "8080/tcp"])
+                    .args(["allow", &ufw_probe])
                     .output()
                     .await;
                 matches!(ufw, Ok(ref o) if o.status.success())
             };
 
             if ufw_available {
-                for &(port, proto) in port_rules.iter().skip(1) {
+                for (port, proto) in port_rules.iter().skip(1) {
                     let rule = format!("{port}/{proto}");
                     let _ = Command::new("ufw")
                         .args(["allow", &rule])
@@ -623,7 +713,7 @@ impl PhantomDeployer {
                 }
                 let ports_str = port_rules
                     .iter()
-                    .map(|&(p, pr)| format!("{p}/{pr}"))
+                    .map(|(p, pr)| format!("{p}/{pr}"))
                     .collect::<Vec<_>>()
                     .join(", ");
                 log::info!("ufw: allowed ports {ports_str}");
@@ -632,7 +722,7 @@ impl PhantomDeployer {
 
             log::info!("ufw not available, trying iptables");
 
-            for &(port, proto) in &port_rules {
+            for (port, proto) in &port_rules {
                 let ipt = Command::new("iptables")
                     .args(["-C", "INPUT", "-p", proto, "--dport", port, "-j", "ACCEPT"])
                     .output()
@@ -668,17 +758,16 @@ impl PhantomDeployer {
 
         #[cfg(target_os = "windows")]
         {
-            let mut rules = vec![
-                ("PhantomController", "TCP", "8080"),
-                ("PhantomWorker", "TCP", "8090"),
-                ("PhantomDiscovery", "UDP", "8095"),
+            let mut rules: Vec<(&'static str, &'static str, String)> = vec![
+                ("PhantomController", "TCP", policy.controller_tcp.to_string()),
+                ("PhantomWorker", "TCP", policy.worker_tcp.to_string()),
+                ("PhantomDiscovery", "UDP", policy.discovery_udp.to_string()),
             ];
             if socket_integrated {
-                rules.push(("PhantomSocket", "TCP", "8081"));
-                log::info!("Opening socket port 8081/tcp");
+                rules.push(("PhantomSocket", "TCP", policy.socket_tcp.to_string()));
             }
 
-            for &(name, proto, port) in &rules {
+            for (name, proto, port) in &rules {
                 let result = Command::new("netsh")
                     .args([
                         "advfirewall", "firewall", "add", "rule",
@@ -706,6 +795,30 @@ impl PhantomDeployer {
                     }
                 }
             }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            log::info!(
+                "Firewall (macOS): Phantom did not open ports automatically — allow TCP {} (controller), TCP {} (worker), and UDP {} (discovery) in System Settings or pf if you use a host firewall",
+                policy.controller_tcp,
+                policy.worker_tcp,
+                policy.discovery_udp
+            );
+        }
+
+        #[cfg(all(
+            not(target_os = "linux"),
+            not(target_os = "windows"),
+            not(target_os = "macos")
+        ))]
+        {
+            log::info!(
+                "Firewall: no platform-specific automation for this OS — open controller {}, worker {}, discovery UDP {} manually if required",
+                policy.controller_tcp,
+                policy.worker_tcp,
+                policy.discovery_udp
+            );
         }
 
         Ok(())
@@ -740,24 +853,27 @@ impl PhantomDeployer {
         (tls_enabled, cert)
     }
 
-    #[cfg(target_os = "linux")]
+    /// Start bundled **linux-worker** (Python). Used on Linux and macOS (same tree; GPU probe may be CPU-only on Mac).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn start_local_worker(&self) -> Result<(), String> {
         let engine = self.phantom_root.join("engine");
         let linux_worker_dir = engine.join("linux-worker");
         let main_py = linux_worker_dir.join("linux_worker").join("main.py");
         if !main_py.exists() {
-            log::info!("Local worker main.py not found, skipping");
+            log::info!("Local worker main.py not found under engine/linux-worker, skipping");
             return Ok(());
         }
 
         let config_path = self.phantom_root.join("local_worker_config.json");
         let (tls_enabled, tls_controller_cert_path) =
             self.read_phantom_tls_for_local_worker().await;
+        let (ctrl_host, ctrl_port, worker_port, _) =
+            read_phantom_runtime_endpoints(&self.phantom_root);
         let config = serde_json::json!({
             "worker_id": "local-worker",
-            "controller_host": "127.0.0.1",
-            "controller_port": 8080,
-            "worker_port": 8090,
+            "controller_host": ctrl_host,
+            "controller_port": ctrl_port,
+            "worker_port": worker_port,
             "tls_enabled": tls_enabled,
             "tls_controller_cert_path": tls_controller_cert_path,
         });
@@ -778,8 +894,20 @@ impl PhantomDeployer {
         cmd.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         match cmd.spawn() {
-            Ok(_) => log::info!("Local worker started on 0.0.0.0:8090"),
-            Err(e) => log::warn!("Failed to start local worker: {e}"),
+            Ok(_) => {
+                log::info!(
+                    "Local worker (linux-worker) started on 0.0.0.0:{worker_port} [{}]",
+                    std::env::consts::OS
+                );
+            }
+            Err(e) => {
+                let msg = format!("worker_spawn_failed: {e}");
+                log::error!("{}", msg);
+                return Err(format!(
+                    "Local worker failed to start (spawn). {}",
+                    msg
+                ));
+            }
         }
 
         self.run_readiness_probe().await;
@@ -804,11 +932,13 @@ impl PhantomDeployer {
         let config_path = self.phantom_root.join("local_worker_config.json");
         let (tls_enabled, tls_controller_cert_path) =
             self.read_phantom_tls_for_local_worker().await;
+        let (ctrl_host, ctrl_port, worker_port, _) =
+            read_phantom_runtime_endpoints(&self.phantom_root);
         let config = serde_json::json!({
             "worker_id": "local-worker",
-            "controller_host": "127.0.0.1",
-            "controller_port": 8080,
-            "worker_port": 8090,
+            "controller_host": ctrl_host,
+            "controller_port": ctrl_port,
+            "worker_port": worker_port,
             "tls_enabled": tls_enabled,
             "tls_controller_cert_path": tls_controller_cert_path,
         });
@@ -830,7 +960,7 @@ impl PhantomDeployer {
 
         match cmd.spawn() {
             Ok(_) => {
-                log::info!("Local Windows worker started on 0.0.0.0:8090");
+                log::info!("Local Windows worker started on 0.0.0.0:{worker_port}");
             }
             Err(e) => {
                 let msg = format!("worker_spawn_failed: {e}");
@@ -846,9 +976,20 @@ impl PhantomDeployer {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(all(
+        not(target_os = "linux"),
+        not(target_os = "macos"),
+        not(target_os = "windows")
+    ))]
     async fn start_local_worker(&self) -> Result<(), String> {
-        log::info!("Local worker step skipped on this platform");
+        log::warn!(
+            "Bundled local worker is not enabled for OS `{}` — use LAN discovery or install workers elsewhere",
+            std::env::consts::OS
+        );
+        self.emit_scan_log(&format!(
+            "Local worker step skipped (no bundled worker for OS {})",
+            std::env::consts::OS
+        ));
         Ok(())
     }
 
@@ -883,6 +1024,8 @@ impl PhantomDeployer {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(1000);
 
+        let (_, _, _, discovery_port) = read_phantom_runtime_endpoints(&self.phantom_root);
+
         self.emit_scan_log(&format!(
             "Waiting for local worker (up to {} probe attempt(s))…",
             max_attempts
@@ -898,11 +1041,19 @@ impl PhantomDeployer {
                 attempts, max_attempts
             ));
 
-            let ready = tokio::task::spawn_blocking(move || {
-                discovery::probe_worker_readiness(attempt_timeout_ms)
+            let ready = match tokio::task::spawn_blocking(move || {
+                discovery::probe_worker_readiness(attempt_timeout_ms, discovery_port)
             })
             .await
-            .unwrap_or(false);
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = format!("readiness probe blocking task failed (join): {e}");
+                    log::warn!("{msg}");
+                    self.emit_scan_log(&msg);
+                    false
+                }
+            };
 
             if ready {
                 probe_success = true;
@@ -968,7 +1119,8 @@ impl PhantomDeployer {
 
         self.emit_scan_log(&format!("Received {} manifest(s)", manifests.len()));
 
-        let controller = PhantomApiClient::new("http://127.0.0.1:8080");
+        let controller = PhantomApiClient::from_phantom_config(&self.phantom_root.join("phantom_config.json"))
+            .map_err(|e| format!("Controller API client: {e}"))?;
         let mut registered = 0usize;
 
         for m in &manifests {
@@ -985,13 +1137,27 @@ impl PhantomDeployer {
             match controller.register_worker(&req).await {
                 Ok(()) => {
                     registered += 1;
-                    self.emit_scan_log(&format!("Registering worker {}…", req.worker_id));
+                    self.emit_scan_log(&format!("Registered worker {} with controller.", req.worker_id));
                 }
                 Err(e) => {
-                    self.emit_scan_log(&format!("Registration failed: {e}"));
+                    self.emit_scan_log(&format!("Registration failed for {}: {e}", req.worker_id));
                     log::warn!("Failed to register worker {}: {e}", req.worker_id);
                 }
             }
+        }
+
+        let discovered = manifests.len();
+        let registration_failed = discovered.saturating_sub(registered);
+        if discovered > 0 && registration_failed > 0 {
+            self.emit_scan_log(&format!(
+                "PARTIAL POOL: {registered} registered, {registration_failed} failed of {discovered} discovered (controller pool incomplete)."
+            ));
+            log::warn!(
+                "LAN registration partial: {} ok, {} failed of {} discovered",
+                registered,
+                registration_failed,
+                discovered
+            );
         }
 
         if !manifests.is_empty() {
@@ -1200,13 +1366,16 @@ impl PhantomDeployer {
             error_message: if probe_success { None } else { Some("readiness probe timed out".to_string()) },
         });
 
+        let (_, _, syn_worker_http, syn_disc_port) = read_phantom_runtime_endpoints(&self.phantom_root);
+
         let (discovered_workers, mut discovery_log) = if self.is_offline() {
             self.emit_scan_log("PHANTOM OFFLINE MODE — skipping network operations (UDP discovery)");
             let tt = total_timeout_ms;
             let deps = dependency_init_entries.clone();
             let full = full_deploy_entries.clone();
             let (mut dlog, synthetic) = tokio::task::spawn_blocking(move || {
-                let mut log = DiscoveryLogBuilder::new(vec!["offline".to_string()], 8095);
+                let mut log = DiscoveryLogBuilder::new(vec!["offline".to_string()], syn_disc_port);
+                log.set_discovery_mode(Some("offline_synthetic".to_string()));
                 for e in deps {
                     log.add_dependency_init_entry(e);
                 }
@@ -1218,7 +1387,7 @@ impl PhantomDeployer {
                 let w = DiscoveredWorkerForCeremony {
                     worker_id: "local-worker".to_string(),
                     host: "127.0.0.1".to_string(),
-                    port: 8090,
+                    port: syn_worker_http,
                     gpu_info: serde_json::json!({}),
                     source_ip: "127.0.0.1".to_string(),
                     signature_verified: false,
@@ -1280,8 +1449,10 @@ impl PhantomDeployer {
 
         let discovery_failed = discovery_log.worker_count == 0;
 
-        // Add actionable hints when no workers were found.
-        if discovery_failed {
+        let offline_mode = self.is_offline();
+
+        // LAN-only hints (not applicable to offline synthetic discovery).
+        if discovery_failed && !offline_mode {
             if probe_attempts > 0 && !probe_success {
                 discovery_log.add_diagnostic_hint(&format!(
                     "Worker not ready: readiness probe timed out after {} attempt(s)",
@@ -1295,9 +1466,11 @@ impl PhantomDeployer {
             discovery_log.add_diagnostic_hint(
                 "Worker still initializing — try running discovery again",
             );
+        } else if discovery_failed && offline_mode {
+            discovery_log.add_diagnostic_hint(
+                "Offline synthetic worker was not produced — check deploy logs and bundle integrity",
+            );
         }
-
-        let offline_mode = self.is_offline();
         if offline_mode {
             self.persist_offline_install_marker().await?;
         }
@@ -1321,6 +1494,7 @@ impl PhantomDeployer {
             "offline": true,
             "bundle_path": self.offline_bundle_path.as_ref().map(|p| p.to_string_lossy().to_string()),
             "written_at": chrono::Utc::now().to_rfc3339(),
+            "workers_panel_lan_udp": false,
         });
         let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
         tokio::fs::write(&path, body)
@@ -1335,16 +1509,27 @@ impl PhantomDeployer {
         &self,
         worker_pool: Vec<WorkerSelectionForRegistration>,
         run_controller_llm: bool,
-    ) -> Result<(), String> {
-        let controller = PhantomApiClient::new("http://127.0.0.1:8080");
+    ) -> Result<WorkerRegistrationSummary, String> {
+        let controller = PhantomApiClient::from_phantom_config(&self.phantom_root.join("phantom_config.json"))
+            .map_err(|e| format!("Controller API client: {e}"))?;
+
+        let selected_count = worker_pool.len();
+        let mut trust_failed_count = 0usize;
+        let mut registered_count = 0usize;
+        let mut registration_failed_count = 0usize;
 
         for w in &worker_pool {
-            // §5 — Record TrustRecord(approved) before registration.
+            // TrustRecord(approved) before registration.
             if let Err(e) = controller
                 .approve_worker(&w.worker_id, &w.public_key_b64)
                 .await
             {
+                trust_failed_count += 1;
                 log::warn!("Failed to approve worker {}: {e}", w.worker_id);
+                self.emit_scan_log(&format!(
+                    "Trust approve failed for {}: {e} (worker not registered)",
+                    w.worker_id
+                ));
                 continue;
             }
             let req = RegisterWorkerRequest {
@@ -1354,9 +1539,44 @@ impl PhantomDeployer {
                 gpu_info: w.gpu_info.clone(),
                 status: "active".to_string(),
             };
-            if let Err(e) = controller.register_worker(&req).await {
-                log::warn!("Failed to register worker {}: {e}", w.worker_id);
+            match controller.register_worker(&req).await {
+                Ok(()) => {
+                    registered_count += 1;
+                    self.emit_scan_log(&format!("Registered worker {} with controller.", w.worker_id));
+                }
+                Err(e) => {
+                    registration_failed_count += 1;
+                    log::warn!("Failed to register worker {}: {e}", w.worker_id);
+                    self.emit_scan_log(&format!(
+                        "Registration failed for {} after trust approve: {e}",
+                        w.worker_id
+                    ));
+                }
             }
+        }
+
+        let summary = WorkerRegistrationSummary {
+            selected_count,
+            trust_failed_count,
+            registered_count,
+            registration_failed_count,
+        };
+
+        if !summary.pool_fully_registered() && selected_count > 0 {
+            self.emit_scan_log(&format!(
+                "PARTIAL REGISTRATION (ceremony): {} registered of {} selected (trust failed: {}, register API failed: {})",
+                summary.registered_count,
+                summary.selected_count,
+                summary.trust_failed_count,
+                summary.registration_failed_count
+            ));
+            log::warn!(
+                "Ceremony registration partial: {} registered of {} selected (trust_failed={}, register_failed={})",
+                summary.registered_count,
+                summary.selected_count,
+                summary.trust_failed_count,
+                summary.registration_failed_count
+            );
         }
 
         // Ensure llm_config exists (load_execution_modes creates it), then persist run_controller_llm
@@ -1387,7 +1607,7 @@ impl PhantomDeployer {
             }
         }
 
-        Ok(())
+        Ok(summary)
     }
 }
 
@@ -1401,17 +1621,23 @@ fn emit_scan_log_opt(app: &Option<tauri::AppHandle>, line: &str) {
 /// Run broadcast discovery and register workers. Used by deployment step 9 and manual "Scan LAN".
 pub async fn scan_and_register_workers(
     phantom_root: &std::path::Path,
-    controller_url: &str,
     scan_log_emitter: Option<tauri::AppHandle>,
 ) -> Result<ScanResult, String> {
     if phantom_root.join("state/offline_install.json").is_file() {
+        let skip_msg = "LAN scan skipped: state/offline_install.json marks an offline/air-gap install — Workers panel does not run UDP discovery. Re-run deploy without a bundle, or delete that marker only if you intentionally want LAN scans from this machine.";
         emit_scan_log_opt(
             &scan_log_emitter,
-            "PHANTOM OFFLINE MODE — scan skipped (no remote LAN discovery)",
+            "PHANTOM OFFLINE PROFILE — LAN scan skipped (see next line)",
         );
+        emit_scan_log_opt(&scan_log_emitter, skip_msg);
+        log::info!("scan_and_register_workers: {skip_msg}");
         return Ok(ScanResult {
             scanned: 0,
             registered: 0,
+            registration_failed: 0,
+            partial_registration: false,
+            lan_scan_skipped: true,
+            lan_scan_skip_reason: Some(skip_msg.to_string()),
             nodes: Vec::new(),
         });
     }
@@ -1443,7 +1669,8 @@ pub async fn scan_and_register_workers(
 
     emit_scan_log_opt(&scan_log_emitter, &format!("Received {} manifest(s)", manifests.len()));
 
-    let controller = PhantomApiClient::new(controller_url);
+    let controller = PhantomApiClient::from_phantom_config(&phantom_root.join("phantom_config.json"))
+        .map_err(|e| format!("Controller API client: {e}"))?;
     let mut registered = 0usize;
     for m in &manifests {
         let host = m.registration_host();
@@ -1459,14 +1686,39 @@ pub async fn scan_and_register_workers(
         match controller.register_worker(&req).await {
             Ok(()) => {
                 registered += 1;
-                emit_scan_log_opt(&scan_log_emitter, &format!("Registering worker {}…", req.worker_id));
+                emit_scan_log_opt(
+                    &scan_log_emitter,
+                    &format!("Registered worker {} with controller.", req.worker_id),
+                );
             }
             Err(e) => {
-                emit_scan_log_opt(&scan_log_emitter, &format!("Registration failed: {e}"));
+                emit_scan_log_opt(
+                    &scan_log_emitter,
+                    &format!("Registration failed for {}: {e}", req.worker_id),
+                );
                 log::warn!("Failed to register {}: {e}", m.worker_id());
             }
         }
     }
+
+    let scanned = manifests.len();
+    let registration_failed = scanned.saturating_sub(registered);
+    let partial_registration = scanned > 0 && registration_failed > 0;
+    if partial_registration {
+        emit_scan_log_opt(
+            &scan_log_emitter,
+            &format!(
+                "PARTIAL POOL: {registered} registered, {registration_failed} failed of {scanned} discovered (controller pool incomplete)."
+            ),
+        );
+        log::warn!(
+            "scan_and_register_workers partial: {} ok, {} failed of {}",
+            registered,
+            registration_failed,
+            scanned
+        );
+    }
+
     emit_scan_log_opt(&scan_log_emitter, &format!("Done: {registered} worker(s) registered"));
 
     if !manifests.is_empty() {
@@ -1480,8 +1732,12 @@ pub async fn scan_and_register_workers(
     }
 
     Ok(ScanResult {
-        scanned: manifests.len(),
+        scanned,
         registered,
+        registration_failed,
+        partial_registration,
+        lan_scan_skipped: false,
+        lan_scan_skip_reason: None,
         nodes: manifests
             .into_iter()
             .map(|m| (m.registration_host(), m.port))
@@ -1490,9 +1746,19 @@ pub async fn scan_and_register_workers(
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScanResult {
     pub scanned: usize,
     pub registered: usize,
+    /// Discovered manifests that did not succeed at `/workers/register`.
+    pub registration_failed: usize,
+    /// True when some manifests were received but not all registered.
+    pub partial_registration: bool,
+    /// True when ``state/offline_install.json`` prevented UDP discovery.
+    #[serde(default)]
+    pub lan_scan_skipped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_scan_skip_reason: Option<String>,
     pub nodes: Vec<(String, u16)>,
 }
 
@@ -1602,7 +1868,13 @@ impl PhantomDeployer {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            log::info!("stop_phantom_services: no-op on this platform");
+            if cfg!(target_os = "macos") {
+                log::info!(
+                    "stop_phantom_services: no bundled systemd/Windows service on macOS — stop controller/worker PIDs manually if needed"
+                );
+            } else {
+                log::info!("stop_phantom_services: no-op on this platform");
+            }
         }
     }
 
@@ -1840,6 +2112,96 @@ fn read_controller_config(phantom_root: &PathBuf, key: &str) -> Option<String> {
     json.get(key)?.as_str().map(|s| s.to_string())
 }
 
+/// Port policy for firewall Step 7 — must match ``ports`` in ``phantom_config.json``.
+#[derive(Debug, Clone)]
+struct FirewallPortPolicy {
+    controller_tcp: u16,
+    worker_tcp: u16,
+    discovery_udp: u16,
+    socket_tcp: u16,
+}
+
+impl Default for FirewallPortPolicy {
+    fn default() -> Self {
+        Self {
+            controller_tcp: 8080,
+            worker_tcp: 8090,
+            discovery_udp: 8095,
+            socket_tcp: 8081,
+        }
+    }
+}
+
+fn parse_ports_entry_port(ports: Option<&serde_json::Value>, key: &str) -> Option<u16> {
+    let entry = ports?.get(key)?;
+    let p = entry.get("port")?;
+    match p {
+        serde_json::Value::Number(n) => n.as_u64().and_then(|u| u16::try_from(u).ok()),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn controller_port_from_json(ctrl: Option<&serde_json::Value>) -> Option<u16> {
+    let p = ctrl?.get("port")?;
+    match p {
+        serde_json::Value::Number(n) => n.as_u64().and_then(|u| u16::try_from(u).ok()),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Sync read: ``controller.host`` / ``controller.port`` and ``ports.worker_http`` / ``discovery_udp``.
+/// Defaults match bootstrap Step 4.5. Used for local worker JSON, readiness UDP port, offline synthetic worker.
+fn read_phantom_runtime_endpoints(phantom_root: &Path) -> (String, u16, u16, u16) {
+    let path = phantom_root.join("phantom_config.json");
+    let fallback = || ("127.0.0.1".to_string(), 8080u16, 8090u16, 8095u16);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return fallback();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return fallback();
+    };
+    let ctrl = v.get("controller");
+    let host = ctrl
+        .and_then(|c| c.get("host"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let controller_port = controller_port_from_json(ctrl).unwrap_or(8080);
+    let ports = v.get("ports");
+    let worker_http = parse_ports_entry_port(ports, "worker_http").unwrap_or(8090);
+    let discovery_udp = parse_ports_entry_port(ports, "discovery_udp").unwrap_or(8095);
+    (host, controller_port, worker_http, discovery_udp)
+}
+
+/// Load ``ports.controller_api``, ``worker_http``, ``discovery_udp``, ``socket_infra`` from config.
+/// Missing or invalid entries keep defaults (same as bootstrap Step 4.5).
+fn read_firewall_port_policy(phantom_root: &Path) -> FirewallPortPolicy {
+    let path = phantom_root.join("phantom_config.json");
+    let mut policy = FirewallPortPolicy::default();
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return policy;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return policy;
+    };
+    let ports = v.get("ports");
+    if let Some(p) = parse_ports_entry_port(ports, "controller_api") {
+        policy.controller_tcp = p;
+    }
+    if let Some(p) = parse_ports_entry_port(ports, "worker_http") {
+        policy.worker_tcp = p;
+    }
+    if let Some(p) = parse_ports_entry_port(ports, "discovery_udp") {
+        policy.discovery_udp = p;
+    }
+    if let Some(p) = parse_ports_entry_port(ports, "socket_infra") {
+        policy.socket_tcp = p;
+    }
+    policy
+}
+
 /// Read a string (or number coerced to string) from a **nested** path inside
 /// `phantom_config.json`.  `keys` is a path of 1–N string segments, e.g.
 /// `&["controller", "security"]`.  Returns `None` if the file, the path, or
@@ -1853,6 +2215,7 @@ fn read_nested_config(path: &std::path::Path, keys: &[&str]) -> Option<String> {
     match &node {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }

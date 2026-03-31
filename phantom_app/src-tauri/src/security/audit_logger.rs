@@ -58,6 +58,18 @@ impl AuditLogger {
         Ok(())
     }
 
+    /// Append an audit line; on disk/IO failure logs **warn** (never silent).
+    pub async fn log_event_best_effort(&self, event_type: &str, details: serde_json::Value) {
+        if let Err(e) = self.log_event(event_type, details).await {
+            log::warn!(
+                target: "phantom_audit",
+                "audit_write_failed event_type={} error={}",
+                event_type,
+                e
+            );
+        }
+    }
+
     pub async fn read_entries(&self, limit: usize) -> Result<Vec<AuditEntry>, String> {
         let log_file = self.log_dir.join("phantom_audit.jsonl");
         if !log_file.exists() {

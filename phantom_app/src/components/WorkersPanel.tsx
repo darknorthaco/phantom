@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { scanAndRegisterWorkers } from '../utils/tauri';
+import { getWorkers, scanAndRegisterWorkers } from '../utils/tauri';
 
 interface Worker {
   worker_id: string;
@@ -65,9 +65,12 @@ export default function WorkersPanel() {
   const fetchWorkers = () => {
     setLoading(true);
     setScanResult(null);
-    fetch('http://127.0.0.1:8080/workers')
-      .then((r) => r.json())
-      .then((d) => { setWorkers(d.workers || []); setLoading(false); })
+    getWorkers()
+      .then((d) => {
+        const body = d as { workers?: Worker[] };
+        setWorkers(body.workers ?? []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   };
 
@@ -78,9 +81,18 @@ export default function WorkersPanel() {
     scanAndRegisterWorkers()
       .then((r) => {
         setScanning(false);
-        setScanResult(
-          `Scanned ${r.scanned} node(s), registered ${r.registered} worker(s)`
-        );
+        if (r.lanScanSkipped) {
+          setScanResult(
+            r.lanScanSkipReason ??
+              'LAN scan skipped: offline install marker present (see scan log).'
+          );
+        } else {
+          setScanResult(
+            r.partialRegistration
+              ? `Scanned ${r.scanned} node(s), registered ${r.registered} worker(s) — ${r.registrationFailed} registration failure(s); controller pool incomplete.`
+              : `Scanned ${r.scanned} node(s), registered ${r.registered} worker(s)`
+          );
+        }
         fetchWorkers();
       })
       .catch((e) => {

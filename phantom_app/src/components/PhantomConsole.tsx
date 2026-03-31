@@ -1,4 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
+import {
+  getExecutionMode,
+  getPhantomHealth,
+  getStats,
+  getWorkers,
+} from '../utils/tauri';
 
 interface Message {
   id: number;
@@ -44,25 +50,21 @@ export default function PhantomConsole() {
 
     if (cmd === 'health' || cmd === 'status') {
       addMessage('system', 'Querying controller health…');
-      fetch('http://127.0.0.1:8080/health')
-        .then((r) => r.json())
+      getPhantomHealth()
         .then((d) => addMessage('success', JSON.stringify(d, null, 2)))
         .catch((e) => addMessage('error', `Error: ${e}`));
     } else if (cmd === 'workers') {
-      fetch('http://127.0.0.1:8080/workers')
-        .then((r) => r.json())
+      getWorkers()
         .then((d) => addMessage('success', JSON.stringify(d, null, 2)))
         .catch((e) => addMessage('error', `Error: ${e}`));
     } else if (cmd === 'stats') {
-      fetch('http://127.0.0.1:8080/stats')
-        .then((r) => r.json())
+      getStats()
         .then((d) => addMessage('success', JSON.stringify(d, null, 2)))
         .catch((e) => addMessage('error', `Error: ${e}`));
     } else if (cmd === 'help') {
       addMessage('system', 'Commands: health, workers, stats, mode, help');
     } else if (cmd === 'mode') {
-      fetch('http://127.0.0.1:8080/mode')
-        .then((r) => r.json())
+      getExecutionMode()
         .then((d) => addMessage('success', JSON.stringify(d, null, 2)))
         .catch((e) => addMessage('error', `Error: ${e}`));
     } else {

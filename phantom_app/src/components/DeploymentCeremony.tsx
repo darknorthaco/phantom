@@ -8,7 +8,12 @@
 
 import { useEffect, useState } from 'react';
 import { useDeploymentCeremony } from '../state/DeploymentCeremonyContext';
-import { toWorkerSelection, type DeploymentPreScanResult } from '../state/deploymentState';
+import {
+  toWorkerSelection,
+  tauriInvokeErrorMessage,
+  type DeploymentPreScanResult,
+  type WorkerRegistrationSummary,
+} from '../state/deploymentState';
 import { completeDeploymentWithSelection } from '../utils/tauri';
 import Screen4ControllerSelect from './Screen4ControllerSelect';
 import Screen4WorkerSelect from './Screen4WorkerSelect';
@@ -18,7 +23,7 @@ type TabId = 'controller' | 'workers' | 'diagnostics';
 
 interface Props {
   preScanResult: DeploymentPreScanResult;
-  onComplete: () => void;
+  onComplete: (summary: WorkerRegistrationSummary) => void;
   onBack?: () => void;
   onError?: (err: string) => void;
 }
@@ -30,7 +35,7 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
     applyPreScanResult(preScanResult);
   }, [preScanResult, applyPreScanResult]);
 
-  const { discoveryFailed, controllerConfig, workerPool } = state;
+  const { discoveryFailed, offlineDeploy, controllerConfig, workerPool } = state;
 
   const showDiagnostics = discoveryFailed;
 
@@ -51,19 +56,22 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
     workerPool.length >= 1;
 
   const [completing, setCompleting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
   const handleContinue = async () => {
     if (!canContinue || !controllerConfig) return;
+    setCompleteError(null);
     setCompleting(true);
     try {
       const workerSelections = workerPool.map(toWorkerSelection);
-      await completeDeploymentWithSelection(
+      const summary = await completeDeploymentWithSelection(
         workerSelections,
         controllerConfig.runControllerLlm
       );
-      onComplete();
+      onComplete(summary);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = tauriInvokeErrorMessage(err);
+      setCompleteError(msg);
       onError?.(msg);
     } finally {
       setCompleting(false);
@@ -77,6 +85,79 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
       </div>
 
       <div className="deploy-title">Deployment Ceremony</div>
+
+      {completeError && (
+        <div
+          role="alert"
+          style={{
+            maxWidth: 520,
+            margin: '0 auto 16px',
+            padding: '12px 14px',
+            background: 'rgba(180, 60, 60, 0.12)',
+            border: '1px solid rgba(220, 90, 90, 0.45)',
+            borderRadius: 6,
+            textAlign: 'left',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 8, color: '#e8a0a0' }}>
+            Registration or finalize step failed
+          </div>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              lineHeight: 1.45,
+              color: 'var(--text-primary)',
+            }}
+          >
+            {completeError}
+          </pre>
+          <p
+            style={{
+              margin: '10px 0 0',
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            Trust or register API errors are logged by the controller. Adjust worker selection or trust,
+            then try <strong>Continue</strong> again.
+          </p>
+          <button
+            type="button"
+            className="deploy-btn ceremony-btn-secondary"
+            style={{ marginTop: 10, fontSize: 11, padding: '6px 12px' }}
+            onClick={() => setCompleteError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {offlineDeploy && !discoveryFailed && (
+        <p
+          className="ceremony-subtext"
+          style={{
+            maxWidth: 520,
+            margin: '0 auto 16px',
+            padding: '10px 14px',
+            background: 'rgba(180, 140, 60, 0.12)',
+            border: '1px solid rgba(180, 140, 60, 0.35)',
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          Offline bundle deploy: UDP LAN discovery was skipped. The worker list uses a synthetic
+          placeholder so you can finish the ceremony; trust approval may warn until real worker keys
+          are registered. Discovery mode:{' '}
+          <span style={{ fontFamily: 'var(--font-mono)' }}>offline_synthetic</span>.
+        </p>
+      )}
 
       <div className="ceremony-body">
         <div className="ceremony-tabs">

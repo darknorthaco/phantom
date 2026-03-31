@@ -74,8 +74,8 @@ export default function Screen4Diagnostics() {
             </button>
           </div>
           <pre className="ceremony-log-pre">
-            {discoveryLog.rawEntries.length > 0
-              ? discoveryLog.rawEntries.join('\n')
+            {(discoveryLog.rawEntries?.length ?? 0) > 0
+              ? (discoveryLog.rawEntries ?? []).join('\n')
               : 'No raw entries recorded.'}
           </pre>
 

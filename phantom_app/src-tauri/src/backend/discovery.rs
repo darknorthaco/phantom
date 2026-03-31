@@ -11,6 +11,7 @@
 use super::discovery_log::{DependencyInitEntry, DiscoveryLogBuilder};
 use super::worker_info::{RawWireManifest, SignedManifest};
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::time::Duration;
 
@@ -127,6 +128,9 @@ pub(crate) fn discover_single_window(
         Err(e) => {
             let dur = bind_start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
+            log::error!(
+                "discovery: cannot bind UDP socket 0.0.0.0:0 — no LAN discovery ({e})"
+            );
             if let Some(ref mut l) = log {
                 l.push_raw(&format!("bind error: {e}"));
                 l.add_dependency_init_entry(DependencyInitEntry {
@@ -141,6 +145,9 @@ pub(crate) fn discover_single_window(
         }
     };
     let broadcast_ok = socket.set_broadcast(true).is_ok();
+    if !broadcast_ok {
+        log::warn!("discovery: UDP set_broadcast(true) failed — broadcast sends may not leave this host");
+    }
     if let Some(ref mut l) = log {
         l.add_full_deploy_entry(
             "socket_set_broadcast",
@@ -158,7 +165,16 @@ pub(crate) fn discover_single_window(
     // Send to 127.0.0.1
     let target_loopback = format!("127.0.0.1:{}", DISCOVERY_PORT);
     let loopback_start = std::time::Instant::now();
-    let loopback_ok = socket.send_to(DISCOVER_PAYLOAD, &target_loopback).is_ok();
+    let loopback_ok = match socket.send_to(DISCOVER_PAYLOAD, &target_loopback) {
+        Ok(_) => true,
+        Err(e) => {
+            log::warn!(
+                "discovery: loopback send_to {target_loopback} failed ({} bytes): {e}",
+                DISCOVER_PAYLOAD.len()
+            );
+            false
+        }
+    };
     if loopback_ok {
         if let Some(ref mut l) = log {
             l.inc_packets_sent();
@@ -187,21 +203,41 @@ pub(crate) fn discover_single_window(
         .map(|a| format!("{}:{}", a, DISCOVERY_PORT))
         .collect();
     let broadcast_start = std::time::Instant::now();
+    let mut broadcast_sent_ok = 0usize;
+    let mut broadcast_send_errors: Vec<String> = Vec::new();
     for target in &broadcast_targets {
-        if socket.send_to(DISCOVER_PAYLOAD, target).is_ok() {
-            if let Some(ref mut l) = log {
-                l.inc_packets_sent();
-                l.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
+        match socket.send_to(DISCOVER_PAYLOAD, target) {
+            Ok(_) => {
+                broadcast_sent_ok += 1;
+                if let Some(ref mut l) = log {
+                    l.inc_packets_sent();
+                    l.push_raw(&format!("Broadcast DISCOVER_WORKERS to {target}"));
+                }
+            }
+            Err(e) => {
+                let detail = format!("{target}: {e}");
+                broadcast_send_errors.push(detail.clone());
+                log::warn!("discovery: broadcast send_to failed ({detail})");
             }
         }
     }
     if let Some(ref mut l) = log {
+        let broadcast_phase_ok =
+            broadcast_targets.is_empty() || broadcast_send_errors.is_empty();
         l.add_full_deploy_entry(
             "discovery_send_broadcast",
-            true,
+            broadcast_phase_ok,
             broadcast_start.elapsed().as_millis() as u64,
-            Some(serde_json::json!({"targets": &broadcast_targets})),
-            None,
+            Some(serde_json::json!({
+                "targets": &broadcast_targets,
+                "sent_ok": broadcast_sent_ok,
+                "send_failures": broadcast_send_errors.len(),
+            })),
+            if broadcast_send_errors.is_empty() {
+                None
+            } else {
+                Some(broadcast_send_errors.join("; "))
+            },
         );
     }
 
@@ -235,6 +271,9 @@ pub(crate) fn discover_single_window(
         }
 
         if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(remaining_ms))) {
+            log::warn!(
+                "discovery: set_read_timeout({remaining_ms} ms) failed — stopping listen loop ({e})"
+            );
             if let Some(ref mut l) = log {
                 l.push_raw(&format!("set_read_timeout error: {e}"));
             }
@@ -296,6 +335,13 @@ pub(crate) fn discover_single_window(
                                 },
                             );
                         }
+                        if !dm.signature_verified {
+                            log::warn!(
+                                "discovery: UDP manifest from {} worker_id={} — signature verification FAILED",
+                                source_ip,
+                                dm.manifest.worker_id
+                            );
+                        }
                         if seen.insert(dm.manifest.worker_id.clone()) {
                             manifests.push(dm);
                         }
@@ -312,6 +358,13 @@ pub(crate) fn discover_single_window(
                             Some(serde_json::json!({"raw_preview": raw.chars().take(80).collect::<String>()})),
                             Some("invalid manifest".to_string()),
                         );
+                    } else {
+                        log::debug!(
+                            "discovery: UDP from {} — payload not a valid worker manifest ({} bytes, preview {:?})",
+                            source_ip,
+                            n,
+                            raw.chars().take(60).collect::<String>()
+                        );
                     }
                 } else if let Some(ref mut l) = log {
                     l.inc_manifest_error();
@@ -322,6 +375,12 @@ pub(crate) fn discover_single_window(
                         0,
                         None,
                         Some("invalid UTF-8".to_string()),
+                    );
+                } else {
+                    log::debug!(
+                        "discovery: UDP from {} — invalid UTF-8 ({} bytes)",
+                        source_ip,
+                        n
                     );
                 }
 
@@ -335,12 +394,56 @@ pub(crate) fn discover_single_window(
                     break;
                 }
             }
-            Err(_) => break,
+            Err(e) => match e.kind() {
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                    if log.is_none() {
+                        log::debug!(
+                            "discovery: recv timed out with no datagram (slice up to {remaining_ms} ms; elapsed_ms={}; poll_cycle={})",
+                            start.elapsed().as_millis() as u64,
+                            poll_cycles
+                        );
+                    }
+                    break;
+                }
+                ErrorKind::Interrupted => {
+                    log::debug!("discovery: recv interrupted ({e}), ending listen loop");
+                    break;
+                }
+                _ => {
+                    log::warn!("discovery: recv_from failed: {e}");
+                    if let Some(ref mut l) = log {
+                        l.push_raw(&format!("recv_from error: {e}"));
+                    }
+                    break;
+                }
+            },
         }
     }
 
     let end_rfc3339 = chrono::Utc::now().to_rfc3339();
     let duration_ms = start.elapsed().as_millis() as u64;
+
+    if log.is_none() {
+        if manifests.is_empty() {
+            log::info!(
+                "discovery: window finished — 0 workers (port={}, loopback_send_ok={}, broadcast_sent_ok={}/{}, listen_ms≈{}, early_exit={})",
+                DISCOVERY_PORT,
+                loopback_ok,
+                broadcast_sent_ok,
+                broadcast_targets.len(),
+                duration_ms,
+                early_exit_on_first_worker
+            );
+        } else {
+            log::info!(
+                "discovery: window finished — {} unique worker(s) in {} ms (port={})",
+                manifests.len(),
+                duration_ms,
+                DISCOVERY_PORT
+            );
+        }
+    }
+
     if let Some(ref mut l) = log {
         l.add_full_deploy_entry(
             "discovery_listen_loop_end",
@@ -364,23 +467,58 @@ pub(crate) fn discover_single_window(
     manifests
 }
 
-/// Send a single UDP `PHANTOM_DISCOVER_WORKERS` probe to `127.0.0.1:8095`
+/// Send a single UDP `PHANTOM_DISCOVER_WORKERS` probe to `127.0.0.1:{discovery_port}`
 /// and return `true` if any response is received within `timeout_ms`.
 /// Used by the worker readiness probe loop in `start_local_worker()`.
-pub fn probe_worker_readiness(timeout_ms: u64) -> bool {
+///
+/// *discovery_port* must match ``phantom_config.json`` ``ports.discovery_udp`` (default 8095).
+///
+/// Failures are logged (bind/send/rec unexpected I/O); timeout / no reply is ``debug!``.
+pub fn probe_worker_readiness(timeout_ms: u64, discovery_port: u16) -> bool {
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(e) => {
+            log::warn!("readiness probe: UDP bind 0.0.0.0:0 failed: {e}");
+            return false;
+        }
     };
-    socket
-        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
-        .ok();
-    let target = format!("127.0.0.1:{}", DISCOVERY_PORT);
-    if socket.send_to(DISCOVER_PAYLOAD, &target).is_err() {
+    if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(timeout_ms))) {
+        log::warn!("readiness probe: set_read_timeout({timeout_ms}ms) failed: {e}");
+        return false;
+    }
+    let target = format!("127.0.0.1:{discovery_port}");
+    if let Err(e) = socket.send_to(DISCOVER_PAYLOAD, &target) {
+        log::warn!(
+            "readiness probe: send_to {target} ({} bytes) failed: {e}",
+            DISCOVER_PAYLOAD.len()
+        );
         return false;
     }
     let mut buf = [0u8; 4096];
-    socket.recv_from(&mut buf).is_ok()
+    match socket.recv_from(&mut buf) {
+        Ok((n, src)) => {
+            log::info!(
+                "readiness probe: UDP reply from {} ({} bytes); discovery port {}",
+                src,
+                n,
+                discovery_port
+            );
+            true
+        }
+        Err(e) => {
+            match e.kind() {
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                    log::debug!(
+                        "readiness probe: no UDP reply on 127.0.0.1:{discovery_port} within {timeout_ms}ms ({e})"
+                    );
+                }
+                _ => {
+                    log::warn!("readiness probe: recv_from failed: {e}");
+                }
+            }
+            false
+        }
+    }
 }
 
 /// Run discovery: single window, unicast to localhost + broadcast on each subnet.
@@ -416,6 +554,7 @@ pub fn discover_workers_with_log(
     interfaces.extend(broadcast_addrs.iter().cloned());
 
     let mut log = DiscoveryLogBuilder::new(interfaces, DISCOVERY_PORT);
+    log.set_discovery_mode(Some("lan_udp".to_string()));
     for entry in dependency_init_entries {
         log.add_dependency_init_entry(entry);
     }

@@ -18,7 +18,7 @@ function formatHardware(w: DiscoveredWorker): string {
 
 export default function Screen4WorkerSelect() {
   const { state, setWorkerPool } = useDeploymentCeremony();
-  const { discoveredWorkers, workerPool } = state;
+  const { discoveredWorkers, workerPool, offlineDeploy } = state;
 
   const isInPool = (w: DiscoveredWorker) =>
     workerPool.some((p) => p.workerId === w.workerId);
@@ -38,6 +38,12 @@ export default function Screen4WorkerSelect() {
       <p className="ceremony-subtext">
         Select at least one worker to include in the Phantom worker pool.
       </p>
+      {offlineDeploy && (
+        <p className="ceremony-subtext" style={{ fontSize: 11, opacity: 0.9 }}>
+          Offline mode: the synthetic worker is pre-selected for continuity; replace with
+          LAN-discovered workers after you connect real nodes.
+        </p>
+      )}
 
       <div className="ceremony-worker-list">
         {discoveredWorkers.map((w) => {

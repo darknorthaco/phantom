@@ -4,7 +4,8 @@ import ControllerSelectionScreen from './components/ControllerSelectionScreen';
 import FrontPorchDeploy from './components/FrontPorchDeploy';
 import DeploymentCeremony from './components/DeploymentCeremony';
 import { DeploymentCeremonyProvider } from './state/DeploymentCeremonyContext';
-import type { DeploymentPreScanResult } from './state/deploymentState';
+import type { DeploymentPreScanResult, WorkerRegistrationSummary } from './state/deploymentState';
+import { poolFullyRegistered } from './state/deploymentState';
 import ConsentModal from './components/ConsentModal';
 import MetricsBar from './components/MetricsBar';
 import SidebarNavigator from './components/SidebarNavigator';
@@ -17,6 +18,7 @@ import DeploymentsPanel from './components/DeploymentsPanel';
 import AuditLogPanel from './components/AuditLogPanel';
 import ExperimentalAOL from './components/ExperimentalAOL';
 import ChatPanel from './components/ChatPanel';
+import { getControllerBaseUrl, getPhantomHealth } from './utils/tauri';
 import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
@@ -26,28 +28,37 @@ type Phase = 'wizard' | 'controller_selection' | 'front_porch' | 'deploying' | '
 export default function App() {
   const [phase, setPhase] = useState<Phase>('wizard');
   const [preScanResult, setPreScanResult] = useState<DeploymentPreScanResult | null>(null);
+  const [registrationSummary, setRegistrationSummary] = useState<WorkerRegistrationSummary | null>(null);
   const [activeView, setActiveView] = useState('console');
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [controllerBaseUrl, setControllerBaseUrl] = useState('');
 
   const checkHealth = useCallback(() => {
-    fetch('http://127.0.0.1:8080/health')
-      .then((r) => r.json())
-      .then((d) => setHealth(d))
+    getPhantomHealth()
+      .then((d) => setHealth(d as Record<string, unknown>))
       .catch(() => setHealth(null));
   }, []);
 
   // Auto-detect deployed controller on mount; skip wizard if already running.
   useEffect(() => {
-    fetch('http://127.0.0.1:8080/health')
-      .then((r) => r.json())
+    getPhantomHealth()
       .then((d) => {
-        if (d && d.status === 'healthy') {
-          setHealth(d);
+        const body = d as Record<string, unknown>;
+        const s = body.status as string | undefined;
+        if (s === 'healthy' || s === 'degraded') {
+          setHealth(body);
           setPhase('toc');
         }
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (phase !== 'toc') return;
+    getControllerBaseUrl()
+      .then(setControllerBaseUrl)
+      .catch(() => setControllerBaseUrl(''));
+  }, [phase]);
 
   // Live health polling while in TOC — keeps MetricsBar current.
   useEffect(() => {
@@ -73,13 +84,15 @@ export default function App() {
     setPhase('deployment_ceremony');
   };
 
-  const handleCeremonyComplete = () => {
+  const handleCeremonyComplete = (summary: WorkerRegistrationSummary) => {
+    setRegistrationSummary(summary);
     setPhase('consent_toc');
     checkHealth();
   };
 
   const handleCeremonyBack = () => {
     setPreScanResult(null);
+    setRegistrationSummary(null);
     setPhase('front_porch');
   };
 
@@ -123,13 +136,25 @@ export default function App() {
 
   // Consent gate before entering TOC
   if (phase === 'consent_toc') {
+    const consentBase =
+      'Deployment complete. You are about to enter the Phantom Tactical Operations Center. The controller is active and awaiting your commands.';
+    const consentMessage =
+      registrationSummary && !poolFullyRegistered(registrationSummary)
+        ? `${consentBase}\n\nPartial registration: ${registrationSummary.registeredCount} of ${registrationSummary.selectedCount} selected workers are registered with the controller. Trust failures: ${registrationSummary.trustFailedCount}. Register API failures: ${registrationSummary.registrationFailedCount}. Review Workers and trust before routing tasks.`
+        : consentBase;
     return (
       <div className="deploy-screen">
         <ConsentModal
           title="Enter Command Center"
-          message="Deployment complete. You are about to enter the Phantom Tactical Operations Center. The controller is active and awaiting your commands."
-          onConfirm={handleEnterToc}
-          onCancel={() => setPhase('front_porch')}
+          message={consentMessage}
+          onConfirm={() => {
+            setRegistrationSummary(null);
+            handleEnterToc();
+          }}
+          onCancel={() => {
+            setRegistrationSummary(null);
+            setPhase('front_porch');
+          }}
         />
       </div>
     );
@@ -160,7 +185,16 @@ export default function App() {
             <div className="panel-header"><span className="panel-title">Settings</span></div>
             <div className="card">
               <div className="card-title">Controller Endpoint</div>
-              <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>http://127.0.0.1:8080</p>
+              <p
+                style={{
+                  color: 'var(--text-secondary)',
+                  fontSize: 12,
+                  fontFamily: 'var(--font-mono)',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {controllerBaseUrl || '—'}
+              </p>
             </div>
             <div className="card">
               <div className="card-title">Default Execution Mode</div>

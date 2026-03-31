@@ -41,14 +41,18 @@ export function DeploymentCeremonyProvider({ children }: { children: ReactNode }
   );
 
   const applyPreScanResult = useCallback((result: DeploymentPreScanResult) => {
-    // §2 — Only pre-select workers with verified signatures. Unverified default unchecked.
+    const offline = Boolean(result.offlineMode);
+    // Online: only pre-select signature-verified workers. Offline bundle: synthetic row is unverified — pre-select all rows so ceremony can continue.
     const preSelected = result.discoveryFailed
       ? []
-      : result.discoveredWorkers.filter((w) => w.signatureVerified);
+      : offline
+        ? [...result.discoveredWorkers]
+        : result.discoveredWorkers.filter((w) => w.signatureVerified);
     setState({
       discoveredWorkers: result.discoveredWorkers,
       discoveryLog: result.discoveryLog,
       discoveryFailed: result.discoveryFailed,
+      offlineDeploy: offline,
       controllerConfig: null,
       workerPool: preSelected,
     });
