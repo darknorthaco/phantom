@@ -973,9 +973,7 @@ async def cancel_task(task_id: str):
 
 
 @app.post("/api/worker/completion")
-async def worker_task_completion(
-    request: Request, payload: WorkerCompletionPayload
-):
+async def worker_task_completion(request: Request, payload: WorkerCompletionPayload):
     """Worker callback: task finished successfully (authoritative completion)."""
     _verify_worker_callback(request)
     async with _task_mutation_lock:
@@ -987,7 +985,11 @@ async def worker_task_completion(
             payload.timestamp,
         )
         if not ok:
-            code = 404 if reason == "unknown_task" else 403 if reason == "worker_mismatch" else 400
+            code = (
+                404
+                if reason == "unknown_task"
+                else 403 if reason == "worker_mismatch" else 400
+            )
             raise HTTPException(status_code=code, detail=reason)
         if state_manager:
             state_manager.save_tasks(tasks)
@@ -1020,7 +1022,11 @@ async def worker_task_failure(request: Request, payload: WorkerFailurePayload):
             reason_code="worker_reported",
         )
         if not ok:
-            code = 404 if reason == "unknown_task" else 403 if reason == "worker_mismatch" else 400
+            code = (
+                404
+                if reason == "unknown_task"
+                else 403 if reason == "worker_mismatch" else 400
+            )
             raise HTTPException(status_code=code, detail=reason)
         if state_manager:
             state_manager.save_tasks(tasks)
@@ -1200,7 +1206,9 @@ async def execute_task(task_id: str, worker_id: str, task: TaskRequest):
                 tasks[task_id]["failure_reason"] = "dispatch_rejected"
                 if state_manager:
                     state_manager.save_tasks(tasks)
-                logger.error("Task %s dispatch failed: HTTP %s", task_id, response.status_code)
+                logger.error(
+                    "Task %s dispatch failed: HTTP %s", task_id, response.status_code
+                )
                 dispatch_err = err
                 final_status = TASK_FAILED
             else:
@@ -1214,7 +1222,9 @@ async def execute_task(task_id: str, worker_id: str, task: TaskRequest):
                 st = str(body.get("status", "")).lower()
                 if st == "failed":
                     tasks[task_id]["status"] = TASK_FAILED
-                    tasks[task_id]["error"] = body.get("error") or "worker rejected task"
+                    tasks[task_id]["error"] = (
+                        body.get("error") or "worker rejected task"
+                    )
                     tasks[task_id]["failed_at"] = datetime.now().isoformat()
                     tasks[task_id]["failure_reason"] = "worker_rejected"
                     final_status = TASK_FAILED

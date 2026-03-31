@@ -136,7 +136,9 @@ def apply_worker_failure(
     if st == TASK_FAILED:
         return True, "idempotent"
     if st == TASK_COMPLETED:
-        logger.warning("Ignoring failure callback after completion for task %s", task_id)
+        logger.warning(
+            "Ignoring failure callback after completion for task %s", task_id
+        )
         return False, "already_completed"
     if is_terminal_any_status(st) and st not in (TASK_RUNNING, TASK_QUEUED):
         return False, f"invalid_state:{st}"
@@ -160,7 +162,9 @@ def reconcile_stale_running_tasks(
     Returns list of task_ids updated.
     """
     now = now or datetime.now()
-    timeout_sec = timeout_sec if timeout_sec is not None else default_running_timeout_sec()
+    timeout_sec = (
+        timeout_sec if timeout_sec is not None else default_running_timeout_sec()
+    )
     updated: List[str] = []
     for tid, rec in list(tasks.items()):
         if not isinstance(rec, dict):
@@ -175,7 +179,9 @@ def reconcile_stale_running_tasks(
             now_cmp = now.astimezone(started.tzinfo)
             elapsed = (now_cmp - started).total_seconds()
         else:
-            elapsed = (now.replace(tzinfo=None) - started.replace(tzinfo=None)).total_seconds()
+            elapsed = (
+                now.replace(tzinfo=None) - started.replace(tzinfo=None)
+            ).total_seconds()
         if elapsed > timeout_sec:
             rec["status"] = TASK_FAILED
             rec["error"] = "timeout/no-callback"

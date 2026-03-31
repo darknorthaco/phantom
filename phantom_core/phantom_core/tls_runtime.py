@@ -45,7 +45,9 @@ def validate_tls_paths(cert_path: str, key_path: str) -> None:
         ValueError: if paths are empty strings.
     """
     if not cert_path or not key_path:
-        raise ValueError("tls_cert_path and tls_key_path must be non-empty when TLS is enabled")
+        raise ValueError(
+            "tls_cert_path and tls_key_path must be non-empty when TLS is enabled"
+        )
     cp = Path(cert_path)
     kp = Path(key_path)
     if not cp.is_file():
