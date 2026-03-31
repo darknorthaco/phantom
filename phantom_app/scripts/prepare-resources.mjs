@@ -118,4 +118,18 @@ for (const file of INCLUDE_FILES) {
   }
 }
 
+// Fail the build if the staged tree is incomplete (catches bad INCLUDE_DIRS / bundle regressions).
+const required = [
+  ['run.py', join(DEST_ROOT, 'run.py')],
+  ['phantom_core/controller_api.py', join(DEST_ROOT, 'phantom_core', 'controller_api.py')],
+  ['windows-worker/windows_worker/main.py', join(DEST_ROOT, 'windows-worker', 'windows_worker', 'main.py')],
+];
+const missing = required.filter(([, p]) => !existsSync(p)).map(([label]) => label);
+if (missing.length) {
+  console.error(
+    `[prepare-resources] FATAL: staged phantom_core is incomplete — missing: ${missing.join(', ')}`
+  );
+  process.exit(1);
+}
+
 console.log('\n[prepare-resources] Done.\n');

@@ -30,7 +30,7 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "resources/phantom_core/**/*": "phantom_core/"
+      "resources/phantom_core/": "phantom_core/"
     },
     "icon": [
       "icons/32x32.png",

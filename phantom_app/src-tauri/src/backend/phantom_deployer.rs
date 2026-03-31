@@ -296,10 +296,17 @@ impl PhantomDeployer {
     async fn install_phantom_core(&self) -> Result<(), String> {
         let dest = self.phantom_root.join("engine");
 
-        // If engine is already deployed and run.py is present, skip the copy.
-        if dest.join("run.py").exists() {
-            log::info!("Phantom engine already present at {:?} — skipping copy", dest);
+        // Do not skip when only run.py exists — partial engines (e.g. missing windows-worker)
+        // break the Windows bundled worker and confuse pre-deploy checks.
+        if engine_deploy_complete(&dest) {
+            log::info!("Phantom engine already complete at {:?} — skipping copy", dest);
             return Ok(());
+        }
+        if dest.join("run.py").exists() || dest.join("phantom_core").exists() {
+            log::warn!(
+                "Engine at {:?} is incomplete or stale — re-copying from bundle/source",
+                dest
+            );
         }
 
         let src: PathBuf = if let Some(ref bundle) = self.offline_bundle_path {
@@ -358,8 +365,9 @@ impl PhantomDeployer {
     }
 
     async fn install_service(&self) -> Result<(), String> {
-        let _python   = venv_python(&self.phantom_root);
-        let run_py    = self.engine_source.join("run.py");
+        #[cfg(not(target_os = "windows"))]
+        let python = venv_python(&self.phantom_root);
+        let run_py = self.engine_source.join("run.py");
         let state_dir = self.phantom_root.join("state");
 
         #[cfg(target_os = "linux")]
@@ -2033,6 +2041,34 @@ impl PhantomDeployer {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// ``~/.phantom/engine`` must include controller sources and (on Windows) the bundled worker tree.
+fn engine_deploy_complete(engine_root: &std::path::Path) -> bool {
+    let run_ok = engine_root.join("run.py").is_file()
+        || engine_root.join("run_integrated_phantom.py").is_file();
+    if !run_ok {
+        return false;
+    }
+    if !engine_root
+        .join("phantom_core")
+        .join("controller_api.py")
+        .is_file()
+    {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if !engine_root
+            .join("windows-worker")
+            .join("windows_worker")
+            .join("main.py")
+            .is_file()
+        {
+            return false;
+        }
+    }
+    true
+}
 
 /// Recursively copy a directory tree from `src` to `dst`.
 /// Skips `__pycache__`, `.git`, `venv`, and `*.pyc` files.

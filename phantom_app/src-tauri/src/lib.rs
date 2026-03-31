@@ -1001,32 +1001,70 @@ async fn run_pre_deploy_validation(
 }
 
 fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
-    // 1. Distribution: bundled resources inside the installed app
-    if let Ok(res_dir) = app.path().resource_dir() {
-        let bundled = res_dir.join("phantom_core");
-        if bundled.join("run.py").exists() {
-            return bundled;
+    match app.path().resource_dir() {
+        Ok(res_dir) => {
+            let bundled = res_dir.join("phantom_core");
+            if bundled.join("run.py").is_file() {
+                log::debug!(
+                    "find_engine_source: using bundled phantom_core at {}",
+                    bundled.display()
+                );
+                return bundled;
+            }
+            log::error!(
+                "find_engine_source: bundled phantom_core missing run.py at {} — run prepare-resources before build; check bundle.resources maps resources/phantom_core/ to phantom_core/",
+                bundled.display()
+            );
+            // Release installers must not silently use repo-relative paths (wrong or absent on user machines).
+            if !cfg!(debug_assertions) {
+                return bundled;
+            }
+            log::warn!("find_engine_source: debug build — trying workspace fallbacks after incomplete bundle");
+        }
+        Err(e) => {
+            log::error!("find_engine_source: resource_dir() failed: {e}");
+            if !cfg!(debug_assertions) {
+                return PathBuf::new();
+            }
+            log::warn!("find_engine_source: debug build — trying workspace fallbacks after resource_dir error");
         }
     }
-    // 2. Dev: workspace layout (Cursor / cargo run)
-    for c in &[
-        PathBuf::from("/workspace/phantom_core"),
-        PathBuf::from("../phantom_core"),
-    ] {
-        if c.join("run.py").exists() {
-            return c.clone();
+
+    #[cfg(debug_assertions)]
+    {
+        for c in &[
+            PathBuf::from("/workspace/phantom_core"),
+            PathBuf::from("../phantom_core"),
+        ] {
+            if c.join("run.py").exists() {
+                log::debug!(
+                    "find_engine_source: using dev workspace path {}",
+                    c.display()
+                );
+                return c.clone();
+            }
         }
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let deployed = home.join(".phantom/engine");
+        if deployed.join("run.py").exists() {
+            log::debug!(
+                "find_engine_source: using existing deploy engine {}",
+                deployed.display()
+            );
+            return deployed;
+        }
+        log::warn!("find_engine_source: no dev engine found; defaulting to /workspace/phantom_core");
+        return PathBuf::from("/workspace/phantom_core");
     }
-    // 3. Already-deployed engine (from a previous install)
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let deployed = home.join(".phantom/engine");
-    if deployed.join("run.py").exists() {
-        return deployed;
+
+    #[cfg(not(debug_assertions))]
+    {
+        // All release paths return inside `match` above.
+        unreachable!("find_engine_source: release should return from bundled or empty path in match")
     }
-    PathBuf::from("/workspace/phantom_core")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
