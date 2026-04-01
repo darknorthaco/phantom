@@ -8,7 +8,6 @@ key-change detection per the Corrected Architecture Design.
 
 import json
 import logging
-import os
 import threading
 import time
 from dataclasses import asdict, dataclass
