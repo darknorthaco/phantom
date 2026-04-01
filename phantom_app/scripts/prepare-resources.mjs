@@ -17,6 +17,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Resolve paths relative to this script's location (phantom_app/scripts/)
 const PHANTOM_CORE_SRC = resolve(__dirname, '../../phantom_core');
 const DEST_ROOT = resolve(__dirname, '../src-tauri/resources/phantom_core');
+const LOCAL_CI_SRC = resolve(__dirname, '../../scripts');
+const LOCAL_CI_DEST = resolve(__dirname, '../src-tauri/resources/local_ci');
 
 // Python packages / directories to include
 const INCLUDE_DIRS = [
@@ -28,6 +30,7 @@ const INCLUDE_DIRS = [
   'phantom_protocol_schemas',
   'linux-worker',
   'windows-worker',
+  'scripts',
 ];
 
 // Top-level files to include
@@ -123,6 +126,7 @@ const required = [
   ['run.py', join(DEST_ROOT, 'run.py')],
   ['phantom_core/controller_api.py', join(DEST_ROOT, 'phantom_core', 'controller_api.py')],
   ['windows-worker/windows_worker/main.py', join(DEST_ROOT, 'windows-worker', 'windows_worker', 'main.py')],
+  ['scripts/ci/check_platform_assumptions.py', join(DEST_ROOT, 'scripts', 'ci', 'check_platform_assumptions.py')],
 ];
 const missing = required.filter(([, p]) => !existsSync(p)).map(([label]) => label);
 if (missing.length) {
@@ -130,6 +134,23 @@ if (missing.length) {
     `[prepare-resources] FATAL: staged phantom_core is incomplete — missing: ${missing.join(', ')}`
   );
   process.exit(1);
+}
+
+// Local CI runner + dev-tools requirements (Troubleshooter “Run Local CI”)
+mkdirSync(LOCAL_CI_DEST, { recursive: true });
+const localCiScript = join(LOCAL_CI_SRC, 'local_ci_check.py');
+const localCiDestScript = join(LOCAL_CI_DEST, 'local_ci_check.py');
+if (existsSync(localCiScript)) {
+  copyFileSync(localCiScript, localCiDestScript);
+  console.log('  [local_ci] local_ci_check.py');
+} else {
+  console.warn(`  [local_ci] skip: ${localCiScript} not found`);
+}
+const devToolsSrc = join(LOCAL_CI_SRC, 'dev_tools');
+const devToolsDest = join(LOCAL_CI_DEST, 'dev_tools');
+if (existsSync(devToolsSrc)) {
+  copyDirRecursive(devToolsSrc, devToolsDest);
+  console.log('  [local_ci] dev_tools/');
 }
 
 console.log('\n[prepare-resources] Done.\n');

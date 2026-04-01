@@ -115,3 +115,63 @@ export const loadOfflineModelCatalogue = (path: string) =>
   invoke<Record<string, unknown>>('load_offline_model_catalogue', { path });
 export const installOfflineBundle = (path: string) =>
   invoke<Record<string, unknown>>('install_offline_bundle', { path });
+
+// Deployment Troubleshooter + chronicle
+export const getDeploymentChronicle = (limit: number) =>
+  invoke<string[]>('get_deployment_chronicle', { limit });
+
+export const troubleshooterAppendNote = (note: string) =>
+  invoke<void>('troubleshooter_append_note', { note });
+
+export const troubleshooterScanPort = (port: number) =>
+  invoke<Record<string, unknown>>('troubleshooter_scan_port', { port });
+
+export const troubleshooterCycleControllerPort = () =>
+  invoke<Record<string, unknown>>('troubleshooter_cycle_controller_port');
+
+export const troubleshooterPingController = () =>
+  invoke<Record<string, unknown>>('troubleshooter_ping_controller');
+
+export const troubleshooterProtocolHint = () =>
+  invoke<Record<string, unknown>>('troubleshooter_protocol_hint');
+
+export const troubleshooterStopServices = () => invoke<void>('troubleshooter_stop_services');
+
+export const troubleshooterPortCycleDefaults = () =>
+  invoke<number[]>('troubleshooter_port_cycle_defaults');
+
+export interface ControllerPlacementInfo {
+  host: string;
+  port: number;
+  deviceLabel?: string | null;
+}
+
+export const getControllerPlacementInfo = () =>
+  invoke<ControllerPlacementInfo | null>('get_controller_placement_info');
+
+export const troubleshooterNetworkProbes = () =>
+  invoke<Record<string, unknown>>('troubleshooter_network_probes');
+
+export const troubleshooterVerifyArtifacts = () =>
+  invoke<Record<string, unknown>>('troubleshooter_verify_artifacts');
+
+export const troubleshooterRestartController = () =>
+  invoke<void>('troubleshooter_restart_controller');
+
+export const troubleshooterRestartLocalWorker = () =>
+  invoke<void>('troubleshooter_restart_local_worker');
+
+/** Same checks as GitHub ``test-controller`` / Python smoke (via Phantom venv only). */
+export interface LocalCiInvokeOptions {
+  ensureDevTools?: boolean;
+  portCheck?: boolean;
+}
+
+export interface LocalCiInvokeResult {
+  ok: boolean;
+  exit_code: number | null;
+  message: string;
+}
+
+export const runLocalCiCheck = (options?: LocalCiInvokeOptions | null) =>
+  invoke<LocalCiInvokeResult>('run_local_ci_check', { options: options ?? null });

@@ -22,10 +22,18 @@ pub struct ManagedState {
 
 fn emit_deploy_failed(
     app: &tauri::AppHandle,
+    phantom_root: &std::path::Path,
     message: String,
     step_index: Option<usize>,
     step_label: Option<String>,
 ) {
+    let rec = backend::deployment_chronicle::ChronicleRecord::new("deploy", "error", message.clone())
+        .with_details(serde_json::json!({
+            "stepIndex": step_index,
+            "stepLabel": step_label.clone(),
+            "fullMessage": message.clone(),
+        }));
+    let _ = backend::deployment_chronicle::append_blocking(phantom_root, &rec);
     let payload = DeployFailureInfo {
         message,
         step_index,
@@ -571,6 +579,7 @@ async fn run_deployment_pre_scan(
             log::error!("deployment pre-scan failed: {e}");
             emit_deploy_failed(
                 &app,
+                &phantom_root,
                 e.clone(),
                 None,
                 Some("Deployment pre-scan".to_string()),
@@ -621,6 +630,7 @@ async fn complete_deployment_with_selection(
             log::error!("complete_deployment_with_selection failed: {e}");
             emit_deploy_failed(
                 &app,
+                &phantom_root,
                 e.clone(),
                 None,
                 Some("Registration & finalize deployment".to_string()),
@@ -727,6 +737,7 @@ async fn deploy_phantom(
                 .await;
             emit_deploy_failed(
                 &app,
+                &phantom_root,
                 e.clone(),
                 Some(i),
                 Some((*label).to_string()),
@@ -1000,6 +1011,195 @@ async fn run_pre_deploy_validation(
     Ok(report)
 }
 
+// ── Deployment Troubleshooter (GUI + chronicle) ─────────────────────
+
+#[tauri::command]
+async fn get_deployment_chronicle(
+    state: tauri::State<'_, ManagedState>,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    let n = limit.clamp(1, 500);
+    backend::deployment_chronicle::read_tail(&state.app.phantom_root, n).await
+}
+
+#[tauri::command]
+async fn troubleshooter_append_note(
+    state: tauri::State<'_, ManagedState>,
+    note: String,
+) -> Result<(), String> {
+    let rec = backend::deployment_chronicle::ChronicleRecord::new("user", "info", note);
+    backend::deployment_chronicle::append(&state.app.phantom_root, rec).await
+}
+
+#[tauri::command]
+async fn troubleshooter_scan_port(
+    state: tauri::State<'_, ManagedState>,
+    port: u16,
+) -> Result<serde_json::Value, String> {
+    backend::troubleshooter::scan_controller_port(&state.app.phantom_root, port).await
+}
+
+#[tauri::command]
+async fn troubleshooter_cycle_controller_port(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    let out = backend::troubleshooter::cycle_controller_port(&state.app.phantom_root).await?;
+    sync_controller_url_mutex(&state.app);
+    let _ = app.emit("phantom-config-updated", &());
+    Ok(out)
+}
+
+#[tauri::command]
+async fn troubleshooter_ping_controller(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    backend::troubleshooter::ping_controller_health(&state.app.phantom_root).await
+}
+
+#[tauri::command]
+async fn troubleshooter_protocol_hint(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    Ok(
+        backend::troubleshooter::protocol_compatibility_hint(&state.app.phantom_root).await,
+    )
+}
+
+#[tauri::command]
+async fn troubleshooter_stop_services(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<(), String> {
+    let engine = find_engine_source(&app);
+    backend::troubleshooter::stop_phantom_services_soft(
+        &state.app.phantom_root,
+        &engine,
+        app.clone(),
+    )
+    .await
+}
+
+#[tauri::command]
+fn troubleshooter_port_cycle_defaults() -> Vec<u16> {
+    backend::troubleshooter::CONTROLLER_PORT_CYCLE.to_vec()
+}
+
+#[derive(serde::Serialize)]
+struct ControllerPlacementView {
+    host: String,
+    port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_label: Option<String>,
+}
+
+#[tauri::command]
+async fn get_controller_placement_info(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<Option<ControllerPlacementView>, String> {
+    let p = state.app.phantom_root.join("controller_placement.json");
+    if !p.is_file() {
+        return Ok(None);
+    }
+    let raw = tokio::fs::read_to_string(&p)
+        .await
+        .map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let host = v
+        .get("host")
+        .and_then(|x| x.as_str())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let port = v
+        .get("port")
+        .and_then(|x| x.as_u64())
+        .and_then(|u| u16::try_from(u).ok())
+        .ok_or_else(|| "controller_placement.json: invalid port".to_string())?;
+    let device_label = v
+        .get("device_label")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+    Ok(Some(ControllerPlacementView {
+        host,
+        port,
+        device_label,
+    }))
+}
+
+#[tauri::command]
+async fn troubleshooter_network_probes(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    Ok(
+        backend::troubleshooter::network_reachability_probes(&state.app.phantom_root).await,
+    )
+}
+
+#[tauri::command]
+async fn troubleshooter_verify_artifacts(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    Ok(
+        backend::troubleshooter::verify_deployment_artifacts(&state.app.phantom_root).await,
+    )
+}
+
+#[tauri::command]
+async fn troubleshooter_restart_controller(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<(), String> {
+    let engine = find_engine_source(&app);
+    let r = backend::troubleshooter::troubleshooter_restart_controller(
+        &state.app.phantom_root,
+        &engine,
+        app.clone(),
+    )
+    .await;
+    if r.is_ok() {
+        sync_controller_url_mutex(&state.app);
+        let _ = app.emit("phantom-config-updated", &());
+    }
+    r
+}
+
+#[tauri::command]
+async fn troubleshooter_restart_local_worker(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<(), String> {
+    let engine = find_engine_source(&app);
+    backend::troubleshooter::troubleshooter_restart_local_worker(
+        &state.app.phantom_root,
+        &engine,
+        app.clone(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn run_local_ci_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    options: Option<backend::local_ci_runner::LocalCiOptions>,
+) -> Result<backend::local_ci_runner::LocalCiInvokeResult, String> {
+    let engine = find_engine_source(&app);
+    if !engine.join("run.py").is_file() {
+        return Err(
+            "Phantom engine (phantom_core with run.py) not found. Use a build with bundled resources or a dev layout."
+                .to_string(),
+        );
+    }
+    let opts = options.unwrap_or_default();
+    backend::local_ci_runner::run_local_ci_check(
+        app,
+        state.app.phantom_root.clone(),
+        engine,
+        opts,
+    )
+    .await
+}
+
 fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
     match app.path().resource_dir() {
         Ok(res_dir) => {
@@ -1100,6 +1300,20 @@ pub fn run() {
             get_deployment_status,
             run_deployment_pre_scan, complete_deployment_with_selection,
             run_pre_deploy_validation,
+            get_deployment_chronicle,
+            troubleshooter_append_note,
+            troubleshooter_scan_port,
+            troubleshooter_cycle_controller_port,
+            troubleshooter_ping_controller,
+            troubleshooter_protocol_hint,
+            troubleshooter_stop_services,
+            troubleshooter_port_cycle_defaults,
+            get_controller_placement_info,
+            troubleshooter_network_probes,
+            troubleshooter_verify_artifacts,
+            troubleshooter_restart_controller,
+            troubleshooter_restart_local_worker,
+            run_local_ci_check,
             deploy_phantom,
             verify_offline_bundle, load_offline_model_catalogue, install_offline_bundle,
             get_phantom_health, get_workers, get_stats,

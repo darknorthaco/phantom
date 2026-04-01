@@ -8,6 +8,7 @@ import {
   type DeploymentPreScanResult,
   type PreDeployReport,
 } from '../state/deploymentState';
+import DeploymentTroubleshooter from './DeploymentTroubleshooter';
 import '../styles/deploy.css';
 
 interface DeployProgress {
@@ -29,6 +30,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
   const [preDeployReport, setPreDeployReport] = useState<PreDeployReport | null>(null);
   const [preDeployBusy, setPreDeployBusy] = useState(false);
   const [deployFailure, setDeployFailure] = useState<DeployFailureInfo | null>(null);
+  const [troubleshooterOpen, setTroubleshooterOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,6 +55,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
     let unlistenFailed: UnlistenFn | undefined;
     listen<DeployFailureInfo>('deploy-failed', (event) => {
       setDeployFailure(event.payload);
+      setTroubleshooterOpen(true);
     }).then((fn) => {
       unlistenFailed = fn;
     });
@@ -79,6 +82,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
       const msg = tauriInvokeErrorMessage(err);
       console.error('Pre-scan failed:', err);
       setDeployFailure((prev) => prev ?? { message: msg, stepLabel: 'Deployment pre-scan' });
+      setTroubleshooterOpen(true);
       setDeploying(false);
     }
   };
@@ -209,18 +213,29 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
                   color: 'var(--text-secondary)',
                 }}
               >
-                Run <strong>Validate prerequisites</strong> for a full checklist. If the controller failed to
-                start, check logs under your Phantom home directory (for example{' '}
+                Run <strong>Validate prerequisites</strong> for a full checklist, or open the{' '}
+                <strong>Deployment Troubleshooter</strong> for ports, restarts, and the Deployment Chronicle. If
+                the controller failed to start, logs also live under your Phantom home directory (for example{' '}
                 <span style={{ fontFamily: 'var(--font-mono)' }}>.phantom</span>).
               </p>
-              <button
-                type="button"
-                className="deploy-btn ceremony-btn-secondary"
-                style={{ marginTop: 10, fontSize: 11, padding: '6px 12px' }}
-                onClick={() => setDeployFailure(null)}
-              >
-                Dismiss
-              </button>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="deploy-btn"
+                  style={{ fontSize: 11, padding: '6px 12px' }}
+                  onClick={() => setTroubleshooterOpen(true)}
+                >
+                  Open Deployment Troubleshooter
+                </button>
+                <button
+                  type="button"
+                  className="deploy-btn ceremony-btn-secondary"
+                  style={{ fontSize: 11, padding: '6px 12px' }}
+                  onClick={() => setDeployFailure(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
             </div>
           )}
           <button className="deploy-btn" onClick={handleDeploy} disabled={deploying}>
@@ -235,6 +250,19 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
           >
             {preDeployBusy ? 'Running checklist…' : 'Validate prerequisites'}
           </button>
+          <button
+            type="button"
+            className="deploy-btn ceremony-btn-secondary"
+            onClick={() => setTroubleshooterOpen(true)}
+            style={{ fontSize: 11, padding: '8px 16px' }}
+          >
+            Troubleshoot deployment
+          </button>
+          <DeploymentTroubleshooter
+            open={troubleshooterOpen}
+            onClose={() => setTroubleshooterOpen(false)}
+            deployFailure={deployFailure}
+          />
           {preDeployReport && (
             <div
               className="scan-log"

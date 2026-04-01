@@ -7,14 +7,17 @@
  */
 
 import { useEffect, useState } from 'react';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useDeploymentCeremony } from '../state/DeploymentCeremonyContext';
 import {
   toWorkerSelection,
   tauriInvokeErrorMessage,
+  type DeployFailureInfo,
   type DeploymentPreScanResult,
   type WorkerRegistrationSummary,
 } from '../state/deploymentState';
 import { completeDeploymentWithSelection } from '../utils/tauri';
+import DeploymentTroubleshooter from './DeploymentTroubleshooter';
 import Screen4ControllerSelect from './Screen4ControllerSelect';
 import Screen4WorkerSelect from './Screen4WorkerSelect';
 import Screen4Diagnostics from './Screen4Diagnostics';
@@ -57,6 +60,21 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
 
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [troubleshooterOpen, setTroubleshooterOpen] = useState(false);
+  const [deployFailure, setDeployFailure] = useState<DeployFailureInfo | null>(null);
+
+  useEffect(() => {
+    let unlistenFailed: UnlistenFn | undefined;
+    listen<DeployFailureInfo>('deploy-failed', (event) => {
+      setDeployFailure(event.payload);
+      setTroubleshooterOpen(true);
+    }).then((fn) => {
+      unlistenFailed = fn;
+    });
+    return () => {
+      unlistenFailed?.();
+    };
+  }, []);
 
   const handleContinue = async () => {
     if (!canContinue || !controllerConfig) return;
@@ -124,16 +142,27 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
             }}
           >
             Trust or register API errors are logged by the controller. Adjust worker selection or trust,
-            then try <strong>Continue</strong> again.
+            then try <strong>Continue</strong> again. Use the troubleshooter for ports, process restarts, and the
+            Deployment Chronicle.
           </p>
-          <button
-            type="button"
-            className="deploy-btn ceremony-btn-secondary"
-            style={{ marginTop: 10, fontSize: 11, padding: '6px 12px' }}
-            onClick={() => setCompleteError(null)}
-          >
-            Dismiss
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              className="deploy-btn"
+              style={{ fontSize: 11, padding: '6px 12px' }}
+              onClick={() => setTroubleshooterOpen(true)}
+            >
+              Open Deployment Troubleshooter
+            </button>
+            <button
+              type="button"
+              className="deploy-btn ceremony-btn-secondary"
+              style={{ fontSize: 11, padding: '6px 12px' }}
+              onClick={() => setCompleteError(null)}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -209,6 +238,13 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
               )}
               <button
                 type="button"
+                className="deploy-btn ceremony-btn-secondary"
+                onClick={() => setTroubleshooterOpen(true)}
+              >
+                Troubleshoot deployment
+              </button>
+              <button
+                type="button"
                 className="deploy-btn"
                 onClick={handleContinue}
                 disabled={!canContinue || completing}
@@ -219,6 +255,12 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
           )}
         </div>
       </div>
+
+      <DeploymentTroubleshooter
+        open={troubleshooterOpen}
+        onClose={() => setTroubleshooterOpen(false)}
+        deployFailure={deployFailure}
+      />
     </div>
   );
 }

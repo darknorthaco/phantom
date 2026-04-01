@@ -1886,6 +1886,41 @@ impl PhantomDeployer {
         }
     }
 
+    /// Stop Phantom service only (no uninstall) — Deployment Troubleshooter / safe iteration.
+    pub async fn stop_service_without_uninstall(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", "phantom"])
+                .output()
+                .await;
+            log::info!("Troubleshooter: systemctl --user stop phantom (best effort)");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("sc").args(["stop", "phantom"]).output().await;
+            log::info!("Troubleshooter: sc stop phantom (best effort)");
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            log::info!("Troubleshooter: stop service no-op on this OS");
+        }
+    }
+
+    /// Best-effort: stop installed Phantom service (if any), wait briefly, spawn controller again.
+    pub async fn troubleshooter_restart_controller(&self) -> Result<(), String> {
+        self.stop_service_without_uninstall().await;
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        self.start_controller().await
+    }
+
+    /// Best-effort: stop service, wait, spawn bundled local worker (OS-specific).
+    pub async fn troubleshooter_restart_local_worker(&self) -> Result<(), String> {
+        self.stop_service_without_uninstall().await;
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        self.start_local_worker().await
+    }
+
     /// Remove Windows firewall rules created by open_ports (best effort).
     async fn remove_windows_firewall_phantom_rules(&self) {
         #[cfg(target_os = "windows")]
@@ -2189,6 +2224,11 @@ fn controller_port_from_json(ctrl: Option<&serde_json::Value>) -> Option<u16> {
 
 /// Sync read: ``controller.host`` / ``controller.port`` and ``ports.worker_http`` / ``discovery_udp``.
 /// Defaults match bootstrap Step 4.5. Used for local worker JSON, readiness UDP port, offline synthetic worker.
+/// Exposed for Deployment Troubleshooter (TCP probes, UI labels).
+pub fn read_runtime_tcp_endpoints(phantom_root: &Path) -> (String, u16, u16, u16) {
+    read_phantom_runtime_endpoints(phantom_root)
+}
+
 fn read_phantom_runtime_endpoints(phantom_root: &Path) -> (String, u16, u16, u16) {
     let path = phantom_root.join("phantom_config.json");
     let fallback = || ("127.0.0.1".to_string(), 8080u16, 8090u16, 8095u16);
