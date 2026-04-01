@@ -98,7 +98,9 @@ class TrustStore:
         self._path = self._dir / "trust_store.jsonl"
         self._lock = threading.Lock()
         # Context manager factory: ``with self._append_file_lock(f):`` (see trust_store_filelock).
-        self._append_file_lock: Callable[[TextIO], Any] = select_trust_store_append_lock()
+        self._append_file_lock: Callable[[TextIO], Any] = (
+            select_trust_store_append_lock()
+        )
         # In-memory index: worker_id -> list of records (append-only)
         self._records: dict[str, List[TrustRecord]] = {}
         self._load()
