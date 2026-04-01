@@ -18,12 +18,34 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  padding: 16px;
+  box-sizing: border-box;
   background: radial-gradient(ellipse at center, #101020 0%, #060610 70%, #020208 100%);
   position: relative;
   overflow: hidden;
+}
+
+/* Idle front porch: scroll when Troubleshooter + checklist need space (1024×700). */
+.deploy-screen--active {
+  justify-content: center;
+}
+
+.deploy-screen-idle-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 720px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 16px;
 }
 
 .deploy-screen::before {
@@ -39,9 +61,35 @@
   margin-bottom: 48px;
 }
 
+/* Ceremony / wizard / controller selection only — not the Front Porch deploy hero. */
 .phantom-mask-svg {
   width: 260px;
   height: 260px;
+  object-fit: contain;
+}
+
+/* Front Porch deploy screen hero only (above Deploy Phantom). */
+.deploy-screen-logo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Cap height so title + Deploy stay visible at 1024×700; logo uses 90% of this box. */
+  height: min(44vh, 420px);
+  animation: phantomPulse 3s ease-in-out infinite;
+  margin-bottom: 48px;
+}
+
+.deploy-screen-logo {
+  width: 390px;
+  height: 390px;
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
 }
 
 .deploy-title {
@@ -138,10 +186,13 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px;
+  padding: 16px;
+  overflow-x: hidden;
   overflow-y: auto;
-  max-width: 640px;
+  max-width: min(640px, 100%);
   margin: 0 auto;
+  box-sizing: border-box;
+  min-height: 0;
 }
 
 .ceremony-screen .ceremony-body {
@@ -437,17 +488,63 @@
 }
 
 /* Deployment Troubleshooter (Front Porch + Ceremony) */
-.deployment-troubleshooter {
+.deployment-troubleshooter-shell {
   width: min(96%, 720px);
-  max-height: min(88vh, 900px);
-  overflow: auto;
-  margin: 16px auto 24px;
-  padding: 16px 18px 20px;
+  max-height: min(calc(100vh - 120px), 820px);
+  margin: 12px auto 16px;
+  padding: 16px;
   background: rgba(8, 10, 24, 0.92);
   border: 1px solid rgba(100, 140, 220, 0.35);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   text-align: left;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.deployment-troubleshooter-top {
+  flex-shrink: 0;
+}
+
+.deployment-troubleshooter-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deployment-troubleshooter-sticky-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border-color);
+  background: linear-gradient(to top, rgba(8, 10, 24, 0.98) 70%, transparent);
+}
+
+.deployment-troubleshooter-sticky-label {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.ts-sticky-btn {
+  font-size: 10px !important;
+  padding: 6px 10px !important;
 }
 
 .deployment-troubleshooter-header {
@@ -455,9 +552,115 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-color);
+}
+
+.deployment-troubleshooter-header-brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.deployment-troubleshooter-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* Collapsible sections */
+.ts-collapsible {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.ts-collapsible-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.ts-collapsible-head:hover {
+  background: rgba(0, 166, 255, 0.08);
+}
+
+.ts-collapsible-chevron {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--text-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.ts-collapsible-chevron.is-open {
+  transform: rotate(0deg);
+}
+
+.ts-collapsible-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.ts-collapsible-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s ease;
+}
+
+.ts-collapsible-panel.is-open {
+  grid-template-rows: 1fr;
+}
+
+.ts-collapsible-inner {
+  min-height: 0;
+  overflow: auto;
+  max-height: min(44vh, 440px);
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.deployment-troubleshooter-localci-outcome {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.deployment-troubleshooter-localci-outcome.is-ok {
+  border: 1px solid rgba(80, 160, 120, 0.5);
+  background: rgba(80, 160, 120, 0.12);
+  color: var(--text-primary);
+}
+
+.deployment-troubleshooter-localci-outcome.is-fail {
+  border: 1px solid rgba(220, 90, 90, 0.5);
+  background: rgba(180, 60, 60, 0.12);
+  color: #e8a0a0;
+}
+
+.deployment-troubleshooter-localci-log {
+  max-height: min(36vh, 280px);
 }
 
 .deployment-troubleshooter-title {
@@ -504,31 +707,19 @@
   word-break: break-word;
 }
 
-.deployment-troubleshooter-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.deployment-troubleshooter-section h3 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: 0.5px;
-}
-
 .deployment-troubleshooter-hint {
   margin: 0 0 10px;
   font-size: 10px;
   line-height: 1.5;
   color: var(--text-secondary);
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 .deployment-troubleshooter-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
@@ -574,12 +765,6 @@
   color: #e88;
 }
 
-.deployment-troubleshooter-chronicle {
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-color);
-}
-
 .deployment-troubleshooter-chronicle-note {
   display: flex;
   flex-wrap: wrap;
@@ -601,7 +786,7 @@
 }
 
 .deployment-troubleshooter-chronicle-scroll {
-  max-height: 220px;
+  max-height: min(36vh, 320px);
   overflow: auto;
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.3);

@@ -7,14 +7,18 @@
   grid-template-rows: var(--metrics-height) 1fr;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 /* ── Metrics Bar ── */
 .toc-header-logo {
-  height: 24px;
+  height: 36px;
   width: auto;
   flex-shrink: 0;
   margin-right: 16px;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
 }
 
 .metrics-bar {
@@ -22,7 +26,8 @@
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 0 20px;
+  padding: 0 16px;
+  min-height: var(--metrics-height);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   font-family: var(--font-mono);
@@ -59,8 +64,10 @@
   flex-direction: column;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
-  padding-top: 8px;
+  padding: 8px 0 16px;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
 }
 
 .sidebar-section {
@@ -113,12 +120,16 @@
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-primary);
+  min-width: 0;
+  min-height: 0;
 }
 
 .panel {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  overflow-x: hidden;
+  padding: 16px;
+  min-height: 0;
 }
 
 .panel-header {

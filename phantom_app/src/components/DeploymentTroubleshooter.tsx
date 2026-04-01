@@ -1,6 +1,6 @@
 /**
  * Deployment Troubleshooter — guided one-click recovery (ports, processes, env, network, chronicle).
- * No shell commands shown to the user.
+ * Collapsible sections, scroll containment, sticky quick actions, Full Reset (surgical uninstall).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import {
   runPreDeployValidation,
   troubleshooterAppendNote,
   troubleshooterCycleControllerPort,
+  troubleshooterFullReset,
   troubleshooterNetworkProbes,
   troubleshooterPingController,
   troubleshooterPortCycleDefaults,
@@ -28,6 +29,7 @@ import {
   type DeployFailureInfo,
   type PreDeployReport,
 } from '../state/deploymentState';
+import TroubleshooterCollapsibleSection from './TroubleshooterCollapsibleSection';
 
 interface Props {
   open: boolean;
@@ -139,6 +141,20 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
     };
   }, []);
 
+  const run = useCallback(
+    async (key: string, fn: () => Promise<void>) => {
+      setBusy(key);
+      try {
+        await fn();
+      } finally {
+        setBusy(null);
+        void refreshChronicle();
+        void refreshPlacement();
+      }
+    },
+    [refreshChronicle, refreshPlacement],
+  );
+
   const handleRunLocalCi = async () => {
     setLocalCiRunning(true);
     setLocalCiProgress([]);
@@ -166,56 +182,71 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
     }
   };
 
-  const run = async (key: string, fn: () => Promise<void>) => {
-    setBusy(key);
+  const handleFullReset = async () => {
+    const ok = window.confirm(
+      'Full Reset runs a surgical uninstall: stops services, removes firewall rules, terminates Phantom-related Python processes, deletes your .phantom directory and Windows Phantom app data (LocalAppData/AppData), shortcuts, and user uninstall registry keys. A report is written to the Deployment Chronicle first (if .phantom exists). The app returns to the front porch. This cannot be undone.\n\nType OK to continue.',
+    );
+    if (!ok) return;
+    setBusy('full_reset');
     try {
-      await fn();
+      await troubleshooterFullReset();
+      window.alert(
+        'Full Reset finished. If the UI still shows old state, close and reopen Phantom. Some files may remain only if the app could not remove its own running executable folder.',
+      );
+    } catch (e) {
+      window.alert(tauriInvokeErrorMessage(e));
     } finally {
       setBusy(null);
       void refreshChronicle();
-      void refreshPlacement();
     }
   };
 
   if (!open) return null;
 
   const scanPort = placementPort ?? 8080;
+  const disabled = busy !== null || localCiRunning;
 
   return (
-    <div className="deployment-troubleshooter" role="dialog" aria-label="Deployment troubleshooter">
-      <div className="deployment-troubleshooter-header">
-        <div>
-          <div className="deployment-troubleshooter-title">Deployment Troubleshooter</div>
-          <p className="deployment-troubleshooter-sub">
-            One-click checks and safe fixes. Phantom records everything in the Deployment Chronicle — even when
-            the controller never starts.
-          </p>
+    <div className="deployment-troubleshooter-shell" role="dialog" aria-label="Deployment troubleshooter">
+      <div className="deployment-troubleshooter-top">
+        <div className="deployment-troubleshooter-header">
+          <div className="deployment-troubleshooter-header-brand">
+            <img src="/phantom.png" alt="" className="deployment-troubleshooter-logo" />
+            <div>
+              <div className="deployment-troubleshooter-title">Deployment Troubleshooter</div>
+              <p className="deployment-troubleshooter-sub">
+                One-click checks and safe fixes. Phantom records everything in the Deployment Chronicle — even when
+                the controller never starts.
+              </p>
+            </div>
+          </div>
+          <button type="button" className="deploy-btn ceremony-btn-secondary" onClick={onClose}>
+            Close
+          </button>
         </div>
-        <button type="button" className="deploy-btn ceremony-btn-secondary" onClick={onClose}>
-          Close
-        </button>
+
+        {deployFailure && (
+          <div className="deployment-troubleshooter-banner" role="status">
+            <strong>Recent failure</strong>
+            {deployFailure.stepLabel != null && deployFailure.stepLabel !== '' && (
+              <span className="deployment-troubleshooter-banner-step">
+                {deployFailure.stepIndex != null && deployFailure.stepIndex !== undefined
+                  ? `Step ${deployFailure.stepIndex}: ${deployFailure.stepLabel}`
+                  : deployFailure.stepLabel}
+              </span>
+            )}
+            <pre className="deployment-troubleshooter-banner-msg">{deployFailure.message}</pre>
+          </div>
+        )}
       </div>
 
-      {deployFailure && (
-        <div className="deployment-troubleshooter-banner" role="status">
-          <strong>Recent failure</strong>
-          {deployFailure.stepLabel != null && deployFailure.stepLabel !== '' && (
-            <span className="deployment-troubleshooter-banner-step">
-              {deployFailure.stepIndex != null && deployFailure.stepIndex !== undefined
-                ? `Step ${deployFailure.stepIndex}: ${deployFailure.stepLabel}`
-                : deployFailure.stepLabel}
-            </span>
-          )}
-          <pre className="deployment-troubleshooter-banner-msg">{deployFailure.message}</pre>
-        </div>
-      )}
-
-      <div className="deployment-troubleshooter-grid">
-        <section className="deployment-troubleshooter-section">
-          <h3>Ports and binding</h3>
+      <div className="deployment-troubleshooter-scroll">
+        <TroubleshooterCollapsibleSection sectionId="ports" title="Ports and binding">
           <p className="deployment-troubleshooter-hint">
             Configured controller port:{' '}
-            <strong>{placementPort != null ? `${placementPort}` : 'unknown (complete Controller Selection first)'}</strong>
+            <strong>
+              {placementPort != null ? `${placementPort}` : 'unknown (complete Controller Selection first)'}
+            </strong>
             {placementHost ? ` @ ${placementHost}` : ''}
           </p>
           <p className="deployment-troubleshooter-hint">
@@ -226,7 +257,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('scan', async () => {
                   const r = await troubleshooterScanPort(scanPort);
@@ -242,7 +273,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('cycle', async () => {
                   const r = await troubleshooterCycleControllerPort();
@@ -253,29 +284,25 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               {busy === 'cycle' ? 'Updating…' : 'Try next port in list'}
             </button>
           </div>
-          {lastPorts && (
-            <pre className="deployment-troubleshooter-result">{lastPorts}</pre>
-          )}
+          {lastPorts && <pre className="deployment-troubleshooter-result">{lastPorts}</pre>}
           <p className="deployment-troubleshooter-hint">
-            If every port is taken, close other web servers or VPN software, then scan again. Advanced details may
-            list processes from a read-only network status check (no admin shell).
+            If every port is taken, close other web servers or VPN software, then scan again.
           </p>
-        </section>
+        </TroubleshooterCollapsibleSection>
 
-        <section className="deployment-troubleshooter-section">
-          <h3>Processes and services</h3>
+        <TroubleshooterCollapsibleSection sectionId="processes" title="Processes and services">
           <p className="deployment-troubleshooter-hint">
-            Best effort: stops the Phantom service if installed, then starts processes again. Safe to retry.
+            Best effort: stops the Phantom service if installed, then starts processes again.
           </p>
           <div className="deployment-troubleshooter-actions">
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('rc', async () => {
                   await troubleshooterRestartController();
-                  setLastProcesses('Restart controller finished. Use “Ping controller /health” to confirm.');
+                  setLastProcesses('Restart controller finished. Use Ping controller /health to confirm.');
                 })
               }
             >
@@ -284,7 +311,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('rw', async () => {
                   await troubleshooterRestartLocalWorker();
@@ -297,7 +324,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('stop', async () => {
                   await troubleshooterStopServices();
@@ -308,18 +335,15 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               {busy === 'stop' ? 'Working…' : 'Stop Phantom services'}
             </button>
           </div>
-          {lastProcesses && (
-            <pre className="deployment-troubleshooter-result">{lastProcesses}</pre>
-          )}
-        </section>
+          {lastProcesses && <pre className="deployment-troubleshooter-result">{lastProcesses}</pre>}
+        </TroubleshooterCollapsibleSection>
 
-        <section className="deployment-troubleshooter-section">
-          <h3>Environment and prerequisites</h3>
+        <TroubleshooterCollapsibleSection sectionId="env" title="Environment and prerequisites">
           <div className="deployment-troubleshooter-actions">
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('art', async () => {
                   const r = await troubleshooterVerifyArtifacts();
@@ -332,7 +356,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('pre', async () => {
                   const report = await runPreDeployValidation();
@@ -369,15 +393,14 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               ))}
             </div>
           )}
-        </section>
+        </TroubleshooterCollapsibleSection>
 
-        <section className="deployment-troubleshooter-section">
-          <h3>Network and protocol</h3>
+        <TroubleshooterCollapsibleSection sectionId="network" title="Network and protocol">
           <div className="deployment-troubleshooter-actions">
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('ping', async () => {
                   const r = await troubleshooterPingController();
@@ -390,7 +413,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('tcp', async () => {
                   const r = await troubleshooterNetworkProbes();
@@ -403,7 +426,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
             <button
               type="button"
               className="deploy-btn ceremony-btn-secondary"
-              disabled={busy !== null}
+              disabled={disabled}
               onClick={() =>
                 run('proto', async () => {
                   const r = await troubleshooterProtocolHint();
@@ -419,15 +442,12 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               {[lastNetwork, lastProtocol].filter(Boolean).join('\n---\n')}
             </pre>
           )}
-        </section>
+        </TroubleshooterCollapsibleSection>
 
-        <section className="deployment-troubleshooter-section">
-          <h3>Local CI validation</h3>
+        <TroubleshooterCollapsibleSection sectionId="localci" title="Local CI validation">
           <p className="deployment-troubleshooter-hint">
-            Runs the same steps as GitHub Actions <strong>test-controller</strong> (black, flake8, platform scan,
-            import smoke, <code style={{ fontSize: 10 }}>test_controller_import_boot</code>
-            ). Uses only your Phantom venv Python — not system PATH. Optional: install dev tools into that venv
-            (black, flake8, pytest stack) on first run.
+            Same steps as GitHub <strong>test-controller</strong> (black, flake8, platform scan, import smoke,
+            test_controller_import_boot). Uses Phantom venv Python only.
           </p>
           <label className="deployment-troubleshooter-check-inline">
             <input
@@ -436,7 +456,7 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               onChange={(e) => setLocalCiEnsureTools(e.target.checked)}
               disabled={localCiRunning}
             />
-            Install/update dev tools in Phantom venv (pip, first run or after CI deps change)
+            Install/update dev tools in Phantom venv
           </label>
           <label className="deployment-troubleshooter-check-inline">
             <input
@@ -445,13 +465,13 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
               onChange={(e) => setLocalCiPortCheck(e.target.checked)}
               disabled={localCiRunning}
             />
-            Also probe controller port bind (Windows-style conflict detection)
+            Also probe controller port bind
           </label>
           <div className="deployment-troubleshooter-actions">
             <button
               type="button"
               className="deploy-btn"
-              disabled={busy !== null || localCiRunning}
+              disabled={disabled}
               onClick={() => void handleRunLocalCi()}
             >
               {localCiRunning ? 'Running Local CI…' : 'Run Local CI (same tests GitHub runs)'}
@@ -460,79 +480,165 @@ export default function DeploymentTroubleshooter({ open, onClose, deployFailure 
           {localCiOutcome && (
             <div
               role="status"
-              style={{
-                marginTop: 10,
-                padding: '10px 12px',
-                borderRadius: 6,
-                fontSize: 12,
-                border: `1px solid ${localCiOutcome.ok ? 'rgba(80,160,120,0.5)' : 'rgba(220,90,90,0.5)'}`,
-                background: localCiOutcome.ok ? 'rgba(80,160,120,0.12)' : 'rgba(180,60,60,0.12)',
-                color: localCiOutcome.ok ? 'var(--text-primary)' : '#e8a0a0',
-              }}
+              className={`deployment-troubleshooter-localci-outcome ${localCiOutcome.ok ? 'is-ok' : 'is-fail'}`}
             >
               <strong>{localCiOutcome.ok ? 'PASS' : 'FAIL'}</strong> — {localCiOutcome.message}
             </div>
           )}
           {localCiProgress.length > 0 && (
-            <pre
-              className="deployment-troubleshooter-result"
-              style={{ maxHeight: 200, marginTop: 10 }}
-            >
+            <pre className="deployment-troubleshooter-result deployment-troubleshooter-localci-log">
               {localCiProgress.join('\n')}
             </pre>
           )}
-        </section>
+        </TroubleshooterCollapsibleSection>
+
+        <TroubleshooterCollapsibleSection sectionId="chronicle" title="Deployment Chronicle" defaultOpen>
+          <p className="deployment-troubleshooter-hint">
+            Unified log (JSON lines). <strong>Full Reset</strong> writes an uninstall report here first, then removes
+            data directories.
+          </p>
+          <div className="deployment-troubleshooter-actions">
+            <button
+              type="button"
+              className="deploy-btn ceremony-btn-secondary"
+              disabled={disabled}
+              onClick={() => run('ch', async () => refreshChronicle())}
+            >
+              Refresh chronicle
+            </button>
+            <button
+              type="button"
+              className="deploy-btn"
+              style={{ borderColor: 'rgba(220,90,90,0.55)', color: '#e8a0a0' }}
+              disabled={disabled}
+              onClick={() => void handleFullReset()}
+            >
+              {busy === 'full_reset' ? 'Resetting…' : 'Full Reset (surgical uninstall)'}
+            </button>
+          </div>
+          <div className="deployment-troubleshooter-chronicle-note">
+            <input
+              type="text"
+              className="deployment-troubleshooter-input"
+              placeholder="Add a short note to the chronicle (optional)"
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+            />
+            <button
+              type="button"
+              className="deploy-btn ceremony-btn-secondary"
+              disabled={disabled || !noteDraft.trim()}
+              onClick={() =>
+                run('note', async () => {
+                  await troubleshooterAppendNote(noteDraft.trim());
+                  setNoteDraft('');
+                })
+              }
+            >
+              Append note
+            </button>
+          </div>
+          <div className="deployment-troubleshooter-chronicle-scroll">
+            {chronicleLines.length === 0 ? (
+              <div className="deployment-troubleshooter-hint">No chronicle lines yet.</div>
+            ) : (
+              chronicleLines.map((line, i) => (
+                <div key={i} className="deployment-troubleshooter-chronicle-line" title={line}>
+                  {chronicleLineSummary(line)}
+                </div>
+              ))
+            )}
+          </div>
+        </TroubleshooterCollapsibleSection>
       </div>
 
-      <section className="deployment-troubleshooter-section deployment-troubleshooter-chronicle">
-        <h3>Deployment Chronicle</h3>
-        <p className="deployment-troubleshooter-hint">
-          Unified log of deployment and troubleshooting actions (JSON lines on disk under your Phantom home).
-        </p>
-        <div className="deployment-troubleshooter-actions">
-          <button
-            type="button"
-            className="deploy-btn ceremony-btn-secondary"
-            disabled={busy !== null}
-            onClick={() => run('ch', async () => refreshChronicle())}
-          >
-            Refresh chronicle
-          </button>
-        </div>
-        <div className="deployment-troubleshooter-chronicle-note">
-          <input
-            type="text"
-            className="deployment-troubleshooter-input"
-            placeholder="Add a short note to the chronicle (optional)"
-            value={noteDraft}
-            onChange={(e) => setNoteDraft(e.target.value)}
-          />
-          <button
-            type="button"
-            className="deploy-btn ceremony-btn-secondary"
-            disabled={busy !== null || !noteDraft.trim()}
-            onClick={() =>
-              run('note', async () => {
-                await troubleshooterAppendNote(noteDraft.trim());
-                setNoteDraft('');
-              })
-            }
-          >
-            Append note
-          </button>
-        </div>
-        <div className="deployment-troubleshooter-chronicle-scroll">
-          {chronicleLines.length === 0 ? (
-            <div className="deployment-troubleshooter-hint">No chronicle lines yet.</div>
-          ) : (
-            chronicleLines.map((line, i) => (
-              <div key={i} className="deployment-troubleshooter-chronicle-line" title={line}>
-                {chronicleLineSummary(line)}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      <div className="deployment-troubleshooter-sticky-actions" role="toolbar" aria-label="Quick actions">
+        <span className="deployment-troubleshooter-sticky-label">Quick:</span>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() =>
+            run('scan', async () => {
+              const r = await troubleshooterScanPort(scanPort);
+              setLastPorts(
+                `Port ${scanPort}: bind probe free = ${String(r.bindProbeFree)}. ` +
+                  (typeof r.netstatHint === 'string' ? r.netstatHint : ''),
+              );
+            })
+          }
+        >
+          Scan port
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() =>
+            run('cycle', async () => {
+              const r = await troubleshooterCycleControllerPort();
+              setLastPorts(formatJsonBlock(r));
+            })
+          }
+        >
+          Next port
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() =>
+            run('rc', async () => {
+              await troubleshooterRestartController();
+              setLastProcesses('Restart controller finished.');
+            })
+          }
+        >
+          Restart controller
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() =>
+            run('rw', async () => {
+              await troubleshooterRestartLocalWorker();
+              setLastProcesses('Restart local worker finished.');
+            })
+          }
+        >
+          Restart worker
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() =>
+            run('stop', async () => {
+              await troubleshooterStopServices();
+              setLastProcesses('Stop services sent.');
+            })
+          }
+        >
+          Stop services
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() => void handleRunLocalCi()}
+        >
+          Run Local CI
+        </button>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary ts-sticky-btn"
+          disabled={disabled}
+          onClick={() => run('ch', async () => refreshChronicle())}
+        >
+          Refresh chronicle
+        </button>
+      </div>
     </div>
   );
 }

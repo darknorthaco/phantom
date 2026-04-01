@@ -1921,34 +1921,8 @@ impl PhantomDeployer {
         self.start_local_worker().await
     }
 
-    /// Remove Windows firewall rules created by open_ports (best effort).
-    async fn remove_windows_firewall_phantom_rules(&self) {
-        #[cfg(target_os = "windows")]
-        for name in [
-            "PhantomController",
-            "PhantomWorker",
-            "PhantomDiscovery",
-            "PhantomSocket",
-        ] {
-            let _ = Command::new("netsh")
-                .args([
-                    "advfirewall",
-                    "firewall",
-                    "delete",
-                    "rule",
-                    &format!("name={name}"),
-                ])
-                .output()
-                .await;
-        }
-    }
-
-    /// Delete all content under `phantom_root` (identity, engine, venv, state, config).
+    /// Surgical uninstall: services, processes, firewall, chronicle report, ``phantom_root``, Windows app dirs.
     pub async fn uninstall_deployment(&self) -> Result<serde_json::Value, String> {
-        log::info!("Uninstall: stopping services");
-        self.stop_phantom_services().await;
-        self.remove_windows_firewall_phantom_rules().await;
-
         let root = &self.phantom_root;
         if !root.exists() {
             return Ok(serde_json::json!({
@@ -1957,15 +1931,14 @@ impl PhantomDeployer {
             }));
         }
 
-        log::info!("Uninstall: removing {:?}", root);
-        tokio::fs::remove_dir_all(root)
-            .await
-            .map_err(|e| format!("Failed to remove phantom root {:?}: {e}", root))?;
-
-        Ok(serde_json::json!({
-            "status": "removed",
-            "phantom_root": root.to_string_lossy(),
-        }))
+        log::info!("Uninstall: surgical teardown {:?}", root);
+        super::surgical_uninstall::execute(
+            root,
+            super::surgical_uninstall::SurgicalUninstallOptions {
+                from_running_phantom_app: true,
+            },
+        )
+        .await
     }
 
     /// Copy `config/` and `state/` plus key JSON files into `stash` for upgrade restore.

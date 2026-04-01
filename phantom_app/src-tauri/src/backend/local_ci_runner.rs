@@ -88,7 +88,6 @@ pub async fn run_local_ci_check(
     if options.port_check {
         cmd.arg("--port-check");
     }
-    cmd.env("PYTHONNOUSERSITE", "1");
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::null());

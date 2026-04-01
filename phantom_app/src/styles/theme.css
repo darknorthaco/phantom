@@ -20,7 +20,7 @@
   --border-glow: rgba(0, 166, 255, 0.25);
 
   --sidebar-width: 220px;
-  --metrics-height: 42px;
+  --metrics-height: 52px;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }

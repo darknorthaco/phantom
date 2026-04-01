@@ -1,4 +1,5 @@
 pub mod deployment_chronicle;
+pub mod surgical_uninstall;
 pub mod local_ci_runner;
 pub mod discovery;
 pub mod discovery_log;

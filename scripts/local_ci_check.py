@@ -11,6 +11,8 @@ Runs (in order):
   6. Optional: TCP bind probe on controller port (no admin)
 
 Uses only the interpreter given on the CLI (typically Phantom venv); does not modify system PATH.
+Child processes use ``PYTHONNOUSERSITE=1`` only when that interpreter is a standard venv,
+so system Pythons with ``pip install --user`` dev tools still work.
 Emits JSON lines on stdout (``-u`` unbuffered) for GUI progress; human text on stderr.
 
 Chronicle: appends JSONL records to ``<phantom_root>/deployment_chronicle.jsonl`` compatible with
@@ -83,6 +85,35 @@ def log_err(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+def _venv_root_for_python(py: Path) -> Path | None:
+    """Return venv root if ``py`` is a standard-library venv interpreter (``pyvenv.cfg``)."""
+    try:
+        p = py.resolve()
+    except OSError:
+        return None
+    parent = p.parent
+    name = parent.name.lower()
+    if name in ("scripts", "bin") and (parent.parent / "pyvenv.cfg").is_file():
+        return parent.parent
+    return None
+
+
+def subprocess_env_for(py: Path) -> dict[str, str]:
+    """Environment for CI child processes.
+
+    In a venv, set ``PYTHONNOUSERSITE=1`` so user-site packages cannot shadow the
+    environment (matches typical CI). For a system interpreter where black/flake8/pytest
+    are often installed with ``pip install --user``, keep user site enabled so
+    ``python -m black`` et al. remain importable.
+    """
+    env = dict(os.environ)
+    if _venv_root_for_python(py) is not None:
+        env["PYTHONNOUSERSITE"] = "1"
+    else:
+        env.pop("PYTHONNOUSERSITE", None)
+    return env
+
+
 def resolve_dev_tools_requirements(script_file: Path) -> Path:
     d = script_file.resolve().parent
     req = d / "dev_tools" / "requirements-local-ci.txt"
@@ -91,7 +122,7 @@ def resolve_dev_tools_requirements(script_file: Path) -> Path:
     raise FileNotFoundError(f"requirements-local-ci.txt not found next to script at {req}")
 
 
-def ensure_dev_tools(py: Path, script_file: Path) -> tuple[bool, str]:
+def ensure_dev_tools(py: Path, script_file: Path, env: dict[str, str]) -> tuple[bool, str]:
     try:
         req = resolve_dev_tools_requirements(script_file)
     except FileNotFoundError as e:
@@ -110,7 +141,7 @@ def ensure_dev_tools(py: Path, script_file: Path) -> tuple[bool, str]:
         ],
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONNOUSERSITE": "1"},
+        env=env,
     )
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
@@ -160,12 +191,17 @@ def run_step(
     return ok, snippet, r.returncode
 
 
-def run_platform_scanner(py: Path, scanner: Path, phantom_root: Path | None, json_progress: bool) -> tuple[bool, str, int]:
+def run_platform_scanner(
+    py: Path,
+    scanner: Path,
+    phantom_root: Path | None,
+    json_progress: bool,
+    env: dict[str, str],
+) -> tuple[bool, str, int]:
     step_name = "platform_assumptions"
     emit("step_begin", json_progress, step=step_name)
     log_err(f"[local_ci] === {step_name} ===")
     log_err(f"[local_ci] {py} {scanner}")
-    env = {**os.environ, "PYTHONNOUSERSITE": "1"}
     r = subprocess.run([str(py), str(scanner)], capture_output=True, text=True, env=env)
     out = (r.stdout or "") + (r.stderr or "")
     snippet = out.strip()[-4000:] if out.strip() else f"(no output, exit {r.returncode})"
@@ -187,12 +223,12 @@ def run_import_smoke(
     phantom_core_home: Path,
     phantom_root: Path | None,
     json_progress: bool,
+    env: dict[str, str],
 ) -> tuple[bool, str, int]:
     step_name = "controller_import"
     code = "from phantom_core.controller_api import app; assert app is not None"
     emit("step_begin", json_progress, step=step_name)
     log_err(f"[local_ci] === {step_name} ===")
-    env = {**os.environ, "PYTHONNOUSERSITE": "1"}
     r = subprocess.run(
         [str(py), "-c", code],
         cwd=str(phantom_core_home),
@@ -325,12 +361,12 @@ def main() -> int:
         return 2
 
     json_progress = args.json_progress
-    env = {**os.environ, "PYTHONNOUSERSITE": "1"}
+    env = subprocess_env_for(py)
 
     emit("run_begin", json_progress, phantomCoreHome=str(core_home), python=str(py))
 
     if args.ensure_dev_tools:
-        ok_pip, pip_msg = ensure_dev_tools(py, script_file)
+        ok_pip, pip_msg = ensure_dev_tools(py, script_file, env)
         append_chronicle(
             phantom_root,
             step="ensure_dev_tools",
@@ -393,13 +429,13 @@ def main() -> int:
         result.failed_steps.append("flake8")
 
     # 3: platform assumptions
-    ok, _, _ = run_platform_scanner(py, scanner, phantom_root, json_progress)
+    ok, _, _ = run_platform_scanner(py, scanner, phantom_root, json_progress, env)
     if not ok:
         result.ok = False
         result.failed_steps.append("platform_assumptions")
 
     # 4: import smoke
-    ok, _, _ = run_import_smoke(py, core_home, phantom_root, json_progress)
+    ok, _, _ = run_import_smoke(py, core_home, phantom_root, json_progress, env)
     if not ok:
         result.ok = False
         result.failed_steps.append("controller_import")

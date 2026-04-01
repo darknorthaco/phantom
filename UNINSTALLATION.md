@@ -4,6 +4,33 @@ This guide covers complete removal of Phantom from your system. The uninstallers
 
 ---
 
+## Stone-Home desktop app (Tauri) — surgical uninstall
+
+The **canonical** teardown for the Phantom desktop shell matches GitHub Actions / release layout:
+
+1. **In-app** — **Deployments** panel: *Uninstall Phantom (surgical)*, or **Deployment Troubleshooter**: *Full Reset (surgical uninstall)*. Both invoke the same `uninstall_phantom` / `troubleshooter_full_reset` command.
+2. **JSON report** — Before deleting `%USERPROFILE%\.phantom`, the app appends an uninstall report to `deployment_chronicle.jsonl` (field `source: uninstall`).
+3. **What is removed (Windows)** — User hive uninstall keys for `com.darknorth.phantom` / `Phantom`; Start Menu / Desktop shortcuts whose names contain `phantom`; `%USERPROFILE%\.phantom`; `%LOCALAPPDATA%\Phantom`, `%LOCALAPPDATA%\com.darknorth.phantom`; `%APPDATA%\Phantom`, `%APPDATA%\com.darknorth.phantom`, `%APPDATA%\phantom_app`; Windows Firewall rules named PhantomController / PhantomWorker / PhantomDiscovery / PhantomSocket; Phantom Windows service (`sc stop` / `sc delete`); Python processes whose executable path is under `.phantom\venv`, `LocalAppData\Phantom`, or `LocalAppData\com.darknorth.phantom`. The running `phantom_app.exe` is **not** killed when uninstall is triggered from inside the app; the install directory may be partially cleaned until you close the app.
+4. **CLI / installer hook (Windows)** — From the repo root:
+
+   ```powershell
+   .\scripts\uninstall.ps1              # interactive unless you pass -Force
+   .\scripts\uninstall.ps1 -DryRun      # preview
+   .\scripts\uninstall.ps1 -Force -Silent
+   ```
+
+   Or:
+
+   ```cmd
+   py -3 scripts\phantom_uninstall.py --force
+   ```
+
+   Flags: `--dry-run`, `--force`, `--silent`, `--kill-app` (also terminates `phantom_app.exe`; do **not** use `--kill-app` when uninstall is launched from inside the running app).
+
+5. **NSIS / silent install** — After install, you may register a hook to run `uninstall.ps1 -Force -Silent` on uninstall; keep behavior aligned with the in-app surgical uninstall above.
+
+---
+
 ## Windows Uninstallation
 
 ### Automated Uninstaller (Recommended)

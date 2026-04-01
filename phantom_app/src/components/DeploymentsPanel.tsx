@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getPhantomHealth, loadLlmConfig } from '../utils/tauri';
+import { getPhantomHealth, loadLlmConfig, uninstallPhantom } from '../utils/tauri';
+import { tauriInvokeErrorMessage } from '../state/deploymentState';
 
 type ComponentStatus = 'running' | 'stopped' | 'error' | 'unknown';
 
@@ -27,6 +28,7 @@ export default function DeploymentsPanel() {
   ]);
   const [loading, setLoading] = useState(true);
   const [lastChecked, setLastChecked] = useState<string>('');
+  const [uninstallBusy, setUninstallBusy] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
@@ -86,6 +88,22 @@ export default function DeploymentsPanel() {
 
   useEffect(() => { refresh(); }, []);
 
+  const handleUninstall = async () => {
+    const ok = window.confirm(
+      'Uninstall Phantom completely? This runs the surgical teardown: services, firewall rules, Phantom-related Python processes, your .phantom directory, Windows LocalAppData/AppData Phantom folders, shortcuts, and user uninstall registry keys. A report is appended to the Deployment Chronicle first. You may need to restart the app afterward.',
+    );
+    if (!ok) return;
+    setUninstallBusy(true);
+    try {
+      await uninstallPhantom();
+      window.alert('Uninstall finished. Close and reopen Phantom if the UI still shows old deployment state.');
+    } catch (e) {
+      window.alert(tauriInvokeErrorMessage(e));
+    } finally {
+      setUninstallBusy(false);
+    }
+  };
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -126,6 +144,25 @@ export default function DeploymentsPanel() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-title">Remove Phantom from this machine</div>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 12 }}>
+          Same operation as Troubleshooter <strong>Full Reset</strong> and the{' '}
+          <code style={{ fontSize: 11 }}>scripts/uninstall.ps1</code> /{' '}
+          <code style={{ fontSize: 11 }}>phantom_uninstall.py</code> tools. See{' '}
+          <strong>UNINSTALLATION.md</strong> in the repository.
+        </p>
+        <button
+          type="button"
+          className="console-send-btn"
+          style={{ borderColor: 'rgba(220,90,90,0.5)', color: '#e8a0a0' }}
+          disabled={uninstallBusy}
+          onClick={() => void handleUninstall()}
+        >
+          {uninstallBusy ? 'Uninstalling…' : 'Uninstall Phantom (surgical)'}
+        </button>
       </div>
     </div>
   );

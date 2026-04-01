@@ -175,3 +175,10 @@ export interface LocalCiInvokeResult {
 
 export const runLocalCiCheck = (options?: LocalCiInvokeOptions | null) =>
   invoke<LocalCiInvokeResult>('run_local_ci_check', { options: options ?? null });
+
+/** Surgical uninstall (same as Deployments panel). */
+export const uninstallPhantom = () => invoke<Record<string, unknown>>('uninstall_phantom');
+
+/** Troubleshooter Full Reset — identical teardown + chronicle pre-report. */
+export const troubleshooterFullReset = () =>
+  invoke<Record<string, unknown>>('troubleshooter_full_reset');

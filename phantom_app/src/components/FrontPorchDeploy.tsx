@@ -120,9 +120,9 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
       progress?.label === 'Starting controller');
 
   return (
-    <div className="deploy-screen">
-      <div className="phantom-mask-container">
-        <img src="/phantom.png" alt="Phantom" className="phantom-mask-svg" />
+    <div className={`deploy-screen${deploying ? ' deploy-screen--active' : ''}`}>
+      <div className="deploy-screen-logo-container">
+        <img src="/phantom.png" alt="Phantom" className="deploy-screen-logo" />
       </div>
 
       <div className="deploy-title">
@@ -139,10 +139,10 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
           </div>
           {showScanLog && scanLog.length > 0 && (
             <div
-              className="scan-log"
+              className="scan-log deploy-prescan-scroll"
               style={{
                 marginTop: 12,
-                maxHeight: 160,
+                maxHeight: 'min(220px, 28vh)',
                 overflow: 'auto',
                 fontFamily: 'var(--font-mono)',
                 fontSize: 10,
@@ -162,7 +162,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
           )}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+        <div className="deploy-screen-idle-column">
           {deployFailure && (
             <div
               role="alert"
@@ -268,8 +268,8 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
               className="scan-log"
               style={{
                 marginTop: 4,
-                maxWidth: 520,
-                maxHeight: 260,
+                maxWidth: 'min(520px, 100%)',
+                maxHeight: 'min(320px, 42vh)',
                 overflow: 'auto',
                 fontFamily: 'var(--font-mono)',
                 fontSize: 10,

@@ -821,17 +821,14 @@ async fn submit_task(
     serde_json::to_value(r).map_err(|e| e.to_string())
 }
 
-/// Remove Phantom services, firewall rules (Windows), and delete `~/.phantom` (or `%USERPROFILE%\.phantom`).
-#[tauri::command]
-async fn uninstall_phantom(
+async fn run_phantom_uninstall_internal(
     app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
+    state: &ManagedState,
 ) -> Result<serde_json::Value, String> {
     let engine_source = find_engine_source(&app);
     let phantom_root = state.app.phantom_root.clone();
     let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
 
-    // Audit before removing ~/.phantom (audit log lives under that tree).
     state
         .audit
         .log_event_best_effort(
@@ -848,6 +845,24 @@ async fn uninstall_phantom(
     }
 
     Ok(summary)
+}
+
+/// Remove Phantom services, firewall rules (Windows), surgical removal of ``.phantom`` and Windows app data.
+#[tauri::command]
+async fn uninstall_phantom(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    run_phantom_uninstall_internal(app, &state).await
+}
+
+/// Troubleshooter **Full Reset** — same surgical uninstall as ``uninstall_phantom`` (chronicle + teardown).
+#[tauri::command]
+async fn troubleshooter_full_reset(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+) -> Result<serde_json::Value, String> {
+    run_phantom_uninstall_internal(app, &state).await
 }
 
 /// Refresh bundled engine under `.phantom/engine` while preserving `phantom_config.json`, placement, `config/`, `state/`.
@@ -1318,7 +1333,9 @@ pub fn run() {
             verify_offline_bundle, load_offline_model_catalogue, install_offline_bundle,
             get_phantom_health, get_workers, get_stats,
             submit_task, scan_and_register_workers,
-            uninstall_phantom, upgrade_phantom_deployment,
+            uninstall_phantom,
+            troubleshooter_full_reset,
+            upgrade_phantom_deployment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Phantom application");
