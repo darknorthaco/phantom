@@ -6,7 +6,6 @@ Implements TOFU (Trust On First Use) key management and
 key-change detection per the Corrected Architecture Design.
 """
 
-import fcntl
 import json
 import logging
 import os
@@ -15,7 +14,9 @@ import time
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Callable, List, Optional, TextIO
+
+from phantom_core.trust_store_filelock import select_trust_store_append_lock
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,13 @@ class TrustStore:
     """Persistent, append-only trust ledger local to the controller.
 
     Storage: ``<state_dir>/trust_store.jsonl`` (one JSON record per line).
-    Thread-safe via a reentrant lock.
+
+    **Thread safety:** All public methods take ``threading.Lock`` (serialized access).
+
+    **Cross-process:** On POSIX, ``fcntl.flock`` wraps each append (see
+    ``trust_store_filelock``). On Windows, ``msvcrt.locking`` is used when
+    available; otherwise the deployment contract is **one controller process per
+    ``state_dir``** (documented in ``docs/doctrine/STORAGE_AND_LOCKING.md``).
     """
 
     def __init__(self, state_dir: str):
@@ -90,6 +97,8 @@ class TrustStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "trust_store.jsonl"
         self._lock = threading.Lock()
+        # Context manager factory: ``with self._append_file_lock(f):`` (see trust_store_filelock).
+        self._append_file_lock: Callable[[TextIO], Any] = select_trust_store_append_lock()
         # In-memory index: worker_id -> list of records (append-only)
         self._records: dict[str, List[TrustRecord]] = {}
         self._load()
@@ -120,13 +129,8 @@ class TrustStore:
     def _append_to_file(self, record: TrustRecord) -> None:
         try:
             with open(self._path, "a", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
+                with self._append_file_lock(f):
                     f.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except OSError as exc:
             logger.error("TrustStore write error: %s", type(exc).__name__)
 

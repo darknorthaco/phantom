@@ -1,0 +1,44 @@
+# Phantom Platform Assumptions Ledger (machine-readable)
+# Enforced by: scripts/ci/check_platform_assumptions.py + .github/workflows/build.yml
+# Rule: shared controller package must not embed POSIX-only stdlib at module scope.
+
+version: 1
+
+entries:
+  - path_glob: "phantom_core/phantom_core/**/*.py"
+    allowed_modules_note: "stdlib portable subset + declared third-party deps (fastapi, pydantic, httpx, cryptography, etc.)"
+    forbidden_modules:
+      - fcntl
+      - termios
+      - pty
+      - pwd
+      - grp
+      - spwd
+      - resource
+      - syslog
+      - nis
+    forbidden_call_patterns:
+      - name: os.fork
+        rationale: "Not available on Windows; use subprocess/multiprocessing with explicit design."
+    implementation_notes:
+      fcntl: "Only in trust_store_filelock._posix_flock_lock() via lazy import; never module scope."
+    notes: "Controller must import on Windows without ModuleNotFoundError."
+    owner: "core-controller"
+
+  - path_glob: "phantom_core/linux-worker/**/*.py"
+    allowed_modules_note: "Linux-specific worker; POSIX assumptions permitted with explicit comments."
+    forbidden_modules: []
+    notes: "Not imported by Windows controller path."
+    owner: "worker-linux"
+
+  - path_glob: "phantom_core/windows-worker/**/*.py"
+    allowed_modules_note: "Windows worker; avoid POSIX-only stdlib unless guarded."
+    forbidden_modules: []
+    notes: "Validates Windows runtime for worker only."
+    owner: "worker-windows"
+
+  - path_glob: "phantom_app/src-tauri/**/*.rs"
+    allowed_modules_note: "N/A (Rust); use cfg(target_os) for OS split."
+    forbidden_modules: []
+    notes: "Scanner does not parse Rust; track manually in review."
+    owner: "stone-home"

@@ -7,6 +7,8 @@ on:
     branches: [master]
     tags:
       - 'v*'
+  pull_request:
+    branches: [master]
   workflow_dispatch:
     inputs:
       draft:
@@ -19,9 +21,64 @@ permissions:
 
 jobs:
 
+  # ── Static: forbidden POSIX-only imports in shared controller package ──
+  platform-assumptions:
+    name: Platform assumptions scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run platform assumptions scanner
+        run: python phantom_core/scripts/ci/check_platform_assumptions.py
+
+  # ── Windows: import + in-process /health (catches fcntl-class regressions) ──
+  python-smoke-windows:
+    name: Windows Python smoke (/health)
+    needs: [platform-assumptions]
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: phantom_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install controller test dependencies
+        run: |
+          pip install fastapi "uvicorn[standard]" pydantic httpx requests websockets psutil numpy pyyaml cryptography pyjwt pytest pytest-asyncio
+      - name: Import smoke
+        run: python -c "from phantom_core.controller_api import app; assert app is not None"
+      - name: Controller boot + /health (TestClient)
+        run: python -m pytest tests/test_controller_import_boot.py -v --tb=short
+
+  # ── macOS: same smoke (POSIX path; catches mac-specific import issues) ──
+  python-smoke-macos:
+    name: macOS Python smoke (/health)
+    needs: [platform-assumptions]
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: phantom_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install controller test dependencies
+        run: |
+          pip install fastapi "uvicorn[standard]" pydantic httpx requests websockets psutil numpy pyyaml cryptography pyjwt pytest pytest-asyncio
+      - name: Import smoke
+        run: python -c "from phantom_core.controller_api import app; assert app is not None"
+      - name: Controller boot + /health (TestClient)
+        run: python -m pytest tests/test_controller_import_boot.py -v --tb=short
+
   # ── Python controller tests ──────────────────────────────────────
   test-controller:
     name: Test controller
+    needs: [platform-assumptions]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,7 +105,7 @@ jobs:
   build-desktop:
     name: Build ${{ matrix.label }}
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test-controller
+    needs: [test-controller, python-smoke-windows]
     strategy:
       fail-fast: false
       matrix:
