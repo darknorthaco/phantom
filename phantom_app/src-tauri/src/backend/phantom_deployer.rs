@@ -2303,7 +2303,7 @@ fn is_private_ipv4(ip: &str) -> bool {
 /// enumerate all network interfaces; also includes UDP probe and comprehensive
 /// fallbacks so it works regardless of LAN setup (10.x, 172.16–31.x, 192.168.x,
 /// VPN, multi-NIC, offline).
-fn local_ip_bases() -> Vec<String> {
+pub fn local_ip_bases() -> Vec<String> {
     use std::collections::HashSet;
     let mut bases = HashSet::new();
 

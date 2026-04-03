@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  CeremonyStatusDto,
   DeploymentPreScanOptions,
   DeploymentPreScanResult,
   LanScanRegistrationResult,
+  OperationalEvaluation,
   PreDeployReport,
   WorkerRegistrationSummary,
   WorkerSelectionForRegistration,
@@ -94,6 +96,22 @@ export const completeDeploymentWithSelection = (
   });
 
 // Original commands
+// Phase 11 — unified ceremony orchestrator (read-only status + Act A placement)
+export const ceremonyStatus = () => invoke<CeremonyStatusDto>('ceremony_status');
+export const operationalEvaluate = () => invoke<OperationalEvaluation>('operational_evaluate');
+export const ceremonyCommitPlacement = (
+  host: string,
+  port: number,
+  deviceLabel: string,
+  identityFingerprint: string
+) =>
+  invoke<CeremonyStatusDto>('ceremony_commit_placement', {
+    host,
+    port,
+    deviceLabel,
+    identityFingerprint,
+  });
+
 export const getDeploymentStatus = () => invoke<string>('get_deployment_status');
 export const deployPhantom = (options?: DeploymentPreScanOptions | null) =>
   invoke<void>('deploy_phantom', { options: options ?? null });

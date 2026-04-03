@@ -100,6 +100,55 @@ export interface DeployFailureInfo {
   stepLabel?: string | null;
 }
 
+// ── Phase 11 — Unified ceremony DTOs (Rust serde camelCase parity) ─────
+
+export interface ActDetailDto {
+  currentAct: string | null;
+  lastCompletedAct: string | null;
+}
+
+export interface CeremonyStatusDto {
+  sCeremony: string;
+  correlationId: string | null;
+  outcomeClass: string | null;
+  warnings: string[];
+  actDetail: ActDetailDto;
+}
+
+export interface OperationalEvaluationClause {
+  id: string;
+  name: string;
+  pass: boolean;
+  detail: string;
+}
+
+export interface OperationalEvaluation {
+  operational: boolean;
+  clauses: OperationalEvaluationClause[];
+}
+
+export interface DiscoverySnapshot {
+  snapshotId: string;
+  correlationId: string;
+  createdAt: string;
+  candidates: unknown[];
+  policyFlags: unknown;
+}
+
+export interface RegistrationAttempt {
+  correlationId: string;
+  snapshotId: string;
+  rows: unknown[];
+  aggregateClass: string;
+}
+
+export interface ProcessStatus {
+  pid: number | null;
+  label: string;
+  bindClaimed: boolean;
+  detail: string;
+}
+
 export function tauriInvokeErrorMessage(err: unknown): string {
   if (typeof err === 'string') return err;
   if (err instanceof Error) return err.message;

@@ -1,6 +1,25 @@
 mod backend;
 mod security;
 
+/// Phase 11 — ceremony types and orchestrator (integration tests, future consumers).
+pub mod ceremony {
+    pub use crate::backend::ceremony::{
+        atomic_write, load, ActDetailDto, CeremonyOrchestrator, CeremonyStateFile, CeremonyStatusDto,
+        DiscoverySnapshot, OperationalEvaluation, OperationalEvaluationClause, ProcessStatus,
+        RegistrationAttempt,
+    };
+    pub use crate::backend::ceremony::act_e::{
+        ENV_FORCE_DEGRADED, ENV_SKIP_CONTROLLER_HEALTH, OUTCOME_SUCCEEDED_WITH_WARNINGS,
+    };
+    pub use crate::backend::ceremony::act_f::{
+        ENV_FORCE_FAILED, ENV_FORCE_PARTIAL, ENV_SKIP_REGISTER, OUTCOME_PARTIAL_REGISTRATION,
+    };
+    pub use crate::backend::ceremony::phase::CeremonyPhase;
+}
+
+use backend::ceremony::{
+    CeremonyOrchestrator, CeremonyStatusDto, OperationalEvaluation,
+};
 use backend::phantom_api::PhantomApiClient;
 use backend::phantom_deployer::{
     CompleteDeploymentRequest, DeploymentPreScanResult, PhantomDeployer, WorkerRegistrationSummary,
@@ -18,6 +37,8 @@ pub struct ManagedState {
     identity: AsyncMutex<IdentityManager>,
     tls: AsyncMutex<TlsManager>,
     audit: AuditLogger,
+    /// Phase 11 — sole writer of `state/ceremony_state.json` for unified ceremony.
+    ceremony: AsyncMutex<CeremonyOrchestrator>,
 }
 
 fn emit_deploy_failed(
@@ -1026,6 +1047,142 @@ async fn run_pre_deploy_validation(
     Ok(report)
 }
 
+// ── Phase 11 — Unified ceremony (orchestrator) ─────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CeremonyCommitPlacementArgs {
+    host: String,
+    port: u16,
+    device_label: String,
+    identity_fingerprint: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CeremonyRunActBArgs {
+    #[serde(default)]
+    offline_bundle_path: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CeremonyRunActCArgs {
+    #[serde(default)]
+    offline_bundle_path: Option<String>,
+}
+
+#[tauri::command]
+async fn ceremony_status(state: tauri::State<'_, ManagedState>) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    orch.ceremony_status()
+}
+
+#[tauri::command]
+async fn operational_evaluate(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<OperationalEvaluation, String> {
+    let orch = state.ceremony.lock().await;
+    Ok(orch.operational_evaluate_stub())
+}
+
+#[tauri::command]
+async fn ceremony_commit_placement(
+    state: tauri::State<'_, ManagedState>,
+    args: CeremonyCommitPlacementArgs,
+) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    let out = orch
+        .commit_placement(
+            args.host,
+            args.port,
+            args.device_label,
+            args.identity_fingerprint,
+        )
+        .await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_run_act_b(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    args: CeremonyRunActBArgs,
+) -> Result<CeremonyStatusDto, String> {
+    let engine_source = find_engine_source(&app);
+    let offline_bundle = args.offline_bundle_path.map(PathBuf::from);
+    let orch = state.ceremony.lock().await;
+    let out = orch
+        .run_act_b(engine_source, offline_bundle, Some(app.clone()))
+        .await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_run_act_c(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    args: CeremonyRunActCArgs,
+) -> Result<CeremonyStatusDto, String> {
+    let offline_bundle = args.offline_bundle_path.map(PathBuf::from);
+    let orch = state.ceremony.lock().await;
+    let out = orch
+        .run_act_c(offline_bundle, Some(app.clone()))
+        .await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_run_act_d(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    let out = orch.run_act_d().await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_run_act_e(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    let out = orch.run_act_e().await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_run_act_f(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    let out = orch.run_act_f().await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
 // ── Deployment Troubleshooter (GUI + chronicle) ─────────────────────
 
 #[tauri::command]
@@ -1286,14 +1443,22 @@ fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
 pub fn run() {
     env_logger::init();
 
-    let app_state = AppState::new();
+    let mut app_state = AppState::new();
     let state_dir = app_state.phantom_root.clone();
+
+    let ceremony_orch = CeremonyOrchestrator::new(state_dir.clone());
+    if let Ok(st) = ceremony_orch.ceremony_status() {
+        if let Ok(mut ph) = app_state.phase.lock() {
+            *ph = CeremonyOrchestrator::project_to_app_phase(&st.s_ceremony);
+        }
+    }
 
     let managed = ManagedState {
         app: app_state,
         identity: AsyncMutex::new(IdentityManager::new(&state_dir)),
         tls: AsyncMutex::new(TlsManager::new(&state_dir)),
         audit: AuditLogger::new(&state_dir),
+        ceremony: AsyncMutex::new(ceremony_orch),
     };
 
     tauri::Builder::default()
@@ -1313,6 +1478,14 @@ pub fn run() {
             get_system_metrics,
             check_integrity,
             get_deployment_status,
+            ceremony_status,
+            operational_evaluate,
+            ceremony_commit_placement,
+            ceremony_run_act_b,
+            ceremony_run_act_c,
+            ceremony_run_act_d,
+            ceremony_run_act_e,
+            ceremony_run_act_f,
             run_deployment_pre_scan, complete_deployment_with_selection,
             run_pre_deploy_validation,
             get_deployment_chronicle,

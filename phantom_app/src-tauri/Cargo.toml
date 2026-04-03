@@ -41,4 +41,10 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 # LAN-agnostic worker discovery
 local-ip-address = "0.6"
+# Phase 11 — ceremony correlation IDs
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
 
