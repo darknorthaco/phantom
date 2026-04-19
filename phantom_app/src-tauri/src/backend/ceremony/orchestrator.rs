@@ -303,6 +303,7 @@ impl CeremonyOrchestrator {
             }),
             Err(e) => self.with_mirror_mut(|m| {
                 let placement = CeremonyPhase::Placement.as_str();
+                let summary = format!("Act B failed: {e}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -311,7 +312,7 @@ impl CeremonyOrchestrator {
                     placement,
                     placement,
                     Some("FAILED"),
-                    format!("Act B failed: {e}"),
+                    &summary,
                 )?;
                 append_recovery_target(&self.phantom_root, Some(&corr), "B")?;
                 m.outcome_class = Some("FAILED".to_string());
@@ -381,6 +382,7 @@ impl CeremonyOrchestrator {
                 if let Err(e) = act_c::persist_discovery_snapshot(&self.phantom_root, &snapshot) {
                     let msg = format!("persist discovery snapshot: {e}");
                     return self.with_mirror_mut(|m| {
+                        let summary = format!("Act C failed: {msg}");
                         Self::chronicle(
                             &self.phantom_root,
                             "act_exit",
@@ -389,7 +391,7 @@ impl CeremonyOrchestrator {
                             materialize,
                             materialize,
                             Some("FAILED"),
-                            format!("Act C failed: {msg}"),
+                            &summary,
                         )?;
                         append_recovery_target_for_phase(
                             &self.phantom_root,
@@ -441,6 +443,7 @@ impl CeremonyOrchestrator {
                 if let Err(e) = act_c::persist_discovery_snapshot(&self.phantom_root, &snapshot) {
                     let msg = format!("persist discovery snapshot: {e}");
                     return self.with_mirror_mut(|m| {
+                        let summary = format!("Act C failed: {msg}");
                         Self::chronicle(
                             &self.phantom_root,
                             "act_exit",
@@ -449,7 +452,7 @@ impl CeremonyOrchestrator {
                             materialize,
                             materialize,
                             Some("FAILED"),
-                            format!("Act C failed: {msg}"),
+                            &summary,
                         )?;
                         append_recovery_target_for_phase(
                             &self.phantom_root,
@@ -496,6 +499,7 @@ impl CeremonyOrchestrator {
                 })
             }
             ActCDiscoveryOutcome::Failed { detail } => self.with_mirror_mut(|m| {
+                let summary = format!("Act C failed: {detail}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -504,7 +508,7 @@ impl CeremonyOrchestrator {
                     materialize,
                     materialize,
                     Some("FAILED"),
-                    format!("Act C failed: {detail}"),
+                    &summary,
                 )?;
                 append_recovery_target_for_phase(
                     &self.phantom_root,
@@ -600,6 +604,7 @@ impl CeremonyOrchestrator {
                 ))
             }),
             Err(e) => self.with_mirror_mut(|m| {
+                let summary = format!("Act D failed: {e}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -608,7 +613,7 @@ impl CeremonyOrchestrator {
                     discover,
                     discover,
                     Some("FAILED"),
-                    format!("Act D failed: {e}"),
+                    &summary,
                 )?;
                 append_recovery_target_for_phase(
                     &self.phantom_root,
@@ -696,6 +701,7 @@ impl CeremonyOrchestrator {
             }),
             ActEAttestationOutcome::Degraded { detail } => self.with_mirror_mut(|m| {
                 let after = CeremonyPhase::Attest.as_str().to_string();
+                let summary = format!("Act E exit (attestation degraded): {detail}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -704,7 +710,7 @@ impl CeremonyOrchestrator {
                     before,
                     &after,
                     Some(OUTCOME_SUCCEEDED_WITH_WARNINGS),
-                    format!("Act E exit (attestation degraded): {detail}"),
+                    &summary,
                 )?;
                 m.s_ceremony = after.clone();
                 m.last_completed_act = Some("E".to_string());
@@ -720,6 +726,7 @@ impl CeremonyOrchestrator {
                 ))
             }),
             ActEAttestationOutcome::Failed { detail } => self.with_mirror_mut(|m| {
+                let summary = format!("Act E failed: {detail}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -728,7 +735,7 @@ impl CeremonyOrchestrator {
                     configure,
                     configure,
                     Some("FAILED"),
-                    format!("Act E failed: {detail}"),
+                    &summary,
                 )?;
                 append_recovery_target_for_phase(
                     &self.phantom_root,
@@ -816,6 +823,7 @@ impl CeremonyOrchestrator {
             }),
             ActFRegisterOutcome::Partial { detail } => self.with_mirror_mut(|m| {
                 let after = CeremonyPhase::Operational.as_str().to_string();
+                let summary = format!("Act F exit (partial registration): {detail}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -824,7 +832,7 @@ impl CeremonyOrchestrator {
                     before,
                     &after,
                     Some(OUTCOME_PARTIAL_REGISTRATION),
-                    format!("Act F exit (partial registration): {detail}"),
+                    &summary,
                 )?;
                 m.s_ceremony = after.clone();
                 m.last_completed_act = Some("F".to_string());
@@ -840,6 +848,7 @@ impl CeremonyOrchestrator {
                 ))
             }),
             ActFRegisterOutcome::Failed { detail } => self.with_mirror_mut(|m| {
+                let summary = format!("Act F failed: {detail}");
                 Self::chronicle(
                     &self.phantom_root,
                     "act_exit",
@@ -848,7 +857,7 @@ impl CeremonyOrchestrator {
                     attest,
                     attest,
                     Some("FAILED"),
-                    format!("Act F failed: {detail}"),
+                    &summary,
                 )?;
                 append_recovery_target_for_phase(
                     &self.phantom_root,
