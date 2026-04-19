@@ -27,9 +27,13 @@ rand = "0.8"
 base64 = "0.22"
 # Phase 2: TLS / certificates
 rcgen = "0.13"
-rustls = "0.23"
+# Default rustls enables aws-lc-rs (aws-lc-sys), which needs CMake/NASM and often breaks CI.
+# Ring matches rcgen/ring already in the tree and builds reliably on GHA Windows + Linux.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring", "logging"] }
 rustls-pemfile = "2"
-tokio-rustls = "0.26"
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
+# reqwest pulls hyper-rustls; its default enables aws-lc-rs. Pin ring so aws-lc-sys is not built.
+hyper-rustls = { version = "0.27.9", default-features = false, features = ["native-tokio", "http1", "tls12", "logging", "ring"] }
 # Phase 4: Audit logging
 chrono = { version = "0.4", features = ["serde"] }
 # Phase 6: System metrics

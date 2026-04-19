@@ -1622,6 +1622,10 @@ fn find_engine_source(app: &tauri::AppHandle) -> PathBuf {
 pub fn run() {
     env_logger::init();
 
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls ring crypto provider");
+
     let mut app_state = AppState::new();
     let state_dir = app_state.phantom_root.clone();
 
