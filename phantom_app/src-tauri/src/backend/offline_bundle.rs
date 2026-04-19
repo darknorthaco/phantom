@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::net::TcpStream;
 
-/// Short TCP probe — used to auto-select offline deploy when isolated.
+/// Short TCP probe for diagnostics and explicit operator workflows.
 ///
 /// - `PHANTOM_FORCE_OFFLINE=1` → always false (treat as offline upstream).
 /// - `PHANTOM_ASSUME_ONLINE=1` → always true (CI / tests without real WAN).

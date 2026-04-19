@@ -130,9 +130,22 @@ impl CeremonyOrchestrator {
         ))
     }
 
-    /// Stub operational predicate (Phase 11): always false with empty clauses until predicate engine lands.
+    /// Phase 12 — real operational predicate evaluation.
+    ///
+    /// Doctrine-aligned, side-effect free, never depends on WAN. Inspects on-disk
+    /// ceremony artifacts and the in-memory mirror; returns a structured
+    /// `OperationalEvaluation` with per-clause detail.
+    pub fn operational_evaluate(&self) -> OperationalEvaluation {
+        match self.mirror.lock() {
+            Ok(g) => super::predicate::evaluate_operational(&self.phantom_root, &g),
+            Err(_) => OperationalEvaluation::default(),
+        }
+    }
+
+    /// Backwards-compatible alias retained so callers built against the Phase 11
+    /// surface continue to compile. Now delegates to the real predicate engine.
     pub fn operational_evaluate_stub(&self) -> OperationalEvaluation {
-        OperationalEvaluation::default()
+        self.operational_evaluate()
     }
 
     /// Project `S_ceremony` to legacy `AppPhase` (Phase 3 §2.2).
@@ -854,6 +867,118 @@ impl CeremonyOrchestrator {
                     m.last_completed_act.as_deref(),
                 ))
             }),
+        }
+    }
+
+    /// Phase 12 — explicitly enter `CS_RECOVERY`.
+    ///
+    /// Requires a `recovery_target_act` to have been recorded (i.e. an Act exit
+    /// classified as `FAILED`). Writes a `recovery_entry` chronicle line, sets
+    /// `S_ceremony=CS_RECOVERY`, and returns the new status. Does not run any Act.
+    /// Idempotent: re-entering recovery from `CS_RECOVERY` is a no-op chronicle.
+    pub fn enter_recovery(&self) -> Result<CeremonyStatusDto, String> {
+        self.with_mirror_mut(|m| {
+            let target = m
+                .recovery_target_act
+                .clone()
+                .ok_or_else(|| "no recovery_target_act set; nothing to recover".to_string())?;
+            let corr = m.correlation_id.clone();
+            let before = m.s_ceremony.clone();
+            Self::chronicle(
+                &self.phantom_root,
+                "recovery_entry",
+                corr.as_deref(),
+                Some(&target),
+                &before,
+                CeremonyPhase::Recovery.as_str(),
+                None,
+                &format!("entering recovery for Act {target}"),
+            )?;
+            m.s_ceremony = CeremonyPhase::Recovery.as_str().to_string();
+            Self::persist_locked(m, &self.phantom_root)?;
+            Ok(CeremonyStatusDto::from_mirror(
+                &m.s_ceremony,
+                m.correlation_id.as_deref(),
+                m.outcome_class.as_deref(),
+                &[],
+                m.last_completed_act.as_deref(),
+            ))
+        })
+    }
+
+    /// Phase 12 — resume the ceremony from the recorded `recovery_target_act`.
+    ///
+    /// Behavior:
+    /// - Reads `recovery_target_act` from the mirror (B–F).
+    /// - Restores the appropriate "ready-to-retry" predecessor phase
+    ///   (B→PLACEMENT, C→MATERIALIZE, D→DISCOVER, E→CONFIGURE, F→ATTEST).
+    /// - Writes a `recovery_exit` chronicle line and clears `outcome_class`.
+    /// - Re-runs the failing Act through the normal `run_act_*` path so all
+    ///   invariants and chronicle semantics are preserved.
+    ///
+    /// Required inputs depend on the target Act:
+    /// - `B` requires `engine_source` (and may take `offline_bundle`).
+    /// - `C` may take `offline_bundle`.
+    /// - `D`, `E`, `F` require no extra inputs.
+    pub async fn resume_from_recovery_target(
+        &self,
+        engine_source: Option<PathBuf>,
+        offline_bundle: Option<PathBuf>,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<CeremonyStatusDto, String> {
+        let (target, restore_phase) = {
+            let g = self.mirror.lock().map_err(|e| e.to_string())?;
+            let target = g
+                .recovery_target_act
+                .clone()
+                .ok_or_else(|| "no recovery_target_act set; nothing to resume".to_string())?;
+            let restore = match target.as_str() {
+                "B" => CeremonyPhase::Placement,
+                "C" => CeremonyPhase::Materialize,
+                "D" => CeremonyPhase::Discover,
+                "E" => CeremonyPhase::Configure,
+                "F" => CeremonyPhase::Attest,
+                other => {
+                    return Err(format!(
+                        "unknown recovery target act {other:?}; expected one of B/C/D/E/F"
+                    ))
+                }
+            };
+            (target, restore)
+        };
+
+        self.with_mirror_mut(|m| {
+            let corr = m.correlation_id.clone();
+            let before = m.s_ceremony.clone();
+            let after = restore_phase.as_str();
+            Self::chronicle(
+                &self.phantom_root,
+                "recovery_exit",
+                corr.as_deref(),
+                Some(&target),
+                &before,
+                after,
+                None,
+                &format!("resuming Act {target} from {before}"),
+            )?;
+            m.s_ceremony = after.to_string();
+            m.outcome_class = None;
+            Self::persist_locked(m, &self.phantom_root)?;
+            Ok(())
+        })?;
+
+        match target.as_str() {
+            "B" => {
+                let engine = engine_source.ok_or_else(|| {
+                    "engine_source required to resume Act B from recovery".to_string()
+                })?;
+                self.run_act_b(engine, offline_bundle, app_handle).await
+            }
+            "C" => self.run_act_c(offline_bundle, app_handle).await,
+            "D" => self.run_act_d().await,
+            "E" => self.run_act_e().await,
+            "F" => self.run_act_f().await,
+            other => Err(format!("unsupported recovery target {other:?}")),
         }
     }
 

@@ -10,6 +10,8 @@ pub mod ceremony_chronicle;
 pub mod dto;
 pub mod orchestrator;
 pub mod phase;
+pub mod predicate;
+pub mod preflight;
 pub mod state_file;
 
 pub use dto::{

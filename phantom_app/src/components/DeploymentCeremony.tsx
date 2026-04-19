@@ -14,9 +14,18 @@ import {
   tauriInvokeErrorMessage,
   type DeployFailureInfo,
   type DeploymentPreScanResult,
+  type OperationalEvaluation,
   type WorkerRegistrationSummary,
 } from '../state/deploymentState';
-import { completeDeploymentWithSelection } from '../utils/tauri';
+import {
+  ceremonyFirstEnabled,
+  ceremonyRunActD,
+  ceremonyRunActE,
+  ceremonyRunActF,
+  ceremonyStatus,
+  completeDeploymentWithSelection,
+  operationalEvaluate,
+} from '../utils/tauri';
 import DeploymentTroubleshooter from './DeploymentTroubleshooter';
 import Screen4ControllerSelect from './Screen4ControllerSelect';
 import Screen4WorkerSelect from './Screen4WorkerSelect';
@@ -62,6 +71,9 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [troubleshooterOpen, setTroubleshooterOpen] = useState(false);
   const [deployFailure, setDeployFailure] = useState<DeployFailureInfo | null>(null);
+  const [ceremonyStage, setCeremonyStage] = useState<string | null>(null);
+  const [opEval, setOpEval] = useState<OperationalEvaluation | null>(null);
+  const ceremonyFirst = ceremonyFirstEnabled();
 
   useEffect(() => {
     let unlistenFailed: UnlistenFn | undefined;
@@ -76,7 +88,31 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
     };
   }, []);
 
-  const handleContinue = async () => {
+  // In ceremony-first mode, surface a live operational predicate snapshot for
+  // the operator (read-only). Doctrine: never used to gate Continue — the
+  // backend acts (D/E/F) are themselves authoritative.
+  useEffect(() => {
+    if (!ceremonyFirst) return;
+    let cancelled = false;
+    const refresh = () => {
+      operationalEvaluate()
+        .then((e) => {
+          if (!cancelled) setOpEval(e);
+        })
+        .catch(() => {
+          if (!cancelled) setOpEval(null);
+        });
+    };
+    refresh();
+    const id = window.setInterval(refresh, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [ceremonyFirst]);
+
+  /** Legacy continue — unchanged path. */
+  const handleContinueLegacy = async () => {
     if (!canContinue || !controllerConfig) return;
     setCompleteError(null);
     setCompleting(true);
@@ -95,6 +131,61 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
       setCompleting(false);
     }
   };
+
+  /**
+   * Phase 12 — ceremony-first Continue. Drives Acts D→F via the orchestrator
+   * and synthesizes a `WorkerRegistrationSummary` from `operational_evaluate`
+   * so the existing consent / TOC flow keeps working unchanged.
+   *
+   * NOTE: user-selected primary worker is not yet plumbed through Act D
+   * (current Act D auto-selects LAN-first from the snapshot). This is the
+   * next incremental Phase 12 deliverable; for now, we honour the operator's
+   * worker pool selection by surfacing it in the chronicle but do not yet
+   * override Act D's primary pick.
+   */
+  const handleContinueCeremonyFirst = async () => {
+    if (!canContinue || !controllerConfig) return;
+    setCompleteError(null);
+    setCompleting(true);
+    try {
+      setCeremonyStage('Act D — configure');
+      await ceremonyRunActD();
+
+      setCeremonyStage('Act E — attest');
+      await ceremonyRunActE();
+
+      setCeremonyStage('Act F — register');
+      await ceremonyRunActF();
+
+      setCeremonyStage('Reading ceremony status');
+      const status = await ceremonyStatus().catch(() => null);
+      const evaluation = await operationalEvaluate().catch(() => null);
+      setOpEval(evaluation);
+
+      const summary: WorkerRegistrationSummary = {
+        selectedCount: workerPool.length,
+        trustFailedCount: 0,
+        registeredCount:
+          status?.sCeremony === 'CS_OPERATIONAL' && evaluation?.operational
+            ? workerPool.length
+            : 0,
+        registrationFailedCount:
+          status?.sCeremony === 'CS_OPERATIONAL' && evaluation?.operational
+            ? 0
+            : workerPool.length,
+      };
+      onComplete(summary);
+    } catch (err) {
+      const msg = tauriInvokeErrorMessage(err);
+      setCompleteError(`${ceremonyStage ?? 'Ceremony'}: ${msg}`);
+      onError?.(msg);
+    } finally {
+      setCompleting(false);
+      setCeremonyStage(null);
+    }
+  };
+
+  const handleContinue = ceremonyFirst ? handleContinueCeremonyFirst : handleContinueLegacy;
 
   return (
     <div className="deploy-screen ceremony-screen">
@@ -208,6 +299,35 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
           {activeTab === 'diagnostics' && <Screen4Diagnostics />}
         </div>
 
+        {ceremonyFirst && opEval && (
+          <div
+            style={{
+              maxWidth: 620,
+              margin: '0 auto 12px',
+              padding: '8px 12px',
+              fontSize: 11,
+              fontFamily: 'var(--font-mono)',
+              background: 'rgba(0,0,0,0.25)',
+              border: `1px solid ${opEval.operational ? 'rgba(80,160,120,0.4)' : 'rgba(220,180,120,0.45)'}`,
+              borderRadius: 4,
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ marginBottom: 6, letterSpacing: 1, fontWeight: 600 }}>
+              Predicate {opEval.operational ? 'OPERATIONAL' : 'NOT YET OPERATIONAL'}
+            </div>
+            {opEval.clauses.map((c) => (
+              <div key={c.id} style={{ marginBottom: 2 }}>
+                <span style={{ color: c.pass ? 'var(--accent-green, #6a8)' : '#dc8' }}>
+                  [{c.pass ? 'pass' : 'fail'}]
+                </span>{' '}
+                {c.name}
+                {!c.pass && c.detail ? `: ${c.detail}` : ''}
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="ceremony-actions">
           {discoveryFailed ? (
             <>
@@ -248,8 +368,19 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
                 className="deploy-btn"
                 onClick={handleContinue}
                 disabled={!canContinue || completing}
+                title={
+                  ceremonyFirst
+                    ? 'Run Acts D→F via the ceremony orchestrator'
+                    : 'Complete deployment via legacy registration path'
+                }
               >
-                {completing ? 'Completing…' : 'Continue'}
+                {completing
+                  ? ceremonyFirst && ceremonyStage
+                    ? ceremonyStage
+                    : 'Completing…'
+                  : ceremonyFirst
+                    ? 'Continue (ceremony-first)'
+                    : 'Continue'}
               </button>
             </div>
           )}

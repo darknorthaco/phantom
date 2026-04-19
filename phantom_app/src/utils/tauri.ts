@@ -112,6 +112,89 @@ export const ceremonyCommitPlacement = (
     identityFingerprint,
   });
 
+// Phase 12 — ceremony-first acts B–F, recovery, dry-run, preflight.
+// Doctrine: LAN-first; WAN-optional; Deploy button drives ceremony.
+export interface CeremonyRunActBArgs {
+  offlineBundlePath?: string | null;
+}
+export interface CeremonyRunActCArgs {
+  offlineBundlePath?: string | null;
+}
+export interface CeremonyResumeRecoveryArgs {
+  offlineBundlePath?: string | null;
+}
+
+export const ceremonyRunActB = (args?: CeremonyRunActBArgs | null) =>
+  invoke<CeremonyStatusDto>('ceremony_run_act_b', {
+    args: args ?? { offlineBundlePath: null },
+  });
+export const ceremonyRunActC = (args?: CeremonyRunActCArgs | null) =>
+  invoke<CeremonyStatusDto>('ceremony_run_act_c', {
+    args: args ?? { offlineBundlePath: null },
+  });
+export const ceremonyRunActD = () => invoke<CeremonyStatusDto>('ceremony_run_act_d');
+export const ceremonyRunActE = () => invoke<CeremonyStatusDto>('ceremony_run_act_e');
+export const ceremonyRunActF = () => invoke<CeremonyStatusDto>('ceremony_run_act_f');
+
+export const ceremonyEnterRecovery = () =>
+  invoke<CeremonyStatusDto>('ceremony_enter_recovery');
+
+export const ceremonyResumeFromRecoveryTarget = (
+  args?: CeremonyResumeRecoveryArgs | null
+) =>
+  invoke<CeremonyStatusDto>('ceremony_resume_from_recovery_target', {
+    args: args ?? null,
+  });
+
+export const ceremonyDryRun = (args?: CeremonyRunActBArgs | null) =>
+  invoke<CeremonyStatusDto>('ceremony_dry_run', {
+    args: args ?? { offlineBundlePath: null },
+  });
+
+export interface PreflightCheck {
+  id: string;
+  name: string;
+  pass: boolean;
+  detail: string;
+  hint?: string | null;
+}
+export interface PreflightReport {
+  ok: boolean;
+  checks: PreflightCheck[];
+}
+export const ceremonyPreflight = () =>
+  invoke<PreflightReport>('ceremony_preflight');
+
+/** Phase 12 — read-only Act C snapshot for the UI; null when Act C has not run. */
+export const ceremonyGetDiscoverySnapshot = () =>
+  invoke<Record<string, unknown> | null>('ceremony_get_discovery_snapshot');
+
+/** Phase 12 — read-only Act D attestation manifest; null when Act D has not run. */
+export const ceremonyGetAttestationManifest = () =>
+  invoke<Record<string, unknown> | null>('ceremony_get_attestation_manifest');
+
+/** Phase 12 — tail of state/act_b_bootstrap.log (last N lines). */
+export const ceremonyReadActBLog = (tailLines: number) =>
+  invoke<string[]>('ceremony_read_act_b_log', { tailLines });
+
+/**
+ * Phase 12 — UI ceremony-first feature flag.
+ *
+ * Doctrine: legacy deploy path remains the default while migration is in flight.
+ * Operators / dev builds can opt into the ceremony-first UI by setting
+ * `VITE_CEREMONY_FIRST=true` at Vite build time. Treats the flag as a strict
+ * boolean: anything other than the literal string "true" (case-insensitive)
+ * keeps the working legacy UI in charge.
+ */
+export const ceremonyFirstEnabled = (): boolean => {
+  // import.meta.env is the Vite-injected env object; guarded for SSR / test envs.
+  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env;
+  const v = env?.VITE_CEREMONY_FIRST;
+  if (typeof v === 'string') return v.toLowerCase() === 'true';
+  if (typeof v === 'boolean') return v;
+  return false;
+};
+
 export const getDeploymentStatus = () => invoke<string>('get_deployment_status');
 export const deployPhantom = (options?: DeploymentPreScanOptions | null) =>
   invoke<void>('deploy_phantom', { options: options ?? null });
@@ -162,6 +245,8 @@ export interface ControllerPlacementInfo {
   host: string;
   port: number;
   deviceLabel?: string | null;
+  /** Phase 12 — present when controller_placement.json carries the operator's identity. */
+  identityFingerprint?: string | null;
 }
 
 export const getControllerPlacementInfo = () =>

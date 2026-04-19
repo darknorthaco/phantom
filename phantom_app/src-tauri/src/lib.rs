@@ -113,37 +113,33 @@ async fn resolve_deploy_offline_bundle(
     let invoke_path = options
         .as_ref()
         .and_then(|o| o.offline_bundle_path.clone());
-    let explicit = options.as_ref().and_then(|o| o.offline).unwrap_or(false);
+    let explicit_offline_flag = options.as_ref().and_then(|o| o.offline).unwrap_or(false);
     let state_path = state
         .app
         .offline_bundle_path
         .lock()
         .map_err(|e| e.to_string())?
         .clone();
+    // Bundle path set via invoke argument or persisted app state comes from explicit operator action.
+    let explicit_bundle_path = invoke_path.is_some() || state_path.is_some();
 
     let candidate = backend::offline_bundle::resolve_offline_bundle_candidate(
         phantom_root,
         invoke_path,
         state_path,
     );
-    let network_ok = backend::offline_bundle::network_reachable_for_deploy().await;
-
-    // Online + not explicit → never force wheelhouse. No WAN or explicit `--offline` → require bundle.
-    let use_offline = explicit || !network_ok;
-    if !use_offline {
+    // Doctrine: LAN-first ceremony is canonical and WAN is optional.
+    // Offline bundle mode is explicit-only; WAN reachability must never alter deploy path selection.
+    let offline_requested = explicit_offline_flag || explicit_bundle_path;
+    if !offline_requested {
         return Ok(None);
     }
 
     candidate
         .ok_or_else(|| {
-            if explicit {
-                "Offline install requested but no valid bundle found (manifest.json missing). \
-                 Use install_offline_bundle, set PHANTOM_OFFLINE_BUNDLE, or place a bundle at ~/.phantom/offline_bundle."
-                    .to_string()
-            } else {
-                "Network unreachable and no offline bundle found. Provide a bundle with manifest.json."
-                    .to_string()
-            }
+            "Offline install requested but no valid bundle found (manifest.json missing). \
+             Use install_offline_bundle, set PHANTOM_OFFLINE_BUNDLE, or place a bundle at ~/.phantom/offline_bundle."
+                .to_string()
         })
         .map(Some)
 }
@@ -578,6 +574,38 @@ async fn run_deployment_pre_scan(
     state: tauri::State<'_, ManagedState>,
     options: Option<DeploymentPreScanOptions>,
 ) -> Result<DeploymentPreScanResult, String> {
+    // Phase 12 doctrine guard: ceremony-first is canonical. The legacy
+    // PhantomDeployer pre-scan path is retained for the in-flight UI migration
+    // and is permitted by default. Operators / CI can enforce ceremony-first
+    // ahead of the UI cutover by setting `PHANTOM_BLOCK_LEGACY_DEPLOY=1`.
+    // Either way the invocation is chronicled so doctrine drift is auditable.
+    let legacy_blocked = std::env::var("PHANTOM_BLOCK_LEGACY_DEPLOY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    {
+        let outcome = if legacy_blocked { "BLOCKED" } else { "PERMITTED" };
+        let line = backend::ceremony::ceremony_chronicle::CeremonyChronicleLine::new(
+            "legacy_deploy_invoked",
+            None,
+            None,
+            "-",
+            "-",
+            Some(outcome.to_string()),
+            "legacy run_deployment_pre_scan invoked; ceremony-first is canonical (Phase 12 transition)",
+        );
+        let _ = backend::ceremony::ceremony_chronicle::append_ceremony_line(
+            &state.app.phantom_root,
+            &line,
+        );
+    }
+    if legacy_blocked {
+        return Err(
+            "legacy deploy path blocked by PHANTOM_BLOCK_LEGACY_DEPLOY. \
+             Use ceremony_commit_placement / ceremony_run_act_* / ceremony_dry_run \
+             to drive the deploy via the unified ceremony orchestrator."
+                .to_string(),
+        );
+    }
     {
         let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
         *phase = AppPhase::Deploying;
@@ -585,7 +613,10 @@ async fn run_deployment_pre_scan(
 
     state
         .audit
-        .log_event_best_effort("deployment_pre_scan_started", serde_json::json!({}))
+        .log_event_best_effort(
+            "deployment_pre_scan_started",
+            serde_json::json!({"legacy_compat_flag": true}),
+        )
         .await;
 
     let engine_source = find_engine_source(&app);
@@ -1083,7 +1114,7 @@ async fn operational_evaluate(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<OperationalEvaluation, String> {
     let orch = state.ceremony.lock().await;
-    Ok(orch.operational_evaluate_stub())
+    Ok(orch.operational_evaluate())
 }
 
 #[tauri::command]
@@ -1183,6 +1214,143 @@ async fn ceremony_run_act_f(
     Ok(out)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CeremonyResumeRecoveryArgs {
+    #[serde(default)]
+    offline_bundle_path: Option<String>,
+}
+
+#[tauri::command]
+async fn ceremony_enter_recovery(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<CeremonyStatusDto, String> {
+    let orch = state.ceremony.lock().await;
+    let out = orch.enter_recovery()?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_resume_from_recovery_target(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    args: Option<CeremonyResumeRecoveryArgs>,
+) -> Result<CeremonyStatusDto, String> {
+    let engine_source = Some(find_engine_source(&app));
+    let offline_bundle = args
+        .as_ref()
+        .and_then(|a| a.offline_bundle_path.clone())
+        .map(PathBuf::from);
+    let orch = state.ceremony.lock().await;
+    let out = orch
+        .resume_from_recovery_target(engine_source, offline_bundle, Some(app.clone()))
+        .await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ceremony_preflight(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<backend::ceremony::preflight::PreflightReport, String> {
+    let root = state.app.phantom_root.clone();
+    Ok(backend::ceremony::preflight::run(&root))
+}
+
+/// Phase 12 — read `state/discovery_snapshot.json` (Act C output) for UI.
+/// Returns `Ok(None)` when the snapshot does not yet exist (Act C not run);
+/// returns `Err` only on read / parse errors.
+#[tauri::command]
+async fn ceremony_get_discovery_snapshot(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<Option<serde_json::Value>, String> {
+    let path = state
+        .app
+        .phantom_root
+        .join("state")
+        .join("discovery_snapshot.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("read discovery_snapshot.json: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("parse discovery_snapshot.json: {e}"))?;
+    Ok(Some(v))
+}
+
+/// Phase 12 — read `state/ceremony_attestation_manifest.json` (Act D output).
+/// Returns `Ok(None)` when the manifest does not yet exist; `Err` only on parse error.
+#[tauri::command]
+async fn ceremony_get_attestation_manifest(
+    state: tauri::State<'_, ManagedState>,
+) -> Result<Option<serde_json::Value>, String> {
+    let path = state
+        .app
+        .phantom_root
+        .join("state")
+        .join("ceremony_attestation_manifest.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("read ceremony_attestation_manifest.json: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("parse ceremony_attestation_manifest.json: {e}"))?;
+    Ok(Some(v))
+}
+
+/// Phase 12 — tail of `state/act_b_bootstrap.log` (last N lines).
+/// Returns `Ok(vec![])` when the log does not yet exist.
+#[tauri::command]
+async fn ceremony_read_act_b_log(
+    state: tauri::State<'_, ManagedState>,
+    tail_lines: usize,
+) -> Result<Vec<String>, String> {
+    let n = tail_lines.clamp(1, 1000);
+    let path = state.app.phantom_root.join("state").join("act_b_bootstrap.log");
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("read act_b_bootstrap.log: {e}"))?;
+    let lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    let start = lines.len().saturating_sub(n);
+    Ok(lines[start..].to_vec())
+}
+
+#[tauri::command]
+async fn ceremony_dry_run(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ManagedState>,
+    args: Option<CeremonyRunActBArgs>,
+) -> Result<CeremonyStatusDto, String> {
+    let engine_source = find_engine_source(&app);
+    let offline_bundle = args
+        .as_ref()
+        .and_then(|a| a.offline_bundle_path.clone())
+        .map(PathBuf::from);
+    let orch = state.ceremony.lock().await;
+    let out = orch
+        .dry_run_stub_graph(engine_source, offline_bundle, Some(app.clone()))
+        .await?;
+    drop(orch);
+    if let Ok(mut ph) = state.app.phase.lock() {
+        *ph = CeremonyOrchestrator::project_to_app_phase(&out.s_ceremony);
+    }
+    Ok(out)
+}
+
 // ── Deployment Troubleshooter (GUI + chronicle) ─────────────────────
 
 #[tauri::command]
@@ -1258,11 +1426,16 @@ fn troubleshooter_port_cycle_defaults() -> Vec<u16> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ControllerPlacementView {
     host: String,
     port: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_label: Option<String>,
+    /// Phase 12 — exposed so the ceremony-first UI can call
+    /// `ceremony_commit_placement` without a second round-trip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_fingerprint: Option<String>,
 }
 
 #[tauri::command]
@@ -1291,10 +1464,16 @@ async fn get_controller_placement_info(
         .get("device_label")
         .and_then(|x| x.as_str())
         .map(|s| s.to_string());
+    let identity_fingerprint = v
+        .get("identity_fingerprint")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
     Ok(Some(ControllerPlacementView {
         host,
         port,
         device_label,
+        identity_fingerprint,
     }))
 }
 
@@ -1486,6 +1665,13 @@ pub fn run() {
             ceremony_run_act_d,
             ceremony_run_act_e,
             ceremony_run_act_f,
+            ceremony_enter_recovery,
+            ceremony_resume_from_recovery_target,
+            ceremony_dry_run,
+            ceremony_preflight,
+            ceremony_get_discovery_snapshot,
+            ceremony_get_attestation_manifest,
+            ceremony_read_act_b_log,
             run_deployment_pre_scan, complete_deployment_with_selection,
             run_pre_deploy_validation,
             get_deployment_chronicle,

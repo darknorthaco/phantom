@@ -218,6 +218,72 @@ export function toWorkerSelection(w: DiscoveredWorker): WorkerSelectionForRegist
   };
 }
 
+/**
+ * Phase 12 — synthesize a `DeploymentPreScanResult` from a ceremony Act C
+ * `DiscoverySnapshot` (read via `ceremonyGetDiscoverySnapshot`). Lets the
+ * existing Screen 4 components (`Screen4ControllerSelect`, `Screen4WorkerSelect`)
+ * render the ceremony candidates without a parallel implementation.
+ *
+ * Doctrine: read-only projection. Never mutates ceremony state.
+ */
+export function preScanResultFromDiscoverySnapshot(
+  snapshot: Record<string, unknown> | null,
+): DeploymentPreScanResult {
+  const candidatesRaw = Array.isArray(snapshot?.candidates)
+    ? (snapshot!.candidates as unknown[])
+    : [];
+  const discoveredWorkers: DiscoveredWorker[] = candidatesRaw
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+    .map((c) => {
+      const port = typeof c.port === 'number' ? c.port : Number(c.port ?? 0);
+      return {
+        workerId: String(c.workerId ?? ''),
+        host: String(c.host ?? ''),
+        port: Number.isFinite(port) ? port : 0,
+        gpuInfo: (c.gpuInfo && typeof c.gpuInfo === 'object'
+          ? (c.gpuInfo as Record<string, unknown>)
+          : {}),
+        sourceIp: String(c.sourceIp ?? ''),
+        signatureVerified: Boolean(c.signatureVerified ?? false),
+        fingerprint: String(c.fingerprint ?? ''),
+        publicKeyB64: typeof c.publicKeyB64 === 'string' ? c.publicKeyB64 : undefined,
+      } as DiscoveredWorker;
+    });
+
+  const policyFlags =
+    snapshot?.policyFlags && typeof snapshot.policyFlags === 'object'
+      ? (snapshot.policyFlags as Record<string, unknown>)
+      : {};
+  const offlineSynthetic = Boolean(policyFlags.offline_synthetic ?? policyFlags.offlineSynthetic);
+  const partial = Boolean(policyFlags.discovery_partial ?? policyFlags.discoveryPartial);
+
+  const discoveryLog: DiscoveryLog = {
+    timestamp: typeof snapshot?.createdAt === 'string' ? snapshot.createdAt : new Date().toISOString(),
+    interfacesScanned: [],
+    broadcastPort: 8095,
+    packetsSent: 0,
+    responsesReceived: discoveredWorkers.length,
+    signatureFailures: 0,
+    manifestErrors: 0,
+    workerCount: discoveredWorkers.length,
+    rawEntries: [],
+    readinessProbeAttempts: 0,
+    readinessProbeSuccess: discoveredWorkers.length > 0,
+    diagnosticHints:
+      discoveredWorkers.length === 0
+        ? ['Act C produced an empty snapshot; check LAN reachability or run preflight.']
+        : [],
+    discoveryMode: offlineSynthetic ? 'offline_synthetic' : 'lan_udp',
+  };
+
+  return {
+    discoveredWorkers,
+    discoveryLog,
+    discoveryFailed: discoveredWorkers.length === 0 || partial,
+    offlineMode: offlineSynthetic,
+  };
+}
+
 /** Build sanitized discovery log string for copy/paste (mirrors backend to_sanitized_string). */
 export function discoveryLogToSanitizedString(log: DiscoveryLog): string {
   const lines = [

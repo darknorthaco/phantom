@@ -1,7 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { runDeploymentPreScan, runPreDeployValidation } from '../utils/tauri';
 import {
+  ceremonyCommitPlacement,
+  ceremonyFirstEnabled,
+  ceremonyGetDiscoverySnapshot,
+  ceremonyPreflight,
+  ceremonyReadActBLog,
+  ceremonyRunActB,
+  ceremonyRunActC,
+  getControllerPlacementInfo,
+  runDeploymentPreScan,
+  runPreDeployValidation,
+  type PreflightCheck,
+  type PreflightReport,
+} from '../utils/tauri';
+import {
+  preScanResultFromDiscoverySnapshot,
   sortPreDeployChecksForDisplay,
   tauriInvokeErrorMessage,
   type DeployFailureInfo,
@@ -31,7 +45,40 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
   const [preDeployBusy, setPreDeployBusy] = useState(false);
   const [deployFailure, setDeployFailure] = useState<DeployFailureInfo | null>(null);
   const [troubleshooterOpen, setTroubleshooterOpen] = useState(false);
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [actBLog, setActBLog] = useState<string[]>([]);
+  const [ceremonyStage, setCeremonyStage] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const ceremonyFirst = ceremonyFirstEnabled();
+
+  const loadPreflight = useCallback(async () => {
+    setPreflightBusy(true);
+    try {
+      const r = await ceremonyPreflight();
+      setPreflight(r);
+    } catch (e) {
+      setPreflight({
+        ok: false,
+        checks: [
+          {
+            id: 'preflight.invoke_error',
+            name: 'Preflight invoke',
+            pass: false,
+            detail: tauriInvokeErrorMessage(e),
+            hint: 'Backend ceremony_preflight command failed; check phantom logs.',
+          },
+        ],
+      });
+    } finally {
+      setPreflightBusy(false);
+    }
+  }, []);
+
+  // Always run preflight on mount — read-only, doctrine-aligned, never network egress.
+  useEffect(() => {
+    loadPreflight();
+  }, [loadPreflight]);
 
   useEffect(() => {
     let unlistenProgress: UnlistenFn | undefined;
@@ -71,7 +118,8 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [scanLog]);
 
-  const handleDeploy = async () => {
+  /** Legacy deploy — unchanged; remains the default while VITE_CEREMONY_FIRST is off. */
+  const handleDeployLegacy = async () => {
     setDeployFailure(null);
     setDeploying(true);
     setScanLog([]);
@@ -86,6 +134,70 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
       setDeploying(false);
     }
   };
+
+  /**
+   * Phase 12 ceremony-first deploy. Drives Acts A→C through the orchestrator,
+   * then hands the resulting Act C snapshot to the existing DeploymentCeremony
+   * UI as a synthesized DeploymentPreScanResult. Acts D→F run from the next screen.
+   *
+   * Doctrine: LAN-first. WAN reachability is irrelevant. Offline bundle is
+   * explicit-only and is not used here unless the operator has separately set one.
+   */
+  const handleDeployCeremonyFirst = async () => {
+    setDeployFailure(null);
+    setDeploying(true);
+    setScanLog([]);
+    setActBLog([]);
+    try {
+      setCeremonyStage('Reading placement');
+      const placement = await getControllerPlacementInfo();
+      if (!placement) {
+        throw new Error(
+          'controller_placement.json missing. Complete the controller selection screen first.',
+        );
+      }
+      const fp = placement.identityFingerprint ?? '';
+      if (!fp) {
+        throw new Error(
+          'placement is missing identity_fingerprint. Re-confirm controller selection.',
+        );
+      }
+
+      setCeremonyStage('Act A — committing placement');
+      await ceremonyCommitPlacement(
+        placement.host,
+        placement.port,
+        placement.deviceLabel ?? '',
+        fp,
+      );
+
+      setCeremonyStage('Act B — materializing engine');
+      try {
+        await ceremonyRunActB({});
+      } catch (e) {
+        const tail = await ceremonyReadActBLog(50).catch(() => [] as string[]);
+        setActBLog(tail);
+        throw e;
+      }
+
+      setCeremonyStage('Act C — LAN discovery');
+      await ceremonyRunActC({});
+
+      setCeremonyStage('Reading discovery snapshot');
+      const snap = await ceremonyGetDiscoverySnapshot();
+      const result = preScanResultFromDiscoverySnapshot(snap);
+      onPreScanComplete(result);
+    } catch (err) {
+      const msg = tauriInvokeErrorMessage(err);
+      console.error('Ceremony-first deploy failed:', err);
+      setDeployFailure((prev) => prev ?? { message: msg, stepLabel: ceremonyStage ?? 'Ceremony deploy' });
+      setTroubleshooterOpen(true);
+      setDeploying(false);
+      setCeremonyStage(null);
+    }
+  };
+
+  const handleDeploy = ceremonyFirst ? handleDeployCeremonyFirst : handleDeployLegacy;
 
   const handlePreDeployValidate = async () => {
     setPreDeployBusy(true);
@@ -119,6 +231,10 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
       progress?.label === 'Starting local worker' ||
       progress?.label === 'Starting controller');
 
+  // Deploy is only blocked by preflight in ceremony-first mode. In legacy mode
+  // we stay non-breaking and never block on the preflight panel.
+  const deployBlockedByPreflight = ceremonyFirst && preflight !== null && !preflight.ok;
+
   return (
     <div className={`deploy-screen${deploying ? ' deploy-screen--active' : ''}`}>
       <div className="deploy-screen-logo-container">
@@ -135,7 +251,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
             <div className="loading-bar-fill" style={{ width: `${pct}%` }} />
           </div>
           <div className="micro-status">
-            {progress?.label || 'Initializing…'}
+            {ceremonyFirst && ceremonyStage ? ceremonyStage : progress?.label || 'Initializing…'}
           </div>
           {showScanLog && scanLog.length > 0 && (
             <div
@@ -163,6 +279,41 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
         </div>
       ) : (
         <div className="deploy-screen-idle-column">
+          <PreflightPanel
+            report={preflight}
+            busy={preflightBusy}
+            ceremonyFirst={ceremonyFirst}
+            onRefresh={loadPreflight}
+          />
+
+          {actBLog.length > 0 && (
+            <div
+              className="scan-log"
+              style={{
+                marginTop: 4,
+                maxWidth: 'min(620px, 100%)',
+                maxHeight: 'min(220px, 28vh)',
+                overflow: 'auto',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                padding: 10,
+                background: 'rgba(0,0,0,0.25)',
+                borderRadius: 4,
+                textAlign: 'left',
+                border: '1px solid rgba(200,90,90,0.45)',
+              }}
+            >
+              <div style={{ marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>
+                Act B bootstrap log (tail)
+              </div>
+              {actBLog.map((line, i) => (
+                <div key={i} style={{ marginBottom: 2, whiteSpace: 'pre-wrap' }}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+
           {deployFailure && (
             <div
               role="alert"
@@ -238,8 +389,19 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
               </div>
             </div>
           )}
-          <button className="deploy-btn" onClick={handleDeploy} disabled={deploying}>
-            Deploy Phantom
+          <button
+            className="deploy-btn"
+            onClick={handleDeploy}
+            disabled={deploying || deployBlockedByPreflight}
+            title={
+              deployBlockedByPreflight
+                ? 'Resolve preflight failures before deploying.'
+                : ceremonyFirst
+                  ? 'Deploy via ceremony-first orchestrator (Acts A→F)'
+                  : 'Deploy via legacy pre-scan flow'
+            }
+          >
+            {ceremonyFirst ? 'Deploy Phantom (ceremony-first)' : 'Deploy Phantom'}
           </button>
           <button
             type="button"
@@ -340,6 +502,84 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface PreflightPanelProps {
+  report: PreflightReport | null;
+  busy: boolean;
+  ceremonyFirst: boolean;
+  onRefresh: () => void;
+}
+
+function PreflightPanel({ report, busy, ceremonyFirst, onRefresh }: PreflightPanelProps) {
+  if (!report && !busy) return null;
+  const okBorder = 'rgba(80,160,120,0.4)';
+  const failBorder = 'rgba(200,90,90,0.45)';
+  return (
+    <div
+      className="scan-log"
+      style={{
+        marginTop: 4,
+        maxWidth: 'min(620px, 100%)',
+        maxHeight: 'min(280px, 36vh)',
+        overflow: 'auto',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        padding: 10,
+        background: 'rgba(0,0,0,0.25)',
+        borderRadius: 4,
+        textAlign: 'left',
+        border: `1px solid ${report?.ok ? okBorder : failBorder}`,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ fontWeight: 600, letterSpacing: 1 }}>
+          LAN-first preflight {busy ? '(running…)' : report?.ok ? 'OK' : 'ISSUES'}
+        </div>
+        <button
+          type="button"
+          className="deploy-btn ceremony-btn-secondary"
+          style={{ fontSize: 9, padding: '4px 8px' }}
+          onClick={onRefresh}
+          disabled={busy}
+        >
+          Re-run
+        </button>
+      </div>
+      {!report?.ok && ceremonyFirst && (
+        <div
+          style={{
+            marginBottom: 10,
+            fontSize: 10,
+            lineHeight: 1.45,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          Ceremony-first deploy is gated by preflight. Resolve failing items, then re-run.
+        </div>
+      )}
+      {report?.checks?.map((c: PreflightCheck) => (
+        <div key={c.id} style={{ marginBottom: 6 }}>
+          <span style={{ color: c.pass ? 'var(--accent-green, #6a8)' : '#e88' }}>
+            [{c.pass ? 'pass' : 'fail'}]
+          </span>{' '}
+          {c.name}: {c.detail}
+          {!c.pass && c.hint && (
+            <div style={{ marginLeft: 14, color: 'var(--text-secondary)', fontSize: 9 }}>
+              hint: {c.hint}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
