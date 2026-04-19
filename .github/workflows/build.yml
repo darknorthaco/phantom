@@ -190,7 +190,8 @@ jobs:
             ### First launch
             On first run, Phantom shows the wizard and deploys the controller engine
             to `~/.phantom/`. No developer tools required.
-          releaseDraft: ${{ github.event.inputs.draft != 'false' }}
+          # workflow_dispatch only: respect draft input. Tag pushes publish a real release.
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
           prerelease: false
           args: --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundles }}
 
