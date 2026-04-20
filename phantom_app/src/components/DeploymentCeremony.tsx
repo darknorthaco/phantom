@@ -10,7 +10,6 @@ import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useDeploymentCeremony } from '../state/DeploymentCeremonyContext';
 import {
-  toWorkerSelection,
   tauriInvokeErrorMessage,
   type DeployFailureInfo,
   type DeploymentPreScanResult,
@@ -18,15 +17,15 @@ import {
   type WorkerRegistrationSummary,
 } from '../state/deploymentState';
 import {
-  ceremonyFirstEnabled,
+  deployModeFromBuild,
   ceremonyRunActD,
   ceremonyRunActE,
   ceremonyRunActF,
   ceremonyStatus,
-  completeDeploymentWithSelection,
   operationalEvaluate,
 } from '../utils/tauri';
 import DeploymentTroubleshooter from './DeploymentTroubleshooter';
+import DeployModeBadge from './DeployModeBadge';
 import Screen4ControllerSelect from './Screen4ControllerSelect';
 import Screen4WorkerSelect from './Screen4WorkerSelect';
 import Screen4Diagnostics from './Screen4Diagnostics';
@@ -73,7 +72,7 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
   const [deployFailure, setDeployFailure] = useState<DeployFailureInfo | null>(null);
   const [ceremonyStage, setCeremonyStage] = useState<string | null>(null);
   const [opEval, setOpEval] = useState<OperationalEvaluation | null>(null);
-  const ceremonyFirst = ceremonyFirstEnabled();
+  const ceremonyFirst = deployModeFromBuild() === 'ceremony';
 
   useEffect(() => {
     let unlistenFailed: UnlistenFn | undefined;
@@ -110,27 +109,6 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
       window.clearInterval(id);
     };
   }, [ceremonyFirst]);
-
-  /** Legacy continue — unchanged path. */
-  const handleContinueLegacy = async () => {
-    if (!canContinue || !controllerConfig) return;
-    setCompleteError(null);
-    setCompleting(true);
-    try {
-      const workerSelections = workerPool.map(toWorkerSelection);
-      const summary = await completeDeploymentWithSelection(
-        workerSelections,
-        controllerConfig.runControllerLlm
-      );
-      onComplete(summary);
-    } catch (err) {
-      const msg = tauriInvokeErrorMessage(err);
-      setCompleteError(msg);
-      onError?.(msg);
-    } finally {
-      setCompleting(false);
-    }
-  };
 
   /**
    * Phase 12 — ceremony-first Continue. Drives Acts D→F via the orchestrator
@@ -185,7 +163,7 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
     }
   };
 
-  const handleContinue = ceremonyFirst ? handleContinueCeremonyFirst : handleContinueLegacy;
+  const handleContinue = handleContinueCeremonyFirst;
 
   return (
     <div className="deploy-screen ceremony-screen">
@@ -194,6 +172,9 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
       </div>
 
       <div className="deploy-title">Deployment Ceremony</div>
+      <div style={{ textAlign: 'center', marginBottom: 12 }}>
+        <DeployModeBadge />
+      </div>
 
       {completeError && (
         <div
@@ -367,11 +348,11 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
                 type="button"
                 className="deploy-btn"
                 onClick={handleContinue}
-                disabled={!canContinue || completing}
+                disabled={!canContinue || completing || !ceremonyFirst}
                 title={
                   ceremonyFirst
                     ? 'Run Acts D→F via the ceremony orchestrator'
-                    : 'Complete deployment via legacy registration path'
+                    : 'Legacy build detected. Use ceremony-first build.'
                 }
               >
                 {completing
@@ -380,7 +361,7 @@ export default function DeploymentCeremony({ preScanResult, onComplete, onBack, 
                     : 'Completing…'
                   : ceremonyFirst
                     ? 'Continue (ceremony-first)'
-                    : 'Continue'}
+                    : 'Continue unavailable (legacy build)'}
               </button>
             </div>
           )}

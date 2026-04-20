@@ -1,8 +1,8 @@
 /**
  * Phantom Deployment Ceremony — State & Types
  *
- * Matches backend structures (camelCase from run_deployment_pre_scan,
- * complete_deployment_with_selection). Used by Screen 4 components.
+ * Matches backend ceremony structures (camelCase from ceremony acts and DTOs).
+ * Used by Screen 4 components in ceremony-first mode.
  */
 
 // ── Types (match backend serialization) ────────────────────────────────
@@ -44,7 +44,7 @@ export interface DeploymentPreScanResult {
   offlineMode?: boolean;
 }
 
-/** Phase 3 — optional flags for run_deployment_pre_scan / deploy_phantom. */
+/** Phase 3 — optional offline flags for ceremony Act B/C invocation payloads. */
 export interface DeploymentPreScanOptions {
   offline?: boolean | null;
   offlineBundlePath?: string | null;
@@ -56,7 +56,7 @@ export interface ControllerConfig {
   runControllerLlm: boolean;
 }
 
-/** Worker selection for complete_deployment_with_selection (matches backend). */
+/** Worker selection projection used by ceremony UI state helpers. */
 export interface WorkerSelectionForRegistration {
   workerId: string;
   host: string;
@@ -170,18 +170,6 @@ const checkRank = (status: string): number => {
 /** Fail and warn first so operators see blockers without scrolling. */
 export function sortPreDeployChecksForDisplay(checks: PreDeployCheck[]): PreDeployCheck[] {
   return [...checks].sort((a, b) => checkRank(a.status) - checkRank(b.status));
-}
-
-/** Manual LAN scan + register (Workers panel). */
-export interface LanScanRegistrationResult {
-  scanned: number;
-  registered: number;
-  registrationFailed: number;
-  partialRegistration: boolean;
-  /** Present when ``state/offline_install.json`` blocks Workers-panel LAN discovery. */
-  lanScanSkipped?: boolean;
-  lanScanSkipReason?: string | null;
-  nodes: Array<[string, number]>;
 }
 
 // ── Ceremony State ─────────────────────────────────────────────────────

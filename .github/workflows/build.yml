@@ -33,6 +33,57 @@ jobs:
       - name: Run platform assumptions scanner
         run: python phantom_core/scripts/ci/check_platform_assumptions.py
 
+  # ── PR-I: forbid legacy deploy imports in canonical UI ────────────
+  forbid-legacy-lint:
+    name: Forbid legacy deploy imports
+    needs: [platform-assumptions]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: phantom_app/package-lock.json
+      - name: Install frontend deps
+        run: npm install
+        working-directory: phantom_app
+      - name: Run ESLint legacy rule
+        run: npm run lint:legacy
+        working-directory: phantom_app
+      - name: Grep forbid raw legacy commands outside quarantine
+        run: |
+          if rg -n "runDeploymentPreScan|completeDeploymentWithSelection|deployPhantom|upgradePhantomDeployment|scanAndRegisterWorkers|tauri\\.legacy" phantom_app/src; then
+            echo "Forbidden legacy symbols found outside quarantine" >&2
+            exit 1
+          fi
+
+  # ── PR-D: chronicle severity schema guard ──────────────────────────
+  chronicle-severity-regression:
+    name: Chronicle severity regression gate
+    needs: [platform-assumptions]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate chronicle schema+severity source guards
+        run: python scripts/ci/chronicle_severity_gate.py
+
+  # ── PR-D: clean-install ceremony-first structural gate ─────────────
+  clean-install-ceremony-gate:
+    name: Clean-install ceremony-first gate
+    needs: [platform-assumptions, forbid-legacy-lint, chronicle-severity-regression]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Assert legacy not reachable by default sources
+        run: python scripts/ci/clean_install_ceremony_gate.py
+
   # ── Windows: import + in-process /health (catches fcntl-class regressions) ──
   python-smoke-windows:
     name: Windows Python smoke (/health)
@@ -105,7 +156,7 @@ jobs:
   build-desktop:
     name: Build ${{ matrix.label }}
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test-controller, python-smoke-windows]
+    needs: [test-controller, python-smoke-windows, forbid-legacy-lint, chronicle-severity-regression, clean-install-ceremony-gate]
     strategy:
       fail-fast: false
       matrix:

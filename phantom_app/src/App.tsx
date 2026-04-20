@@ -18,7 +18,12 @@ import DeploymentsPanel from './components/DeploymentsPanel';
 import AuditLogPanel from './components/AuditLogPanel';
 import ExperimentalAOL from './components/ExperimentalAOL';
 import ChatPanel from './components/ChatPanel';
-import { getControllerBaseUrl, getPhantomHealth } from './utils/tauri';
+import {
+  getControllerBaseUrl,
+  getPhantomHealth,
+  ceremonyStatus,
+  operationalEvaluate,
+} from './utils/tauri';
 import './styles/theme.css';
 import './styles/deploy.css';
 import './styles/toc.css';
@@ -39,18 +44,46 @@ export default function App() {
       .catch(() => setHealth(null));
   }, []);
 
-  // Auto-detect deployed controller on mount; skip wizard if already running.
+  // PR-H / I-AutoSkipWizard — Auto-skip to TOC only when ceremony truth
+  // agrees with controller health.
+  //
+  // Doctrine: a live /health response alone is NOT sufficient evidence that
+  // this host has completed a sovereign ceremony. A leftover controller from
+  // a crashed/partial install could previously bypass the wizard entirely,
+  // leaving the operator on the TOC with no AppPhase coherence.
+  //
+  // Auto-skip requires ALL of:
+  //   1. getPhantomHealth() reports healthy/degraded (process alive)
+  //   2. ceremony_status reports sCeremony == "CS_OPERATIONAL"
+  //   3. operational_evaluate reports operational === true
+  //
+  // Any other combination drops the operator into the wizard so they can see
+  // the true state and decide whether to redeploy.
   useEffect(() => {
-    getPhantomHealth()
-      .then((d) => {
-        const body = d as Record<string, unknown>;
-        const s = body.status as string | undefined;
-        if (s === 'healthy' || s === 'degraded') {
-          setHealth(body);
+    let cancelled = false;
+    (async () => {
+      try {
+        const hd = (await getPhantomHealth()) as Record<string, unknown>;
+        const s = hd.status as string | undefined;
+        if (s !== 'healthy' && s !== 'degraded') return;
+
+        const cs = await ceremonyStatus().catch(() => null);
+        if (!cs || cs.sCeremony !== 'CS_OPERATIONAL') return;
+
+        const opEval = await operationalEvaluate().catch(() => null);
+        if (!opEval || !opEval.operational) return;
+
+        if (!cancelled) {
+          setHealth(hd);
           setPhase('toc');
         }
-      })
-      .catch(() => {});
+      } catch {
+        /* stay on wizard */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

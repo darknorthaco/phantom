@@ -13,7 +13,7 @@ use super::act_e::{self, ActEAttestationOutcome, OUTCOME_SUCCEEDED_WITH_WARNINGS
 use super::act_f::{self, ActFRegisterOutcome, OUTCOME_PARTIAL_REGISTRATION};
 use super::ceremony_chronicle::{
     append_ceremony_line, append_recovery_target, append_recovery_target_for_phase,
-    CeremonyChronicleLine,
+    CeremonyChronicleLine, Severity,
 };
 use super::dto::{CeremonyStatusDto, OperationalEvaluation};
 use super::phase::{
@@ -99,15 +99,23 @@ impl CeremonyOrchestrator {
         outcome: Option<&str>,
         summary: &str,
     ) -> Result<(), String> {
+        let severity = match outcome {
+            Some("FAILED") => Severity::Critical,
+            Some("PARTIAL") | Some(OUTCOME_SUCCEEDED_WITH_WARNINGS) | Some(OUTCOME_PARTIAL_REGISTRATION) => {
+                Severity::Warn
+            }
+            _ => Severity::Info,
+        };
         append_ceremony_line(
             root,
-            &CeremonyChronicleLine::new(
+            &CeremonyChronicleLine::new_with_severity(
                 event_type,
                 correlation_id.map(String::from),
                 act.map(String::from),
                 before,
                 after,
                 outcome.map(String::from),
+                severity,
                 summary,
             ),
         )
@@ -1168,7 +1176,8 @@ mod tests {
         assert_eq!(n_exit, 6, "expected 6 act_exit (A–F): {raw}");
         for line in raw.lines().filter(|l| !l.is_empty()) {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert_eq!(v["schema_version"], "1");
+            assert_eq!(v["schema_version"], "2");
+            assert!(v.get("severity").is_some(), "{v}");
         }
     }
 }

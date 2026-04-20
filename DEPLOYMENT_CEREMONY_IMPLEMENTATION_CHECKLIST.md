@@ -2,6 +2,11 @@
 
 **Plan Approved.** Use this checklist to track implementation progress.
 
+> Phase 13 note: items that reference legacy commands (`runDeploymentPreScan`,
+> `completeDeploymentWithSelection`, `deployPhantom`) are historical migration
+> artifacts. Canonical builds now run ceremony-only A→F and no longer expose
+> those commands.
+
 ---
 
 ## Phase 1: Backend — Discovery Log & Infrastructure ✅

@@ -22,9 +22,9 @@ use backend::ceremony::{
 };
 use backend::phantom_api::PhantomApiClient;
 use backend::phantom_deployer::{
-    CompleteDeploymentRequest, DeploymentPreScanResult, PhantomDeployer, WorkerRegistrationSummary,
+    PhantomDeployer,
 };
-use backend::phantom_state::{AppPhase, AppState, DeployFailureInfo, DeploymentProgress, PhantomMetrics};
+use backend::phantom_state::{AppPhase, AppState, DeployFailureInfo, PhantomMetrics};
 use security::audit_logger::AuditLogger;
 use security::identity_manager::IdentityManager;
 use security::tls_manager::TlsManager;
@@ -94,55 +94,9 @@ pub struct PhantomTlsSettings {
     pub tls_key_path: String,
 }
 
-/// Optional flags for deployment pre-scan (Phase 3 offline / air-gap).
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentPreScanOptions {
-    #[serde(default)]
-    pub offline: Option<bool>,
-    #[serde(default)]
-    pub offline_bundle_path: Option<String>,
-}
-
-/// Resolve whether to use an offline bundle for deploy / pre-scan.
-async fn resolve_deploy_offline_bundle(
-    phantom_root: &PathBuf,
-    state: &ManagedState,
-    options: &Option<DeploymentPreScanOptions>,
-) -> Result<Option<PathBuf>, String> {
-    let invoke_path = options
-        .as_ref()
-        .and_then(|o| o.offline_bundle_path.clone());
-    let explicit_offline_flag = options.as_ref().and_then(|o| o.offline).unwrap_or(false);
-    let state_path = state
-        .app
-        .offline_bundle_path
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
-    // Bundle path set via invoke argument or persisted app state comes from explicit operator action.
-    let explicit_bundle_path = invoke_path.is_some() || state_path.is_some();
-
-    let candidate = backend::offline_bundle::resolve_offline_bundle_candidate(
-        phantom_root,
-        invoke_path,
-        state_path,
-    );
-    // Doctrine: LAN-first ceremony is canonical and WAN is optional.
-    // Offline bundle mode is explicit-only; WAN reachability must never alter deploy path selection.
-    let offline_requested = explicit_offline_flag || explicit_bundle_path;
-    if !offline_requested {
-        return Ok(None);
-    }
-
-    candidate
-        .ok_or_else(|| {
-            "Offline install requested but no valid bundle found (manifest.json missing). \
-             Use install_offline_bundle, set PHANTOM_OFFLINE_BUNDLE, or place a bundle at ~/.phantom/offline_bundle."
-                .to_string()
-        })
-        .map(Some)
-}
+// PR-J: legacy pre-scan option surface removed. Offline bundle selection is now
+// handled directly by ceremony Act B/C payloads (`offlineBundlePath`) and
+// `install_offline_bundle`.
 
 // ── Phase 1: Identity ──────────────────────────────────────────────
 
@@ -179,6 +133,20 @@ fn verify_signature(
 
 /// §1 Pre-0 — persist ControllerPlacementParams so Step 4.5 can read them.
 #[tauri::command]
+/// PR-F — Act A single source of truth (I-SingleSourceOfTruth).
+///
+/// Doctrine: placement is Act A and MUST live inside the CeremonyOrchestrator.
+/// This command used to write `controller_placement.json` on its own, leaving
+/// the orchestrator at `CS_IDLE` — a dual source of truth that R-5 identified
+/// as a structural flaw. It now delegates to `CeremonyOrchestrator::commit_placement`,
+/// which:
+///   • writes the placement file (via Act A),
+///   • transitions S_ceremony `CS_IDLE` → `CS_PLACEMENT`,
+///   • emits a chronicle line with `severity: Info`.
+///
+/// The existing UI surface (`confirmControllerPlacement`) is preserved for the
+/// controller-selection screen; ceremony state is now coherent immediately
+/// after the operator confirms placement.
 async fn confirm_controller_placement(
     state: tauri::State<'_, ManagedState>,
     host: String,
@@ -186,33 +154,21 @@ async fn confirm_controller_placement(
     device_label: String,
     identity_fingerprint: String,
 ) -> Result<(), String> {
-    let phantom_root = state.app.phantom_root.clone();
-    let path = phantom_root.join("controller_placement.json");
-    tokio::fs::create_dir_all(&phantom_root)
-        .await
-        .map_err(|e| format!("Failed to create phantom root: {e}"))?;
-    let params = serde_json::json!({
-        "host": host,
-        "port": port,
-        "device_label": device_label,
-        "identity_fingerprint": identity_fingerprint,
-        "confirmed_at": chrono::Utc::now().to_rfc3339(),
-    });
-    let tmp = phantom_root.join("controller_placement.json.tmp");
-    tokio::fs::write(
-        &tmp,
-        serde_json::to_string_pretty(&params).map_err(|e| e.to_string())?,
-    )
-    .await
-    .map_err(|e| format!("Failed to write controller_placement.json: {e}"))?;
-    tokio::fs::rename(&tmp, &path)
-        .await
-        .map_err(|e| format!("Failed to persist controller_placement.json: {e}"))?;
+    let orch = state.ceremony.lock().await;
+    let _dto = orch
+        .commit_placement(host.clone(), port, device_label, identity_fingerprint)
+        .await?;
+    drop(orch);
     state
         .audit
         .log_event_best_effort(
             "controller_placement_confirmed",
-            serde_json::json!({"host": host, "port": port}),
+            serde_json::json!({
+                "host": host,
+                "port": port,
+                "source": "ceremony_orchestrator",
+                "act": "A",
+            }),
         )
         .await;
     Ok(())
@@ -555,11 +511,12 @@ async fn check_integrity(
 async fn get_deployment_status(
     state: tauri::State<'_, ManagedState>,
 ) -> Result<String, String> {
-    if state.app.is_deployed() {
-        return Ok("deployed".to_string());
-    }
-    let phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-    match &*phase {
+    // PR-H / I-AppPhaseDerived:
+    // deployment status must project from ceremony truth, not mutable app-phase.
+    let orch = state.ceremony.lock().await;
+    let st = orch.ceremony_status()?;
+    drop(orch);
+    match CeremonyOrchestrator::project_to_app_phase(&st.s_ceremony) {
         AppPhase::FrontPorch => Ok("front_porch".to_string()),
         AppPhase::Deploying => Ok("deploying".to_string()),
         AppPhase::Deployed => Ok("deployed".to_string()),
@@ -567,269 +524,7 @@ async fn get_deployment_status(
     }
 }
 
-/// Run steps 0–9 + discovery (no registration). Returns result for deployment ceremony.
-#[tauri::command]
-async fn run_deployment_pre_scan(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
-    options: Option<DeploymentPreScanOptions>,
-) -> Result<DeploymentPreScanResult, String> {
-    // Phase 12 doctrine guard: ceremony-first is canonical. The legacy
-    // PhantomDeployer pre-scan path is retained for the in-flight UI migration
-    // and is permitted by default. Operators / CI can enforce ceremony-first
-    // ahead of the UI cutover by setting `PHANTOM_BLOCK_LEGACY_DEPLOY=1`.
-    // Either way the invocation is chronicled so doctrine drift is auditable.
-    let legacy_blocked = std::env::var("PHANTOM_BLOCK_LEGACY_DEPLOY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    {
-        let outcome = if legacy_blocked { "BLOCKED" } else { "PERMITTED" };
-        let line = backend::ceremony::ceremony_chronicle::CeremonyChronicleLine::new(
-            "legacy_deploy_invoked",
-            None,
-            None,
-            "-",
-            "-",
-            Some(outcome.to_string()),
-            "legacy run_deployment_pre_scan invoked; ceremony-first is canonical (Phase 12 transition)",
-        );
-        let _ = backend::ceremony::ceremony_chronicle::append_ceremony_line(
-            &state.app.phantom_root,
-            &line,
-        );
-    }
-    if legacy_blocked {
-        return Err(
-            "legacy deploy path blocked by PHANTOM_BLOCK_LEGACY_DEPLOY. \
-             Use ceremony_commit_placement / ceremony_run_act_* / ceremony_dry_run \
-             to drive the deploy via the unified ceremony orchestrator."
-                .to_string(),
-        );
-    }
-    {
-        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-        *phase = AppPhase::Deploying;
-    }
-
-    state
-        .audit
-        .log_event_best_effort(
-            "deployment_pre_scan_started",
-            serde_json::json!({"legacy_compat_flag": true}),
-        )
-        .await;
-
-    let engine_source = find_engine_source(&app);
-    let phantom_root = state.app.phantom_root.clone();
-    let offline_bundle = resolve_deploy_offline_bundle(&phantom_root, &state, &options).await?;
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()))
-        .with_offline_bundle(offline_bundle);
-
-    let result = match deployer.run_pre_scan_deployment().await {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("deployment pre-scan failed: {e}");
-            emit_deploy_failed(
-                &app,
-                &phantom_root,
-                e.clone(),
-                None,
-                Some("Deployment pre-scan".to_string()),
-            );
-            {
-                let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-                *phase = AppPhase::FrontPorch;
-            }
-            return Err(e);
-        }
-    };
-
-    sync_controller_url_mutex(&state.app);
-
-    log::info!(
-        target: "phantom_deploy",
-        "deployment_pre_scan_ok discovery_failed={} workers={} offline_mode={}",
-        result.discovery_failed,
-        result.discovered_workers.len(),
-        result.offline_mode
-    );
-
-    let _ = app.emit("deploy-discovery-result", &result);
-
-    Ok(result)
-}
-
-/// Register selected workers and complete deployment (step 11). Call after ceremony.
-#[tauri::command]
-async fn complete_deployment_with_selection(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
-    request: CompleteDeploymentRequest,
-) -> Result<WorkerRegistrationSummary, String> {
-    let engine_source = find_engine_source(&app);
-    let phantom_root = state.app.phantom_root.clone();
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
-
-    let summary = match deployer
-        .complete_deployment_with_selection(
-            request.worker_pool,
-            request.run_controller_llm,
-        )
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("complete_deployment_with_selection failed: {e}");
-            emit_deploy_failed(
-                &app,
-                &phantom_root,
-                e.clone(),
-                None,
-                Some("Registration & finalize deployment".to_string()),
-            );
-            return Err(e);
-        }
-    };
-
-    let steps = PhantomDeployer::steps();
-    let total = steps.len();
-    let _ = app.emit(
-        "deploy-progress",
-        &DeploymentProgress {
-            step: total,
-            total_steps: total,
-            label: "Deployment complete".to_string(),
-            fraction: 1.0,
-        },
-    );
-
-    state
-        .audit
-        .log_event_best_effort(
-            "deployment_complete",
-            serde_json::json!({
-                "selectedCount": summary.selected_count,
-                "trustFailedCount": summary.trust_failed_count,
-                "registeredCount": summary.registered_count,
-                "registrationFailedCount": summary.registration_failed_count,
-                "poolFullyRegistered": summary.pool_fully_registered(),
-            }),
-        )
-        .await;
-
-    log::info!(
-        target: "phantom_deploy",
-        "ceremony_registration_ok selected={} registered={} trust_failed={} registration_failed={} pool_complete={}",
-        summary.selected_count,
-        summary.registered_count,
-        summary.trust_failed_count,
-        summary.registration_failed_count,
-        summary.pool_fully_registered()
-    );
-
-    {
-        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-        *phase = AppPhase::Deployed;
-    }
-
-    sync_controller_url_mutex(&state.app);
-
-    Ok(summary)
-}
-
-#[tauri::command]
-async fn deploy_phantom(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
-    options: Option<DeploymentPreScanOptions>,
-) -> Result<(), String> {
-    {
-        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-        *phase = AppPhase::Deploying;
-    }
-
-    state
-        .audit
-        .log_event_best_effort("deployment_started", serde_json::json!({}))
-        .await;
-
-    let engine_source = find_engine_source(&app);
-    let phantom_root = state.app.phantom_root.clone();
-    let offline_bundle = resolve_deploy_offline_bundle(&phantom_root, &state, &options).await?;
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()))
-        .with_offline_bundle(offline_bundle);
-    let steps = PhantomDeployer::steps();
-    let total = steps.len();
-
-    for (i, label) in steps.iter().enumerate() {
-        let progress = DeploymentProgress {
-            step: i,
-            total_steps: total,
-            label: label.to_string(),
-            fraction: (i as f64) / (total as f64),
-        };
-        let _ = app.emit("deploy-progress", &progress);
-
-        state
-            .audit
-            .log_event_best_effort(
-                "deployment_step",
-                serde_json::json!({"step": i, "label": label}),
-            )
-            .await;
-
-        if let Err(e) = deployer.run_step(i).await {
-            log::error!("Step {} ({}) failed: {}", i, label, e);
-            state
-                .audit
-                .log_event_best_effort(
-                    "deployment_step_failed",
-                    serde_json::json!({"step": i, "label": label, "error": &e}),
-                )
-                .await;
-            emit_deploy_failed(
-                &app,
-                &phantom_root,
-                e.clone(),
-                Some(i),
-                Some((*label).to_string()),
-            );
-            {
-                let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-                *phase = AppPhase::FrontPorch;
-            }
-            return Err(e);
-        }
-    }
-
-    let done = DeploymentProgress {
-        step: total,
-        total_steps: total,
-        label: "Deployment complete".to_string(),
-        fraction: 1.0,
-    };
-    let _ = app.emit("deploy-progress", &done);
-
-    state
-        .audit
-        .log_event_best_effort("deployment_complete", serde_json::json!({}))
-        .await;
-
-    {
-        let mut phase = state.app.phase.lock().map_err(|e| e.to_string())?;
-        *phase = AppPhase::Deployed;
-    }
-
-    sync_controller_url_mutex(&state.app);
-
-    log::info!(
-        target: "phantom_deploy",
-        "deploy_phantom_all_steps_ok total_steps={}",
-        total
-    );
-
-    Ok(())
-}
+// PR-J — legacy deploy entrypoints removed from canonical binary surface.
 
 #[tauri::command]
 async fn get_phantom_health(
@@ -917,25 +612,6 @@ async fn troubleshooter_full_reset(
     run_phantom_uninstall_internal(app, &state).await
 }
 
-/// Refresh bundled engine under `.phantom/engine` while preserving `phantom_config.json`, placement, `config/`, `state/`.
-#[tauri::command]
-async fn upgrade_phantom_deployment(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
-) -> Result<serde_json::Value, String> {
-    let engine_source = find_engine_source(&app);
-    let phantom_root = state.app.phantom_root.clone();
-    let deployer = PhantomDeployer::new(&phantom_root, &engine_source, Some(app.clone()));
-
-    let summary = deployer.upgrade_engine_preserve_state().await?;
-
-    state
-        .audit
-        .log_event_best_effort("phantom_upgrade_complete", summary.clone())
-        .await;
-
-    Ok(summary)
-}
 
 #[tauri::command]
 async fn verify_offline_bundle(path: String) -> Result<serde_json::Value, String> {
@@ -993,15 +669,6 @@ async fn install_offline_bundle(
         "bundle": root.to_string_lossy(),
         "catalogue_cached": "state/model_catalogue_offline.json",
     }))
-}
-
-#[tauri::command]
-async fn scan_and_register_workers(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, ManagedState>,
-) -> Result<backend::phantom_deployer::ScanResult, String> {
-    let phantom_root = state.app.phantom_root.clone();
-    backend::phantom_deployer::scan_and_register_workers(&phantom_root, Some(app)).await
 }
 
 /// Phase 4 — deterministic pre-deploy checklist (placement, engine, venv, TLS, optional /health).
@@ -1307,6 +974,31 @@ async fn ceremony_get_attestation_manifest(
     let v: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|e| format!("parse ceremony_attestation_manifest.json: {e}"))?;
     Ok(Some(v))
+}
+
+/// Phase 12 / PR-B — deploy mode introspection.
+///
+/// Doctrine (I-ModeVisible): the UI MUST be able to display deploy mode.
+/// PR-J end-state: canonical binary is always ceremony-first.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeployModeDto {
+    /// Always `"ceremony"` in Phase 13+.
+    mode: &'static str,
+    /// Build feature list retained for audit compatibility.
+    build_features: Vec<&'static str>,
+    /// Chronicle schema version emitted by this binary (PR-A).
+    chronicle_schema_version: &'static str,
+}
+
+#[tauri::command]
+async fn deploy_mode() -> Result<DeployModeDto, String> {
+    Ok(DeployModeDto {
+        mode: "ceremony",
+        build_features: Vec::new(),
+        chronicle_schema_version:
+            backend::ceremony::ceremony_chronicle::CEREMONY_CHRONICLE_SCHEMA_VERSION,
+    })
 }
 
 /// Phase 12 — tail of `state/act_b_bootstrap.log` (last N lines).
@@ -1676,7 +1368,7 @@ pub fn run() {
             ceremony_get_discovery_snapshot,
             ceremony_get_attestation_manifest,
             ceremony_read_act_b_log,
-            run_deployment_pre_scan, complete_deployment_with_selection,
+            deploy_mode,
             run_pre_deploy_validation,
             get_deployment_chronicle,
             troubleshooter_append_note,
@@ -1692,13 +1384,11 @@ pub fn run() {
             troubleshooter_restart_controller,
             troubleshooter_restart_local_worker,
             run_local_ci_check,
-            deploy_phantom,
             verify_offline_bundle, load_offline_model_catalogue, install_offline_bundle,
             get_phantom_health, get_workers, get_stats,
-            submit_task, scan_and_register_workers,
+            submit_task,
             uninstall_phantom,
             troubleshooter_full_reset,
-            upgrade_phantom_deployment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Phantom application");

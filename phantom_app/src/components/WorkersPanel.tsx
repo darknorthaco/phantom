@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { getWorkers, scanAndRegisterWorkers } from '../utils/tauri';
+import { useState, useEffect } from 'react';
+import { getWorkers } from '../utils/tauri';
 
 interface Worker {
   worker_id: string;
@@ -57,14 +56,9 @@ function SignatureBadge({ worker }: { worker: Worker }) {
 export default function WorkersPanel() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<string | null>(null);
-  const [scanLog, setScanLog] = useState<string[]>([]);
-  const logEndRef = useRef<HTMLDivElement>(null);
 
   const fetchWorkers = () => {
     setLoading(true);
-    setScanResult(null);
     getWorkers()
       .then((d) => {
         const body = d as { workers?: Worker[] };
@@ -74,95 +68,17 @@ export default function WorkersPanel() {
       .catch(() => setLoading(false));
   };
 
-  const runScan = () => {
-    setScanning(true);
-    setScanResult(null);
-    setScanLog([]);
-    scanAndRegisterWorkers()
-      .then((r) => {
-        setScanning(false);
-        if (r.lanScanSkipped) {
-          setScanResult(
-            r.lanScanSkipReason ??
-              'LAN scan skipped: offline install marker present (see scan log).'
-          );
-        } else {
-          setScanResult(
-            r.partialRegistration
-              ? `Scanned ${r.scanned} node(s), registered ${r.registered} worker(s) — ${r.registrationFailed} registration failure(s); controller pool incomplete.`
-              : `Scanned ${r.scanned} node(s), registered ${r.registered} worker(s)`
-          );
-        }
-        fetchWorkers();
-      })
-      .catch((e) => {
-        setScanning(false);
-        setScanResult(`Scan failed: ${e}`);
-      });
-  };
-
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    listen<string>('scan-log', (event) => {
-      setScanLog((prev) => [...prev, event.payload]);
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => { unlisten?.(); };
-  }, []);
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [scanLog]);
-
   useEffect(() => { fetchWorkers(); }, []);
 
   return (
     <div className="panel">
       <div className="panel-header">
         <span className="panel-title">Workers</span>
-        <button
-          className="console-send-btn"
-          onClick={runScan}
-          disabled={scanning}
-          title="Scan LAN for Phantom workers on port 8090 and register with controller"
-        >
-          {scanning ? 'Scanning…' : 'Scan LAN'}
-        </button>
         <button className="console-send-btn" onClick={fetchWorkers}>Refresh</button>
       </div>
-      {scanResult && (
-        <div className="scan-result" style={{ fontSize: '0.85em', marginBottom: 8 }}>
-          {scanResult}
-        </div>
-      )}
-      {scanning && (
-        <div
-          className="scan-log"
-          style={{
-            marginBottom: 12,
-            maxHeight: 180,
-            overflow: 'auto',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10,
-            padding: 8,
-            background: 'rgba(0,0,0,0.2)',
-            borderRadius: 4,
-            textAlign: 'left',
-          }}
-        >
-          {scanLog.length > 0 ? (
-            scanLog.map((line, i) => (
-              <div key={i} style={{ marginBottom: 2 }}>
-                {line}
-              </div>
-            ))
-          ) : (
-            <div style={{ opacity: 0.7 }}>Scanning…</div>
-          )}
-          <div ref={logEndRef} />
-        </div>
-      )}
+      <div className="scan-result" style={{ fontSize: '0.85em', marginBottom: 8, opacity: 0.8 }}>
+        LAN discovery and worker registration are controlled by deployment ceremony acts.
+      </div>
 
       {loading ? (
         <div className="empty-state">Loading workers…</div>

@@ -1,13 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   CeremonyStatusDto,
-  DeploymentPreScanOptions,
-  DeploymentPreScanResult,
-  LanScanRegistrationResult,
   OperationalEvaluation,
   PreDeployReport,
-  WorkerRegistrationSummary,
-  WorkerSelectionForRegistration,
 } from '../state/deploymentState';
 
 // Identity (Phase 1)
@@ -78,22 +73,17 @@ export const getSystemMetrics = () => invoke<Record<string, unknown>>('get_syste
 // Integrity (Phase 7)
 export const checkIntegrity = () => invoke<Record<string, unknown>>('check_integrity');
 
-// Deployment ceremony (Phase 2 — phased deploy flow; Phase 3 optional offline options)
-export const runDeploymentPreScan = (options?: DeploymentPreScanOptions | null) =>
-  invoke<DeploymentPreScanResult>('run_deployment_pre_scan', { options: options ?? null });
-
 /** Phase 4 — deterministic checklist before deploy (placement, engine, venv, TLS, /health). */
 export const runPreDeployValidation = () =>
   invoke<PreDeployReport>('run_pre_deploy_validation');
 
-export const completeDeploymentWithSelection = (
-  workerPool: WorkerSelectionForRegistration[],
-  runControllerLlm: boolean
-) =>
-  invoke<WorkerRegistrationSummary>('complete_deployment_with_selection', {
-    workerPool,
-    runControllerLlm,
-  });
+/* -------------------------------------------------------------------------
+ * PR-E / PR-J / I-LegacyOff:
+ *   Legacy one-shot deploy bindings used to live here.
+ *
+ *   They are intentionally removed from the canonical UI surface.
+ *   Do NOT re-add them to this module. PR-I lint and CI grep enforce this.
+ * ------------------------------------------------------------------------- */
 
 // Original commands
 // Phase 11 — unified ceremony orchestrator (read-only status + Act A placement)
@@ -178,26 +168,27 @@ export const ceremonyReadActBLog = (tailLines: number) =>
   invoke<string[]>('ceremony_read_act_b_log', { tailLines });
 
 /**
- * Phase 12 — UI ceremony-first feature flag.
- *
- * Doctrine: legacy deploy path remains the default while migration is in flight.
- * Operators / dev builds can opt into the ceremony-first UI by setting
- * `VITE_CEREMONY_FIRST=true` at Vite build time. Treats the flag as a strict
- * boolean: anything other than the literal string "true" (case-insensitive)
- * keeps the working legacy UI in charge.
+ * PR-B — deploy mode introspection (I-ModeVisible).
+ * Runtime-visible projection of backend deploy mode.
  */
-export const ceremonyFirstEnabled = (): boolean => {
-  // import.meta.env is the Vite-injected env object; guarded for SSR / test envs.
-  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env;
-  const v = env?.VITE_CEREMONY_FIRST;
-  if (typeof v === 'string') return v.toLowerCase() === 'true';
-  if (typeof v === 'boolean') return v;
-  return false;
-};
+export interface DeployModeInfo {
+  mode: 'ceremony' | 'legacy';
+  buildFeatures: string[];
+  chronicleSchemaVersion: string;
+}
+export const deployMode = () => invoke<DeployModeInfo>('deploy_mode');
+
+/**
+ * PR-J — build-time deploy mode projection.
+ *
+ * Canonical binaries are ceremony-first only; legacy deploy mode has been
+ * removed from the shipped UI/backend surface.
+ */
+export type DeployModeFromBuild = 'ceremony' | 'legacy';
+
+export const deployModeFromBuild = (): DeployModeFromBuild => 'ceremony';
 
 export const getDeploymentStatus = () => invoke<string>('get_deployment_status');
-export const deployPhantom = (options?: DeploymentPreScanOptions | null) =>
-  invoke<void>('deploy_phantom', { options: options ?? null });
 export const getPhantomHealth = () => invoke<Record<string, unknown>>('get_phantom_health');
 export const getControllerBaseUrl = () => invoke<string>('get_controller_base_url');
 export const getWorkers = () => invoke<Record<string, unknown>>('get_workers');
@@ -206,8 +197,6 @@ export const getTaskStatus = (taskId: string) =>
   invoke<Record<string, unknown>>('get_task_status', { taskId });
 export const submitTask = (taskType: string, parameters: Record<string, unknown>, priority: number) =>
   invoke<Record<string, unknown>>('submit_task', { taskType, parameters, priority });
-export const scanAndRegisterWorkers = () =>
-  invoke<LanScanRegistrationResult>('scan_and_register_workers');
 
 // Phase 3 — offline bundle
 export const verifyOfflineBundle = (path: string) =>

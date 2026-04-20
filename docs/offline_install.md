@@ -40,12 +40,16 @@ python installer/offline_bundle.py verify --bundle ./dist/phantom_offline_bundle
 
 1. Copy the verified bundle directory to removable media or shared storage.
 2. Open the Phantom app. Invoke **`install_offline_bundle`** with the absolute path to the bundle (or set `PHANTOM_OFFLINE_BUNDLE` to that path, or place the bundle at `~/.phantom/offline_bundle` with a valid `manifest.json`).
-3. Run deployment (**`run_deployment_pre_scan`**). The backend will:
+3. Run the ceremony. Offline mode is **explicit-only** (doctrine I-OfflineExplicit):
+   call `ceremony_run_act_b` with `{ "offlineBundlePath": "<path>" }`.
+   Do **not** rely on WAN-failure auto-fallback — none exists; a LAN-only host
+   without a bundle runs the canonical online ceremony (this is by design).
+   When offline is explicitly requested, Act B will:
    - Use **`--no-index`** pip against `wheelhouse/`
    - Copy **`engine/`** from the bundle
    - Skip **LAN UDP discovery** (synthetic `local-worker` for ceremony continuity)
    - Log **`PHANTOM OFFLINE MODE ENABLED`**
-4. Complete the ceremony and **`complete_deployment_with_selection`** as usual.
+4. Complete the ceremony with `ceremony_run_act_d/e/f` as usual.
 
 **Trust note:** The offline synthetic `local-worker` row may carry an empty `public_key_b64` until real worker keys are wired; `approve_worker` may log warnings. Prefer registering workers with valid keys when policy requires explicit trust records (TrustRecord approved).
 
@@ -54,8 +58,8 @@ python installer/offline_bundle.py verify --bundle ./dist/phantom_offline_bundle
 | Path | Meaning |
 |------|---------|
 | Deploy with a bundle | UDP LAN discovery is **not** run; the UI receives one **synthetic** `local-worker` row (`discovery_mode: offline_synthetic` in the discovery log). The ceremony **pre-selects** that row so you can continue without a verified signature. |
-| `state/offline_install.json` | Written after a successful offline pre-scan. Marks the profile as offline/air-gap. **`scan_and_register_workers` (Workers panel “Scan LAN”)** skips UDP discovery and returns `lanScanSkipped` with an explanatory reason — this is intentional, not a silent failure. |
-| `workers_panel_lan_udp` | Field in `offline_install.json` (currently `false`): documents that LAN UDP from the Workers panel is disabled while the marker exists. Delete `offline_install.json` only if you deliberately want LAN scans from this machine again. |
+| `state/offline_install.json` | Written after successful offline deploy stages; records explicit offline intent for diagnostics and audits. |
+| Workers panel | Ceremony-first builds keep worker registration under ceremony acts; manual LAN re-scan registration paths are quarantined to legacy compat builds. |
 
 Online deploys use **`discovery_mode: lan_udp`** and only pre-select workers whose manifests have **verified** signatures.
 
@@ -77,13 +81,11 @@ Explicit flags (frontend / invoke payload):
 { "options": { "offline": true, "offlineBundlePath": "D:\\\\Phantom\\\\offline_bundle" } }
 ```
 
-Environment overrides:
+Environment overrides (path resolution only):
 
 | Variable | Effect |
 |----------|--------|
 | `PHANTOM_OFFLINE_BUNDLE` | Default bundle path if not passed in UI |
-| `PHANTOM_FORCE_OFFLINE=1` | Treat network as down (testing) |
-| `PHANTOM_ASSUME_ONLINE=1` | Skip WAN probe (CI / strict firewalls) |
 
 ## Integrity (SHA-256)
 

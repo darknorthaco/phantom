@@ -2,14 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import {
   ceremonyCommitPlacement,
-  ceremonyFirstEnabled,
   ceremonyGetDiscoverySnapshot,
   ceremonyPreflight,
   ceremonyReadActBLog,
   ceremonyRunActB,
   ceremonyRunActC,
+  deployModeFromBuild,
   getControllerPlacementInfo,
-  runDeploymentPreScan,
   runPreDeployValidation,
   type PreflightCheck,
   type PreflightReport,
@@ -23,6 +22,7 @@ import {
   type PreDeployReport,
 } from '../state/deploymentState';
 import DeploymentTroubleshooter from './DeploymentTroubleshooter';
+import DeployModeBadge from './DeployModeBadge';
 import '../styles/deploy.css';
 
 interface DeployProgress {
@@ -50,7 +50,8 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
   const [actBLog, setActBLog] = useState<string[]>([]);
   const [ceremonyStage, setCeremonyStage] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
-  const ceremonyFirst = ceremonyFirstEnabled();
+  const deployMode = deployModeFromBuild();
+  const ceremonyFirst = deployMode === 'ceremony';
 
   const loadPreflight = useCallback(async () => {
     setPreflightBusy(true);
@@ -118,23 +119,6 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [scanLog]);
 
-  /** Legacy deploy — unchanged; remains the default while VITE_CEREMONY_FIRST is off. */
-  const handleDeployLegacy = async () => {
-    setDeployFailure(null);
-    setDeploying(true);
-    setScanLog([]);
-    try {
-      const result = await runDeploymentPreScan();
-      onPreScanComplete(result);
-    } catch (err) {
-      const msg = tauriInvokeErrorMessage(err);
-      console.error('Pre-scan failed:', err);
-      setDeployFailure((prev) => prev ?? { message: msg, stepLabel: 'Deployment pre-scan' });
-      setTroubleshooterOpen(true);
-      setDeploying(false);
-    }
-  };
-
   /**
    * Phase 12 ceremony-first deploy. Drives Acts A→C through the orchestrator,
    * then hands the resulting Act C snapshot to the existing DeploymentCeremony
@@ -197,7 +181,7 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
     }
   };
 
-  const handleDeploy = ceremonyFirst ? handleDeployCeremonyFirst : handleDeployLegacy;
+  const handleDeploy = handleDeployCeremonyFirst;
 
   const handlePreDeployValidate = async () => {
     setPreDeployBusy(true);
@@ -231,9 +215,9 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
       progress?.label === 'Starting local worker' ||
       progress?.label === 'Starting controller');
 
-  // Deploy is only blocked by preflight in ceremony-first mode. In legacy mode
-  // we stay non-breaking and never block on the preflight panel.
-  const deployBlockedByPreflight = ceremonyFirst && preflight !== null && !preflight.ok;
+  // PR-J end-state: Deploy button is ceremony-only.
+  const deployBlockedByPreflight = preflight !== null && !preflight.ok;
+  const deployBlockedByMode = !ceremonyFirst;
 
   return (
     <div className={`deploy-screen${deploying ? ' deploy-screen--active' : ''}`}>
@@ -243,6 +227,9 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
 
       <div className="deploy-title">
         {deploying ? 'Phantom Awakening' : 'Phantom Awaits'}
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <DeployModeBadge />
       </div>
 
       {deploying ? (
@@ -392,16 +379,16 @@ export default function FrontPorchDeploy({ onPreScanComplete }: Props) {
           <button
             className="deploy-btn"
             onClick={handleDeploy}
-            disabled={deploying || deployBlockedByPreflight}
+            disabled={deploying || deployBlockedByPreflight || deployBlockedByMode}
             title={
-              deployBlockedByPreflight
+              deployBlockedByMode
+                ? 'This build was compiled in legacy compat mode. Use a ceremony-first build.'
+                : deployBlockedByPreflight
                 ? 'Resolve preflight failures before deploying.'
-                : ceremonyFirst
-                  ? 'Deploy via ceremony-first orchestrator (Acts A→F)'
-                  : 'Deploy via legacy pre-scan flow'
+                : 'Deploy via ceremony-first orchestrator (Acts A→F)'
             }
           >
-            {ceremonyFirst ? 'Deploy Phantom (ceremony-first)' : 'Deploy Phantom'}
+            {deployBlockedByMode ? 'Deploy unavailable (legacy build)' : 'Deploy Phantom (ceremony-first)'}
           </button>
           <button
             type="button"

@@ -1,15 +1,19 @@
-# Deployment ceremony (Tauri)
+# Deployment ceremony (Tauri, canonical)
 
-The Phantom **Stone-Home** app guides installation through a **deployment ceremony** so the human explicitly chooses the controller host and worker pool before the Table of Contents (TOC) is unlocked.
+The Phantom Stone-Home app deploys through a single canonical pipeline:
+
+`Act A → Act B → Act C → Act D → Act E → Act F`
+
+The operator remains sovereign (explicit Deploy button, explicit placement), and
+LAN-first behavior is invariant.
 
 ## Phases (app)
 
-1. **Welcome / consent** — Intro and explicit consent (governance).  
-2. **Front porch deploy** — Progress UI for steps 0–9 (venv, deps, engine copy, GPU check, service unit, bootstrap config, controller start, firewall, state, local worker, **LAN scan**).  
-   - **Offline path (Phase 3):** With a verified bundle, deps install from `wheelhouse/` (`--no-index`), engine copies from `bundle/engine/`, UDP LAN discovery is **skipped**, and the pre-scan returns a **synthetic `local-worker`** entry so the ceremony can proceed without WAN. Logs include **`PHANTOM OFFLINE MODE`**.  
-3. **Deployment ceremony** — If workers were discovered: choose **exactly one** controller-capable host, select **worker pool**, optional controller LLM toggle. If **zero** workers: diagnostics + discovery log only.  
-4. **Complete deployment** — `complete_deployment_with_selection` registers approved workers and finalizes step 11 (execution modes).  
-5. **TOC** — Main application shell (Console, Workers, Routing, etc.).
+1. **Welcome / consent** — Intro and explicit consent.
+2. **Controller selection** — Placement and identity confirmation (Act A input).
+3. **Front porch deploy** — Runs preflight and then Acts A→C.
+4. **Deployment ceremony** — Controller/worker selection context + Acts D→F.
+5. **TOC** — Available only after ceremony reaches `CS_OPERATIONAL`.
 
 ## WAN ceremony path (Phase 4)
 
@@ -28,9 +32,9 @@ Workers that are not co-located must receive config with `tls_enabled: true` and
 
 | UI step | Rust / backend |
 |--------|----------------|
-| Pre-scan deploy | `run_deployment_pre_scan` → `PhantomDeployer::run_pre_scan_deployment` (steps 0–9 + discovery **without** auto-registration). Optional **`options`**: `{ offline, offlineBundlePath }`; auto-offline when WAN probe fails and a bundle exists. |
-| Ceremony continue | `complete_deployment_with_selection` → `PhantomDeployer::complete_deployment_with_selection` |
-| Legacy one-shot | `deploy_phantom` (all steps in sequence; kept for compatibility) |
+| Ceremony deploy (canonical) | `ceremony_commit_placement` (Act A) → `ceremony_run_act_b` (Act B, materialize) → `ceremony_run_act_c` (Act C, LAN discovery) → `ceremony_run_act_d/e/f` (configure/attest/register). Optional `offlineBundlePath` on Acts B/C is explicit-only; no WAN probe, no auto-fallback. |
+| Deploy mode introspection | `deploy_mode` returns compile-time mode + features so UI always exposes real mode. |
+| Legacy commands | Removed from canonical binary surface in Phase 13 hardening. |
 
 ## Configuration artifacts
 
@@ -55,6 +59,6 @@ See **`DEPLOYMENT_CEREMONY_IMPLEMENTATION_CHECKLIST.md`** for the authoritative 
 
 ## Related
 
-- **`INSTALL.md`** — build, uninstall (`uninstall_phantom`), upgrade (`upgrade_phantom_deployment`)  
+- **`INSTALL.md`** — build, uninstall (`uninstall_phantom`)  
 - **`docs/offline_install.md`** — bundle generation, verification, air-gap policy  
 - **`deployment/worker_lifecycle.md`** — worker ↔ controller task callbacks  

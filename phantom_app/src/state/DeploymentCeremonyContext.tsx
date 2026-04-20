@@ -2,8 +2,8 @@
  * Deployment Ceremony — React Context
  *
  * Provides ceremony state to Screen 4 components (Controller Select,
- * Worker Select, Diagnostics). State is populated from run_deployment_pre_scan
- * and updated by user choices before complete_deployment_with_selection.
+ * Worker Select, Diagnostics). State is populated from Act C discovery snapshot
+ * projection and updated by user choices before ceremony Acts D/E/F.
  */
 
 import {

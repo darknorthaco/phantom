@@ -39,7 +39,7 @@ Under **`~/.phantom`** (Linux/macOS) or **`%USERPROFILE%\.phantom`** (Windows), 
 | Integrated runtime | `phantom_config.json` → `controller.socket_integrated`; launches `run_integrated_phantom.py` when enabled |
 | `phantom_config.json` | Step 4.5 bootstrap after controller placement ceremony |
 
-See **`DEPLOYMENT_CEREMONY.md`** for the full UI flow (pre-scan → controller/worker selection → completion).
+See **`DEPLOYMENT_CEREMONY.md`** for the full UI flow (controller selection → Acts A–F → TOC).
 
 ## TLS / WAN (Phase 4)
 
@@ -68,7 +68,12 @@ Phantom can serve the **controller HTTP API over HTTPS** and require workers to 
    `python installer/offline_bundle.py generate --output ./dist/offline_bundle --engine-root ./phantom_core`  
    (See **`docs/offline_install.md`** for layout, verification, and `staging_mode` caveats.)
 2. Copy the bundle to the target. In the app, call **`install_offline_bundle`** with the bundle path (or set **`PHANTOM_OFFLINE_BUNDLE`**, or place the bundle at **`~/.phantom/offline_bundle`** with a valid `manifest.json`).
-3. Run **`run_deployment_pre_scan`** with optional payload `{ "options": { "offline": true } }` or rely on **auto-detection**: if the WAN probe fails, a resolvable bundle is **required**.
+3. Run the ceremony with an **explicit** offline bundle path on Act B:
+   `ceremony_run_act_b` with `{ "offlineBundlePath": "<absolute-path>" }`.
+   **Doctrine (I-OfflineExplicit):** offline mode is **never auto-selected**. WAN
+   reachability does not change deploy behaviour — a LAN-only host runs the
+   canonical ceremony unchanged. A missing WAN is *not* a signal to use a
+   bundle; the operator must request it explicitly.
 4. Tauri commands: **`verify_offline_bundle`**, **`load_offline_model_catalogue`**, **`install_offline_bundle`**.
 
 ### Offline troubleshooting
@@ -76,9 +81,8 @@ Phantom can serve the **controller HTTP API over HTTPS** and require workers to 
 | Symptom | Check |
 |--------|--------|
 | `pip install (offline) failed` | Wheels in `wheelhouse/` must match `requirements-deploy.txt` and target OS/Python ABI |
-| `Network unreachable and no offline bundle` | Bundle path wrong or missing `manifest.json`; set `PHANTOM_OFFLINE_BUNDLE` |
-| False “offline” on a connected laptop | Corporate firewall blocks `1.1.1.1:443`; set **`PHANTOM_ASSUME_ONLINE=1`** for development only |
-| Forced offline testing | **`PHANTOM_FORCE_OFFLINE=1`** |
+| `Offline install requested but no bundle found` | Bundle path wrong or missing `manifest.json`; set `PHANTOM_OFFLINE_BUNDLE` or call `install_offline_bundle` |
+| LAN-only host without WAN | Expected behavior: ceremony still runs online/LAN-first unless offline bundle is explicitly requested |
 
 ## Uninstall and upgrade (Tauri commands)
 
@@ -87,7 +91,7 @@ Invoked from the desktop app via Tauri **`invoke`** (wire into Settings / Deploy
 | Command | Purpose |
 |---------|---------|
 | `uninstall_phantom` | Stops services, removes Windows Phantom firewall rules, deletes the entire `.phantom` directory |
-| `upgrade_phantom_deployment` | Stops services, backs up `phantom_config.json`, `controller_placement.json`, `config/`, `state/`, replaces `engine/` from the bundled tree, restores backups, restarts controller |
+| *(planned)* ceremony upgrade command | Upgrade will be exposed via ceremony-first flow; legacy one-shot upgrade is quarantined in compat builds only |
 
 **Note:** Run **`uninstall_phantom`** only when you accept loss of local identity, audit logs, venv, and engine copy under `.phantom`.
 

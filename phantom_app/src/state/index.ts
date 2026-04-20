@@ -4,7 +4,6 @@ export {
   type DeploymentPreScanResult,
   type DiscoveryLog,
   type DiscoveredWorker,
-  type LanScanRegistrationResult,
   type PreDeployCheck,
   type PreDeployReport,
   poolFullyRegistered,
