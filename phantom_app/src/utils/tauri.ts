@@ -186,7 +186,9 @@ export const deployMode = () => invoke<DeployModeInfo>('deploy_mode');
  */
 export type DeployModeFromBuild = 'ceremony' | 'legacy';
 
-export const deployModeFromBuild = (): DeployModeFromBuild => 'ceremony';
+export const deployModeFromBuild = (): DeployModeFromBuild => {
+  return 'ceremony';
+};
 
 export const getDeploymentStatus = () => invoke<string>('get_deployment_status');
 export const getPhantomHealth = () => invoke<Record<string, unknown>>('get_phantom_health');
